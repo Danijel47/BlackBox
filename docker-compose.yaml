@@ -1,17 +1,13 @@
 services:
   bot:
     build: .
-    image: backboxbot:latest
-    container_name: backbox-bot
+    image: blackbox:latest
+    container_name: blackbox
     environment:
-      TELEGRAM_GOLD_BOT_TOKEN: ${TELEGRAM_GOLD_BOT_TOKEN}
       TELEGRAM_RIO_BOT_TOKEN: ${TELEGRAM_RIO_BOT_TOKEN}
-
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
-
-      SPRING_QUARTZ_JOB_STORE_TYPE: jdbc
-      SPRING_QUARTZ_JDBC_INITIALIZE_SCHEMA: always
     ports:
       - "8100:8100"
