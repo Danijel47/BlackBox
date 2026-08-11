@@ -650,7 +650,13 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
                             .append(winner.profileName())
                             .append("\n\n"));
         }
-        sb.append(title).append("\n");
+        int recordedPlayerRuns = statistics.stream()
+                .mapToInt(runCountExtractor)
+                .sum();
+        sb.append(title)
+                .append("\nOnly ")
+                .append(recordedPlayerRuns)
+                .append(" recorded player-runs are included.\n");
         for (PlayerStatistics player : sorted) {
             sb.append("• ").append(player.profileName()).append(": ");
             BigDecimal value = valueExtractor.apply(player);
@@ -666,12 +672,6 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             }
             sb.append("\n");
         }
-        sb.append("\nPublic uploaded logs only; unlogged and private runs are not included. "
-                + "The scan size is controlled by WARCRAFT_LOGS_RECENT_REPORT_LIMIT. "
-                + "Season: ").append(warcraftLogsStatisticsService.seasonKey())
-                .append("; reports since ").append(warcraftLogsStatisticsService.seasonStart())
-                .append(". Statistics are refreshed hourly and stored in PostgreSQL."
-                        + "\nData: https://warcraftlogs.com");
         return sb.toString().trim();
     }
 
