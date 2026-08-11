@@ -21,6 +21,7 @@ import com.example.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
 import com.example.blackbox.wow.blizzard.BlizzardItemService;
 import com.example.blackbox.wow.blizzard.BlizzardItemService.ItemRef;
 import com.example.blackbox.wow.blizzard.BlizzardMountService;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -42,6 +43,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.ToIntFunction;
 
@@ -53,6 +59,12 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     private static final Duration TITLE_PREDICTION_CACHE_TTL = Duration.ofMinutes(30);
     private static final Duration SEASON_RECAP_CACHE_TTL = Duration.ofHours(24);
     private static final Duration FAILED_SEASON_RECAP_CACHE_TTL = Duration.ofMinutes(10);
+    private static final List<String> PEON_WORK_MESSAGES = List.of(
+            "Work, work... fetching the data. 🛠️",
+            "Zug zug! The peon is checking. 🔎",
+            "Something need doing? Still working on it. ⛏️",
+            "Back to work! Your result is being prepared. 🧱"
+    );
     private static final String MIDNIGHT_SEASON_ONE = "season-mn-1";
     private static final Map<String, List<Long>> MIDNIGHT_MATERIAL_IDS = Map.ofEntries(
             Map.entry("refulgent copper ore", List.of(237359L, 237361L)),
@@ -84,6 +96,12 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     private final WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     private final TelegramAccessPolicy telegramAccessPolicy;
     private final TelegramBotUserService telegramBotUserService;
+    private final ScheduledExecutorService workingMessageScheduler = Executors.newSingleThreadScheduledExecutor(
+            runnable -> Thread.ofPlatform()
+                    .daemon(true)
+                    .name("telegram-working-message")
+                    .unstarted(runnable)
+    );
     private TitleWatchCache titleWatchCache;
     private TitleWatchCache title01WatchCache;
     private TitlePredictionCache titlePredictionCache;
@@ -160,6 +178,8 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             return;
         }
 
+        ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
+        try {
         if (cmd.equals("/groupid") || cmd.equals("/chatid")) {
             if (!isAdmin(update)) {
                 send(chatId, adminOnlyMessage());
@@ -617,6 +637,24 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             }
             send(chatId, "All commands:\n/help\n/myid\n/groupid\n/users\n/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n/userenable <telegramUserId>\n/profiles\n/profileadd <profile> <region> <realm> <character>\n/profileswitch <profile> <region> <realm> <character>\n/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
         }
+        } finally {
+            workingMessage.cancel(false);
+        }
+    }
+
+    private ScheduledFuture<?> scheduleWorkingMessage(long chatId) {
+        return workingMessageScheduler.schedule(
+                () -> send(chatId, PEON_WORK_MESSAGES.get(
+                        ThreadLocalRandom.current().nextInt(PEON_WORK_MESSAGES.size())
+                )),
+                1500,
+                TimeUnit.MILLISECONDS
+        );
+    }
+
+    @PreDestroy
+    void stopWorkingMessageScheduler() {
+        workingMessageScheduler.shutdownNow();
     }
 
     private String formatWarcraftLogsStatistic(
@@ -831,7 +869,6 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
                     .append("  Most abandoned: ").append(summary.mostAbandonedDungeon())
                     .append(" (").append(summary.mostAbandonedDungeonRuns()).append(")\n");
         }
-        sb.append("\nData: manually imported Raider.IO Live Tracking snapshots");
         return sb.toString().trim();
     }
 

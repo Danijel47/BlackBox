@@ -1,0 +1,12 @@
+[Unit]
+Description=Check BlackBox readiness and send its external heartbeat
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+StateDirectory=blackbox-monitor
+EnvironmentFile=/etc/blackbox-monitor.env
+Environment=BLACKBOX_MONITOR_STATE_DIR=/var/lib/blackbox-monitor
+ExecStart=/opt/blackbox/scripts/monitor-vps-health.sh
