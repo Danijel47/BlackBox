@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: blackbox-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - blackbox_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  bot:
+    build: .
+    image: blackbox:latest
+    container_name: blackbox
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TELEGRAM_RIO_BOT_TOKEN: ${TELEGRAM_RIO_BOT_TOKEN}
+      TELEGRAM_ADMIN_USER_ID: ${TELEGRAM_ADMIN_USER_ID}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      TELEGRAM_VAULT_REMINDER_CHAT_ID: ${TELEGRAM_VAULT_REMINDER_CHAT_ID}
+      VAULT_REMINDER_ENABLED: ${VAULT_REMINDER_ENABLED:-true}
+
+      WARCRAFT_LOGS_CLIENT_ID: ${WARCRAFT_LOGS_CLIENT_ID}
+      WARCRAFT_LOGS_CLIENT_SECRET: ${WARCRAFT_LOGS_CLIENT_SECRET}
+      WARCRAFT_LOGS_RECENT_REPORT_LIMIT: ${WARCRAFT_LOGS_RECENT_REPORT_LIMIT:-20}
+      WARCRAFT_LOGS_COLLECTION_ENABLED: ${WARCRAFT_LOGS_COLLECTION_ENABLED:-true}
+      WARCRAFT_LOGS_SEASON_KEY: ${WARCRAFT_LOGS_SEASON_KEY:-midnight-season-2}
+      WARCRAFT_LOGS_SEASON_START: ${WARCRAFT_LOGS_SEASON_START:-2026-08-19T00:00:00Z}
+      WARCRAFT_LOGS_RATE_LIMIT_MAX_PERCENT: ${WARCRAFT_LOGS_RATE_LIMIT_MAX_PERCENT:-80}
+      WARCRAFT_LOGS_REFRESH_CRON: "${WARCRAFT_LOGS_REFRESH_CRON:-0 5 * * * *}"
+      WARCRAFT_LOGS_REFRESH_ZONE: ${WARCRAFT_LOGS_REFRESH_ZONE:-Europe/Zagreb}
+
+      BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID}
+      BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET}
+      BLIZZARD_CACHE_MAX_AUCTION_ROWS: ${BLIZZARD_CACHE_MAX_AUCTION_ROWS:-500000}
+      BLIZZARD_CACHE_MAX_ITEM_ENTRIES: ${BLIZZARD_CACHE_MAX_ITEM_ENTRIES:-1000}
+      BLIZZARD_CACHE_MAX_REALM_ENTRIES: ${BLIZZARD_CACHE_MAX_REALM_ENTRIES:-250}
+      AUCTION_API_ENABLED: ${AUCTION_API_ENABLED:-false}
+
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
+
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+
+      SERVER_PORT: 8100
+      JAVA_OPTS: ${JAVA_OPTS:--Xms128m -Xmx768m}
+      LOGGING_LEVEL_COM_EXAMPLE_BLACKBOX: INFO
+      LOGGING_LEVEL_ORG_TELEGRAM_TELEGRAMBOTS: INFO
+    ports:
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - ./helper:/app/helper:ro
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  blackbox_postgres_data:
