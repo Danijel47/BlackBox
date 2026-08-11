@@ -6,6 +6,7 @@ import com.example.blackbox.wow.blizzard.BlizzardItemService;
 import com.example.blackbox.wow.blizzard.BlizzardItemService.ItemRef;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -15,6 +16,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auction")
+@ConditionalOnProperty(name = "wow.auction-api.enabled", havingValue = "true")
 public class AuctionPriceController {
 
     private final BlizzardAuctionService auctionService;

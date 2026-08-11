@@ -1,5 +1,8 @@
-helper
+helper/*
 .DS_Store
+.env
+.env.*
+!.env.example
 target/
 out/
 .mvn/wrapper/maven-wrapper.jar

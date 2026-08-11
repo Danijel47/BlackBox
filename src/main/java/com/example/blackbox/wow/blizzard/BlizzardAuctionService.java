@@ -14,13 +14,17 @@ public class BlizzardAuctionService {
     private final BlizzardApiClient api;
     private final BlizzardApiProperties props;
 
-    private final BlizzardCache<JsonNode> auctionsCache = new BlizzardCache<>();
-    private final BlizzardCache<JsonNode> commoditiesCache = new BlizzardCache<>();
-    private final BlizzardCache<Long> realmCache = new BlizzardCache<>();
+    private final BlizzardCache<JsonNode> auctionsCache;
+    private final BlizzardCache<JsonNode> commoditiesCache;
+    private final BlizzardCache<Long> realmCache;
 
     public BlizzardAuctionService(BlizzardApiClient api, BlizzardApiProperties props) {
         this.api = api;
         this.props = props;
+        long maximumAuctionRows = Math.max(1, props.cache().maxAuctionRows());
+        this.auctionsCache = new BlizzardCache<>(maximumAuctionRows, BlizzardAuctionService::auctionRowWeight);
+        this.commoditiesCache = new BlizzardCache<>(maximumAuctionRows, BlizzardAuctionService::auctionRowWeight);
+        this.realmCache = new BlizzardCache<>(Math.max(1, props.cache().maxRealmEntries()), value -> 1);
     }
 
     public PriceResult getRegionAverage(long itemId) {
@@ -151,6 +155,11 @@ public class BlizzardAuctionService {
 
         JsonNode first = auctions.get(0);
         return first.path("id").asLong(0) == 0 ? null : first.path("id").asLong();
+    }
+
+    private static int auctionRowWeight(JsonNode payload) {
+        long rows = payload.path("auctions").size();
+        return Math.clamp(Math.max(1, rows), 1, Integer.MAX_VALUE);
     }
 
     public record PriceResult(boolean available, long avgCopper, long gold, long silver, long copper) {

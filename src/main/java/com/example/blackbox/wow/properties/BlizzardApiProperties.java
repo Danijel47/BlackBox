@@ -12,5 +12,12 @@ public record BlizzardApiProperties(
         String locale,
         Cache cache
 ) {
-    public record Cache(int auctionsTtlSeconds, int commoditiesTtlSeconds, int realmTtlSeconds) {}
+    public record Cache(
+            int auctionsTtlSeconds,
+            int commoditiesTtlSeconds,
+            int realmTtlSeconds,
+            long maxAuctionRows,
+            long maxItemEntries,
+            long maxRealmEntries
+    ) {}
 }

@@ -7,6 +7,14 @@ import com.example.blackbox.wow.helper.RaidPicker;
 import com.example.blackbox.wow.helper.RaidProgressFormatter;
 import com.example.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.example.blackbox.wow.properties.WowWatchlistProperties;
+import com.example.blackbox.wow.service.RaiderIoAbandonedRunService;
+import com.example.blackbox.wow.service.TrackedPlayerService;
+import com.example.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
+import com.example.blackbox.wow.service.TelegramAccessPolicy;
+import com.example.blackbox.wow.service.TelegramBotUserService;
+import com.example.blackbox.wow.service.VaultReminderService;
+import com.example.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
+import com.example.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService.PlayerStatistics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.example.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.example.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
@@ -34,6 +42,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.function.ToIntFunction;
 
 @Component
 public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
@@ -41,16 +51,9 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     private static final int INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS = 600;
     private static final Duration TITLE_WATCH_CACHE_TTL = Duration.ofMinutes(5);
     private static final Duration TITLE_PREDICTION_CACHE_TTL = Duration.ofMinutes(30);
-    private static final String TITLE_CUTOFF_REGION = "eu";
-    private static final TitleWatchPlayer TITLE_01_PLAYER = new TitleWatchPlayer("eu", "Tarren Mill", "Polivé");
-    private static final List<TitleWatchPlayer> TITLE_WATCH_PLAYERS = List.of(
-            new TitleWatchPlayer("eu", "stormscale", "bucothered"),
-            new TitleWatchPlayer("eu", "stormscale", "lazozero"),
-            new TitleWatchPlayer("eu", "stormscale", "linqq"),
-            new TitleWatchPlayer("eu", "Darksorrow", "Felmm"),
-            new TitleWatchPlayer("eu", "stormscale", "Zsmodk"),
-            new TitleWatchPlayer("eu", "Tarren Mill", "Polivé")
-    );
+    private static final Duration SEASON_RECAP_CACHE_TTL = Duration.ofHours(24);
+    private static final Duration FAILED_SEASON_RECAP_CACHE_TTL = Duration.ofMinutes(10);
+    private static final String MIDNIGHT_SEASON_ONE = "season-mn-1";
     private static final Map<String, List<Long>> MIDNIGHT_MATERIAL_IDS = Map.ofEntries(
             Map.entry("refulgent copper ore", List.of(237359L, 237361L)),
             Map.entry("umbral tin ore", List.of(237362L, 237363L)),
@@ -66,6 +69,7 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     );
 
     private final String token;
+    private final long adminUserId;
     private final TelegramClient client;
     private final RaiderIoClient raiderIoClient;
     private final RaiderIoDefaultGuildProperties defaultGuildProps;
@@ -74,13 +78,21 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     private final BlizzardItemService itemService;
     private final BlizzardMountService mountService;
     private final TimeToGoCommandService timeToGoCommands;
+    private final RaiderIoAbandonedRunService abandonedRunService;
+    private final TrackedPlayerService trackedPlayerService;
+    private final VaultReminderService vaultReminderService;
+    private final WarcraftLogsStatisticsService warcraftLogsStatisticsService;
+    private final TelegramAccessPolicy telegramAccessPolicy;
+    private final TelegramBotUserService telegramBotUserService;
     private TitleWatchCache titleWatchCache;
     private TitleWatchCache title01WatchCache;
     private TitlePredictionCache titlePredictionCache;
     private TitlePredictionCache title01PredictionCache;
+    private SeasonRunCountsCache seasonRunCountsCache;
 
     public RioBot(
             @Value("${telegram.rio.bot.token}") String token,
+            @Value("${telegram.admin-user-id:0}") long adminUserId,
             @Qualifier("rioClient") TelegramClient client,
             RaiderIoClient raiderIoClient,
             RaiderIoDefaultGuildProperties defaultGuildProps,
@@ -88,9 +100,16 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             BlizzardAuctionService auctionService,
             BlizzardItemService itemService,
             BlizzardMountService mountService,
-            TimeToGoCommandService timeToGoCommands
+            TimeToGoCommandService timeToGoCommands,
+            RaiderIoAbandonedRunService abandonedRunService,
+            TrackedPlayerService trackedPlayerService,
+            VaultReminderService vaultReminderService,
+            WarcraftLogsStatisticsService warcraftLogsStatisticsService,
+            TelegramAccessPolicy telegramAccessPolicy,
+            TelegramBotUserService telegramBotUserService
     ) {
         this.token = token;
+        this.adminUserId = adminUserId;
         this.client = client;
         this.raiderIoClient = raiderIoClient;
         this.defaultGuildProps = defaultGuildProps;
@@ -99,6 +118,12 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         this.itemService = itemService;
         this.mountService = mountService;
         this.timeToGoCommands = timeToGoCommands;
+        this.abandonedRunService = abandonedRunService;
+        this.trackedPlayerService = trackedPlayerService;
+        this.vaultReminderService = vaultReminderService;
+        this.warcraftLogsStatisticsService = warcraftLogsStatisticsService;
+        this.telegramAccessPolicy = telegramAccessPolicy;
+        this.telegramBotUserService = telegramBotUserService;
     }
 
     @Override
@@ -121,6 +146,206 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         String cmd = text.split("\\s+")[0];
         int at = cmd.indexOf('@');
         if (at != -1) cmd = cmd.substring(0, at);
+
+        Long senderUserId = update.getMessage().getFrom() == null
+                ? null
+                : update.getMessage().getFrom().getId();
+
+        if (cmd.equals("/myid")) {
+            send(chatId, formatTelegramIdentity(update));
+            return;
+        }
+
+        if (!telegramAccessPolicy.isAllowed(chatId, senderUserId)) {
+            return;
+        }
+
+        if (cmd.equals("/groupid") || cmd.equals("/chatid")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            send(chatId, "Chat ID: " + chatId);
+            return;
+        }
+
+        if (cmd.equals("/users") || cmd.equals("/userlist")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            send(chatId, formatTelegramUsers());
+            return;
+        }
+
+        if (cmd.equals("/useradd")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            String[] parts = text.split("\\s+", 3);
+            if (parts.length < 2) {
+                send(chatId, "Usage: /useradd <telegramUserId> [display name]\n"
+                        + "Example: /useradd 123456789 Alice");
+                return;
+            }
+            Long telegramUserId = parseLong(parts[1]);
+            if (telegramUserId == null || telegramUserId <= 0) {
+                send(chatId, "Telegram user ID must be a positive number.");
+                return;
+            }
+            String displayName = parts.length == 3 ? parts[2].trim() : null;
+            try {
+                telegramBotUserService.addOrEnable(telegramUserId, displayName);
+                telegramAccessPolicy.userAccessChanged(telegramUserId);
+                send(chatId, "Telegram user " + telegramUserId + " is now allowed.");
+            } catch (IllegalArgumentException e) {
+                send(chatId, "Could not add user: " + e.getMessage());
+            }
+            return;
+        }
+
+        if (cmd.equals("/userdisable") || cmd.equals("/userenable")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            String[] parts = text.split("\\s+");
+            if (parts.length != 2) {
+                send(chatId, "Usage: " + cmd + " <telegramUserId>");
+                return;
+            }
+            Long telegramUserId = parseLong(parts[1]);
+            if (telegramUserId == null || telegramUserId <= 0) {
+                send(chatId, "Telegram user ID must be a positive number.");
+                return;
+            }
+            boolean active = cmd.equals("/userenable");
+            try {
+                telegramBotUserService.setActive(telegramUserId, active);
+                telegramAccessPolicy.userAccessChanged(telegramUserId);
+                send(chatId, "Telegram user " + telegramUserId
+                        + (active ? " enabled." : " disabled."));
+            } catch (IllegalArgumentException e) {
+                send(chatId, "Could not update user: " + e.getMessage());
+            }
+            return;
+        }
+
+        if (cmd.equals("/profiles") || cmd.equals("/profilelist")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            send(chatId, formatPlayerProfiles());
+            return;
+        }
+
+        if (cmd.equals("/profileadd")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            String[] parts = text.split("\\s+");
+            if (parts.length != 5) {
+                send(chatId, "Usage: /profileadd <profile> <region> <realm> <character>\n"
+                        + "Example: /profileadd Alice eu stormscale Alicechar");
+                return;
+            }
+            try {
+                trackedPlayerService.addProfile(parts[1], parts[2], parts[3], parts[4]);
+                send(chatId, "Profile " + parts[1] + " added with selected character " + parts[4] + ".");
+            } catch (IllegalArgumentException e) {
+                send(chatId, "Could not add profile: " + e.getMessage());
+            }
+            return;
+        }
+
+        if (cmd.equals("/profileswitch")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            String[] parts = text.split("\\s+");
+            if (parts.length != 5) {
+                send(chatId, "Usage: /profileswitch <profile> <region> <realm> <character>\n"
+                        + "Example: /profileswitch Alice eu tarren-mill Alicealt");
+                return;
+            }
+            try {
+                trackedPlayerService.switchCharacter(parts[1], parts[2], parts[3], parts[4]);
+                send(chatId, "Profile " + parts[1] + " now uses " + parts[4]
+                        + ". The previous character was kept as an alt.");
+            } catch (IllegalArgumentException e) {
+                send(chatId, "Could not switch character: " + e.getMessage());
+            }
+            return;
+        }
+
+        if (cmd.equals("/profiledisable") || cmd.equals("/profileenable")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            String[] parts = text.split("\\s+");
+            if (parts.length != 2) {
+                send(chatId, "Usage: " + cmd + " <profile>");
+                return;
+            }
+            boolean active = cmd.equals("/profileenable");
+            try {
+                trackedPlayerService.setProfileActive(parts[1], active);
+                send(chatId, "Profile " + parts[1] + (active ? " enabled." : " disabled."));
+            } catch (IllegalArgumentException e) {
+                send(chatId, "Could not update profile: " + e.getMessage());
+            }
+            return;
+        }
+
+        if (cmd.equals("/vaultremindernow")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            send(chatId, vaultReminderService.checkNowMessage());
+            return;
+        }
+
+        if (cmd.equals("/avginterrupts") || cmd.equals("/wclinterrupts")) {
+            send(chatId, formatWarcraftLogsStatistic(
+                    "TOP INTRUPT MASINA",
+                    "Average interrupts per logged M+ dungeon",
+                    PlayerStatistics::averageInterrupts,
+                    " interrupts",
+                    PlayerStatistics::dungeonRuns,
+                    "logged dungeons"
+            ));
+            return;
+        }
+
+        if (cmd.equals("/avgdeaths") || cmd.equals("/wcldeaths")) {
+            send(chatId, formatWarcraftLogsStatistic(
+                    "MOST FLOOR POV",
+                    "Average deaths per logged M+ dungeon",
+                    PlayerStatistics::averageDeaths,
+                    " deaths",
+                    PlayerStatistics::dungeonRuns,
+                    "logged dungeons"
+            ));
+            return;
+        }
+
+        if (cmd.equals("/avglogs") || cmd.equals("/avgparse") || cmd.equals("/wclaverage")) {
+            send(chatId, formatWarcraftLogsStatistic(
+                    null,
+                    "Average per-key Warcraft Logs parse",
+                    PlayerStatistics::averageParsePercentage,
+                    "%",
+                    PlayerStatistics::parsedDungeonRuns,
+                    "parsed dungeons"
+            ));
+            return;
+        }
 
         if (cmd.equals("/affixes")) {
             JsonNode data = raiderIoClient.getWeeklyAffixes("eu", "en");
@@ -300,6 +525,21 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             return;
         }
 
+        if (cmd.equals("/seasonrecap") || cmd.equals("/recap")) {
+            send(chatId, formatSeasonRecap());
+            return;
+        }
+
+        if (cmd.equals("/seasonrecapdepleted")) {
+            send(chatId, formatSeasonRecapDepleted());
+            return;
+        }
+
+        if (cmd.equals("/seasonrecapabandoned")) {
+            send(chatId, formatSeasonRecapAbandoned());
+            return;
+        }
+
         if (cmd.equals("/road") || cmd.equals("/travel") || cmd.equals("/timetogo")) {
             send(chatId, timeToGoCommands.formatCurrent(text));
             return;
@@ -311,6 +551,10 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         }
 
         if (cmd.equals("/timetogoimport30") || cmd.equals("/roadimport30") || cmd.equals("/travelimport30")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
             try {
                 send(chatId, timeToGoCommands.submitHistoricalImport());
             } catch (Exception e) {
@@ -320,6 +564,10 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         }
 
         if (cmd.equals("/timetogoimportstatus") || cmd.equals("/roadimportstatus") || cmd.equals("/travelimportstatus")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
             try {
                 send(chatId, timeToGoCommands.refreshHistoricalImport());
             } catch (Exception e) {
@@ -356,19 +604,334 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
 
         if (checkRio(cmd, text, chatId)) return;
 
-        // Optional help
-        if (cmd.equals("/help")) {
-            send(chatId, "Commands:\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
+        // Public help deliberately omits administration and TomTom commands.
+        if (cmd.equals("/help") || cmd.equals("/commands")) {
+            send(chatId, "Commands:\n/myid\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
+            return;
+        }
+
+        if (cmd.equals("/help-admin")) {
+            if (!isAdmin(update)) {
+                send(chatId, adminOnlyMessage());
+                return;
+            }
+            send(chatId, "All commands:\n/help\n/myid\n/groupid\n/users\n/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n/userenable <telegramUserId>\n/profiles\n/profileadd <profile> <region> <realm> <character>\n/profileswitch <profile> <region> <realm> <character>\n/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
         }
     }
 
+    private String formatWarcraftLogsStatistic(
+            String winnerTitle,
+            String title,
+            Function<PlayerStatistics, BigDecimal> valueExtractor,
+            String suffix,
+            ToIntFunction<PlayerStatistics> runCountExtractor,
+            String runCountLabel
+    ) {
+        List<PlayerStatistics> statistics;
+        try {
+            statistics = warcraftLogsStatisticsService.statistics();
+        } catch (Exception e) {
+            return "Warcraft Logs lookup failed: " + e.getMessage();
+        }
+
+        List<PlayerStatistics> sorted = statistics.stream()
+                .sorted(Comparator.comparing(
+                        valueExtractor,
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                ))
+                .toList();
+        StringBuilder sb = new StringBuilder();
+        if (winnerTitle != null) {
+            sorted.stream()
+                    .filter(player -> valueExtractor.apply(player) != null)
+                    .findFirst()
+                    .ifPresent(winner -> sb.append(winnerTitle)
+                            .append(": ")
+                            .append(winner.profileName())
+                            .append("\n\n"));
+        }
+        sb.append(title).append("\n");
+        for (PlayerStatistics player : sorted) {
+            sb.append("• ").append(player.profileName()).append(": ");
+            BigDecimal value = valueExtractor.apply(player);
+            if (value == null) {
+                sb.append("n/a");
+            } else {
+                sb.append(value.stripTrailingZeros().toPlainString()).append(suffix);
+            }
+            sb.append(" (").append(runCountExtractor.applyAsInt(player))
+                    .append(" ").append(runCountLabel).append(")");
+            if (player.error() != null) {
+                sb.append(" [").append(player.error()).append("]");
+            }
+            sb.append("\n");
+        }
+        sb.append("\nPublic uploaded logs only; unlogged and private runs are not included. "
+                + "The scan size is controlled by WARCRAFT_LOGS_RECENT_REPORT_LIMIT. "
+                + "Season: ").append(warcraftLogsStatisticsService.seasonKey())
+                .append("; reports since ").append(warcraftLogsStatisticsService.seasonStart())
+                .append(". Statistics are refreshed hourly and stored in PostgreSQL."
+                        + "\nData: https://warcraftlogs.com");
+        return sb.toString().trim();
+    }
+
+    private String formatTelegramIdentity(Update update) {
+        var user = update.getMessage().getFrom();
+        if (user == null) {
+            return "Telegram user information is unavailable for this message.";
+        }
+
+        String username = user.getUserName();
+        return "Your Telegram user ID: " + user.getId() + "\n"
+                + "Username: " + (username == null || username.isBlank() ? "not set" : "@" + username) + "\n"
+                + "Chat ID: " + update.getMessage().getChatId();
+    }
+
+    private String formatTelegramUsers() {
+        var users = telegramBotUserService.users();
+        if (users.isEmpty()) {
+            return "No Telegram users are registered. Use /useradd <telegramUserId> [display name].";
+        }
+
+        StringBuilder sb = new StringBuilder("Telegram bot users\n");
+        for (var user : users) {
+            sb.append("\n• ").append(user.getTelegramUserId());
+            if (user.getDisplayName() != null && !user.getDisplayName().isBlank()) {
+                sb.append(" — ").append(user.getDisplayName());
+            }
+            if (!user.isActive()) {
+                sb.append(" (disabled)");
+            }
+        }
+        return sb.toString();
+    }
+
+    private boolean isAdmin(Update update) {
+        return adminUserId > 0
+                && update.getMessage().getFrom() != null
+                && update.getMessage().getFrom().getId().longValue() == adminUserId;
+    }
+
+    private String adminOnlyMessage() {
+        if (adminUserId <= 0) {
+            return "Profile management is disabled because TELEGRAM_ADMIN_USER_ID is not configured. "
+                    + "Send /myid, then add that numeric user ID to the server .env.";
+        }
+        return "This command can only be used by the configured bot administrator.";
+    }
+
+    private String formatPlayerProfiles() {
+        var profiles = trackedPlayerService.profiles();
+        if (profiles.isEmpty()) {
+            return "No player profiles configured.";
+        }
+
+        StringBuilder sb = new StringBuilder("Player profiles\n");
+        for (var profile : profiles) {
+            sb.append("\n• ").append(profile.name());
+            if (!profile.active()) {
+                sb.append(" (disabled)");
+            }
+            sb.append("\n");
+            for (var character : profile.characters()) {
+                sb.append(character.selected() ? "  → " : "    ")
+                        .append(character.name())
+                        .append("-").append(character.realm())
+                        .append(" (").append(character.region()).append(")");
+                if (!character.active()) {
+                    sb.append(" [inactive]");
+                }
+                sb.append("\n");
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    private String formatSeasonRecap() {
+        StringBuilder sb = new StringBuilder("Midnight Season 1 M+ combined recap\n");
+        for (SeasonPlayerRunCounts result : getSeasonRunCounts()) {
+            if (result.runCounts() == null) {
+                sb.append("\n• ").append(result.player().name()).append(": completed-run data unavailable\n");
+                continue;
+            }
+
+            var recap = result.runCounts();
+            int completed = recap.dungeons().stream()
+                    .mapToInt(RaiderIoClient.DungeonRunCount::total)
+                    .sum();
+            int timed = recap.dungeons().stream()
+                    .mapToInt(RaiderIoClient.DungeonRunCount::timed)
+                    .sum();
+            int depleted = completed - timed;
+            var abandoned = abandonedRunService.findLatest(
+                    result.player().region(),
+                    result.player().realm(),
+                    result.player().name(),
+                    MIDNIGHT_SEASON_ONE
+            );
+
+            sb.append("\n• ").append(recap.name())
+                    .append(": ").append(timed).append(" timed | ")
+                    .append(depleted).append(" depleted | ");
+            if (abandoned.isEmpty()) {
+                sb.append("abandoned not recorded\n")
+                        .append("  Combined percentages: unavailable\n");
+            } else {
+                int abandonedRuns = abandoned.get().abandonedRuns();
+                int attempts = completed + abandonedRuns;
+                sb.append(abandonedRuns).append(" abandoned (recorded)\n")
+                        .append("  Percentages: timed ").append(formatPercentage(timed, attempts))
+                        .append(" | depleted ").append(formatPercentage(depleted, attempts))
+                        .append(" | abandoned ").append(formatPercentage(abandonedRuns, attempts))
+                        .append("\n");
+            }
+
+            appendMostPlayedAndDepleted(sb, recap.dungeons());
+            abandoned.ifPresent(summary -> sb.append("  Most abandoned: ")
+                    .append(summary.mostAbandonedDungeon())
+                    .append(" (").append(summary.mostAbandonedDungeonRuns()).append(")\n"));
+        }
+        sb.append("\nPercentages use timed + depleted + recorded abandoned as the total.\n")
+                .append("Data: https://raider.io");
+        return sb.toString().trim();
+    }
+
+    private String formatSeasonRecapDepleted() {
+        StringBuilder sb = new StringBuilder("Midnight Season 1 M+ timed/depleted recap\n");
+        for (SeasonPlayerRunCounts result : getSeasonRunCounts()) {
+            if (result.runCounts() == null) {
+                sb.append("\n• ").append(result.player().name()).append(": data unavailable\n");
+            } else {
+                appendDepletedSeasonRecap(sb, result.runCounts());
+            }
+        }
+        sb.append("\nData: https://raider.io");
+        return sb.toString().trim();
+    }
+
+    private String formatSeasonRecapAbandoned() {
+        StringBuilder sb = new StringBuilder("Midnight Season 1 M+ abandoned recap\n");
+        for (TrackedPlayer player : trackedPlayerService.seasonRecapPlayers()) {
+            var abandoned = abandonedRunService.findLatest(
+                    player.region(),
+                    player.realm(),
+                    player.name(),
+                    MIDNIGHT_SEASON_ONE
+            );
+            if (abandoned.isEmpty()) {
+                sb.append("\n• ").append(player.name()).append(": not recorded\n");
+                continue;
+            }
+
+            var summary = abandoned.get();
+            sb.append("\n• ").append(summary.characterName())
+                    .append(": ").append(summary.abandonedRuns()).append(" abandoned runs recorded")
+                    .append(" (of ").append(summary.liveTrackedRuns()).append(" live-tracked attempts, ")
+                    .append(formatPercentage(summary.abandonedRuns(), summary.liveTrackedRuns())).append(")\n")
+                    .append("  Most abandoned: ").append(summary.mostAbandonedDungeon())
+                    .append(" (").append(summary.mostAbandonedDungeonRuns()).append(")\n");
+        }
+        sb.append("\nData: manually imported Raider.IO Live Tracking snapshots");
+        return sb.toString().trim();
+    }
+
+    private List<SeasonPlayerRunCounts> getSeasonRunCounts() {
+        Instant now = Instant.now();
+        List<TrackedPlayer> players = trackedPlayerService.seasonRecapPlayers();
+        if (seasonRunCountsCache != null
+                && seasonRunCountsCache.expiresAt().isAfter(now)
+                && seasonRunCountsCache.players().equals(players)) {
+            return seasonRunCountsCache.results();
+        }
+
+        boolean hadError = false;
+        List<SeasonPlayerRunCounts> results = new ArrayList<>();
+        for (TrackedPlayer player : players) {
+            try {
+                results.add(new SeasonPlayerRunCounts(player, raiderIoClient.getMPlusSeasonRunCounts(
+                        player.region(),
+                        player.realm(),
+                        player.name(),
+                        MIDNIGHT_SEASON_ONE
+                )));
+            } catch (Exception e) {
+                hadError = true;
+                results.add(new SeasonPlayerRunCounts(player, null));
+            }
+        }
+
+        Duration ttl = hadError ? FAILED_SEASON_RECAP_CACHE_TTL : SEASON_RECAP_CACHE_TTL;
+        List<SeasonPlayerRunCounts> cachedResults = List.copyOf(results);
+        seasonRunCountsCache = new SeasonRunCountsCache(players, cachedResults, now.plus(ttl));
+        return cachedResults;
+    }
+
+    private static void appendDepletedSeasonRecap(
+            StringBuilder sb,
+            RaiderIoClient.MPlusSeasonRunCounts recap
+    ) {
+        List<RaiderIoClient.DungeonRunCount> dungeons = recap.dungeons() == null
+                ? List.of()
+                : recap.dungeons();
+        int total = dungeons.stream().mapToInt(RaiderIoClient.DungeonRunCount::total).sum();
+        int timed = dungeons.stream().mapToInt(RaiderIoClient.DungeonRunCount::timed).sum();
+
+        sb.append("\n• ").append(recap.name())
+                .append(": ").append(total).append(" completed | ")
+                .append(timed).append(" timed (").append(formatPercentage(timed, total)).append(") | ")
+                .append(total - timed).append(" depleted\n");
+
+        if (total == 0) {
+            sb.append("  Most played: none\n")
+                    .append("  Most depleted: none\n");
+            return;
+        }
+
+        appendMostPlayedAndDepleted(sb, dungeons);
+    }
+
+    private static void appendMostPlayedAndDepleted(
+            StringBuilder sb,
+            List<RaiderIoClient.DungeonRunCount> dungeons
+    ) {
+        RaiderIoClient.DungeonRunCount mostPlayed = dungeons.stream()
+                .max(Comparator.comparingInt(RaiderIoClient.DungeonRunCount::total))
+                .orElse(null);
+        RaiderIoClient.DungeonRunCount mostDepleted = dungeons.stream()
+                .max(Comparator.comparingInt(RaiderIoClient.DungeonRunCount::depleted))
+                .orElse(null);
+
+        sb.append("  Most played: ").append(formatDungeonCount(mostPlayed, false)).append("\n")
+                .append("  Most depleted: ")
+                .append(mostDepleted == null || mostDepleted.depleted() == 0
+                        ? "none"
+                        : formatDungeonCount(mostDepleted, true))
+                .append("\n");
+    }
+
+    private static String formatPercentage(int part, int total) {
+        if (total <= 0) return "0%";
+        return BigDecimal.valueOf(part)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(total), 1, RoundingMode.HALF_UP)
+                .stripTrailingZeros()
+                .toPlainString() + "%";
+    }
+
+    private static String formatDungeonCount(RaiderIoClient.DungeonRunCount dungeon, boolean depleted) {
+        if (dungeon == null) return "none";
+        int count = depleted ? dungeon.depleted() : dungeon.total();
+        return dungeon.shortName() + " (" + count + ")";
+    }
+
     private String formatWeeklyVaultWatch() {
-        if (TITLE_WATCH_PLAYERS.isEmpty()) {
+        List<TrackedPlayer> players = trackedPlayerService.vaultWatchPlayers();
+        if (players.isEmpty()) {
             return "No vault watch players configured.";
         }
 
         StringBuilder sb = new StringBuilder("Great Vault M+ watch\n");
-        for (TitleWatchPlayer player : TITLE_WATCH_PLAYERS) {
+        for (TrackedPlayer player : players) {
             try {
                 var progress = raiderIoClient.getWeeklyVaultProgress(player.region(), player.realm(), player.name());
                 sb.append("• ")
@@ -435,49 +998,60 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     }
 
     private String formatTitle01Watch() {
+        TrackedPlayer player = trackedPlayerService.titleZeroPointOneWatchPlayer().orElse(null);
+        if (player == null) {
+            return "No 0.1% title watch player configured.";
+        }
+
         Instant now = Instant.now();
-        if (title01WatchCache != null && title01WatchCache.expiresAt().isAfter(now)) {
+        List<TrackedPlayer> players = List.of(player);
+        if (title01WatchCache != null
+                && title01WatchCache.expiresAt().isAfter(now)
+                && title01WatchCache.players().equals(players)) {
             return title01WatchCache.message();
         }
 
-        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(TITLE_CUTOFF_REGION, "p999");
+        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(player.region(), "p999");
         BigDecimal cutoffScore = cutoff.score();
         StringBuilder sb = new StringBuilder("M+ 0.1% title watch\n");
         sb.append("Cutoff: ").append(formatScore(cutoffScore))
                 .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
                 .append("\n");
-        appendTitlePrediction(sb, "p999");
+        appendTitlePrediction(sb, "p999", player.region());
 
         try {
-            var score = raiderIoClient.getCurrentMPlusScore(TITLE_01_PLAYER.region(), TITLE_01_PLAYER.realm(), TITLE_01_PLAYER.name());
+            var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
             BigDecimal all = score.all();
             BigDecimal remaining = all == null ? null : cutoffScore.subtract(all).max(BigDecimal.ZERO);
             BigDecimal above = all == null ? null : all.subtract(cutoffScore).max(BigDecimal.ZERO);
             sb.append("• ").append(score.name()).append(": ").append(formatTitleScoreLine(all, remaining, above));
         } catch (Exception e) {
-            sb.append("• ").append(TITLE_01_PLAYER.name()).append(": error: ").append(e.getMessage());
+            sb.append("• ").append(player.name()).append(": error: ").append(e.getMessage());
         }
 
         String message = sb.toString().trim();
-        title01WatchCache = new TitleWatchCache(message, now.plus(TITLE_WATCH_CACHE_TTL));
+        title01WatchCache = new TitleWatchCache(message, players, now.plus(TITLE_WATCH_CACHE_TTL));
         return message;
     }
 
     private String formatTitleWatch() {
-        if (TITLE_WATCH_PLAYERS.isEmpty()) {
+        List<TrackedPlayer> players = trackedPlayerService.titleWatchPlayers();
+        if (players.isEmpty()) {
             return "No title watch players configured.";
         }
 
         Instant now = Instant.now();
-        if (titleWatchCache != null && titleWatchCache.expiresAt().isAfter(now)) {
+        if (titleWatchCache != null
+                && titleWatchCache.expiresAt().isAfter(now)
+                && titleWatchCache.players().equals(players)) {
             return titleWatchCache.message();
         }
 
-        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(TITLE_CUTOFF_REGION);
+        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(players.getFirst().region());
         BigDecimal cutoffScore = cutoff.score();
 
         List<TitleWatchResult> results = new ArrayList<>();
-        for (TitleWatchPlayer player : TITLE_WATCH_PLAYERS) {
+        for (TrackedPlayer player : players) {
             try {
                 var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
                 BigDecimal all = score.all();
@@ -498,7 +1072,7 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         sb.append("Cutoff: ").append(formatScore(cutoffScore))
                 .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
                 .append("\n");
-        appendTitlePrediction(sb, "p990");
+        appendTitlePrediction(sb, "p990", players.getFirst().region());
         for (TitleWatchResult result : results) {
             sb.append("• ")
                     .append(result.name()).append(": ");
@@ -520,12 +1094,12 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         }
 
         String message = sb.toString().trim();
-        titleWatchCache = new TitleWatchCache(message, now.plus(TITLE_WATCH_CACHE_TTL));
+        titleWatchCache = new TitleWatchCache(message, players, now.plus(TITLE_WATCH_CACHE_TTL));
         return message;
     }
 
-    private void appendTitlePrediction(StringBuilder sb, String percentileKey) {
-        var prediction = getCachedTitlePrediction(percentileKey);
+    private void appendTitlePrediction(StringBuilder sb, String percentileKey, String region) {
+        var prediction = getCachedTitlePrediction(percentileKey, region);
         if (prediction == null) {
             sb.append("Predicted season end: n/a\n");
             return;
@@ -537,16 +1111,16 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
                 .append("\n");
     }
 
-    private RaiderIoClient.MPlusTitlePrediction getCachedTitlePrediction(String percentileKey) {
+    private RaiderIoClient.MPlusTitlePrediction getCachedTitlePrediction(String percentileKey, String region) {
         Instant now = Instant.now();
         TitlePredictionCache cache = "p999".equals(percentileKey) ? title01PredictionCache : titlePredictionCache;
-        if (cache != null && cache.expiresAt().isAfter(now)) {
+        if (cache != null && cache.expiresAt().isAfter(now) && cache.region().equalsIgnoreCase(region)) {
             return cache.prediction();
         }
 
         try {
-            var prediction = raiderIoClient.getCurrentMPlusTitlePrediction(TITLE_CUTOFF_REGION, percentileKey);
-            var nextCache = new TitlePredictionCache(prediction, now.plus(TITLE_PREDICTION_CACHE_TTL));
+            var prediction = raiderIoClient.getCurrentMPlusTitlePrediction(region, percentileKey);
+            var nextCache = new TitlePredictionCache(prediction, region, now.plus(TITLE_PREDICTION_CACHE_TTL));
             if ("p999".equals(percentileKey)) {
                 title01PredictionCache = nextCache;
             } else {
@@ -554,7 +1128,7 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
             }
             return prediction;
         } catch (Exception e) {
-            return cache == null ? null : cache.prediction();
+            return cache == null || !cache.region().equalsIgnoreCase(region) ? null : cache.prediction();
         }
     }
 
@@ -768,9 +1342,6 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
         return gold + "g " + silver + "s";
     }
 
-    private record TitleWatchPlayer(String region, String realm, String name) {
-    }
-
     private record TitleWatchResult(
             String name,
             String realm,
@@ -782,10 +1353,27 @@ public class RioBot implements SpringLongPollingBot, LongPollingSingleThreadUpda
     ) {
     }
 
-    private record TitleWatchCache(String message, Instant expiresAt) {
+    private record TitleWatchCache(String message, List<TrackedPlayer> players, Instant expiresAt) {
     }
 
-    private record TitlePredictionCache(RaiderIoClient.MPlusTitlePrediction prediction, Instant expiresAt) {
+    private record TitlePredictionCache(
+            RaiderIoClient.MPlusTitlePrediction prediction,
+            String region,
+            Instant expiresAt
+    ) {
+    }
+
+    private record SeasonPlayerRunCounts(
+            TrackedPlayer player,
+            RaiderIoClient.MPlusSeasonRunCounts runCounts
+    ) {
+    }
+
+    private record SeasonRunCountsCache(
+            List<TrackedPlayer> players,
+            List<SeasonPlayerRunCounts> results,
+            Instant expiresAt
+    ) {
     }
 
 }

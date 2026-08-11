@@ -166,6 +166,56 @@ public class RaiderIoClient {
         return new WeeklyVaultProgress(resolvedName, resolvedRealm, region, runs, profileUrl);
     }
 
+    public MPlusSeasonRunCounts getMPlusSeasonRunCounts(
+            String region,
+            String realm,
+            String name,
+            String season
+    ) {
+        String body = rio.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/v1/characters/profile")
+                        .queryParam("region", region)
+                        .queryParam("realm", realm)
+                        .queryParam("name", name)
+                        .queryParam("fields", "mythic_plus_dungeon_run_counts:" + season)
+                        .build())
+                .retrieve()
+                .body(String.class);
+
+        JsonNode profile;
+        try {
+            profile = json.readTree(body);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse Raider.IO season recap JSON", e);
+        }
+
+        String resolvedName = profile.path("name").asText(name);
+        String resolvedRealm = profile.path("realm").asText(realm);
+        String profileUrl = profile.path("profile_url").asText("");
+        List<DungeonRunCount> dungeons = new java.util.ArrayList<>();
+
+        JsonNode runCounts = profile.path("mythic_plus_dungeon_run_counts");
+        if (runCounts.isArray()) {
+            for (JsonNode runCount : runCounts) {
+                String dungeon = runCount.path("dungeon").asText("Unknown dungeon");
+                String shortName = runCount.path("short_name").asText(dungeon);
+                int total = Math.max(0, runCount.path("season_runs_total").asInt(0));
+                int timed = Math.max(0, runCount.path("season_runs_timed").asInt(0));
+                dungeons.add(new DungeonRunCount(dungeon, shortName, total, Math.min(timed, total)));
+            }
+        }
+
+        return new MPlusSeasonRunCounts(
+                resolvedName,
+                resolvedRealm,
+                region,
+                season,
+                List.copyOf(dungeons),
+                profileUrl
+        );
+    }
+
     public MPlusTitleCutoff getCurrentMPlusTitleCutoff(String region) {
         return getCurrentMPlusTitleCutoff(region, "p990");
     }
@@ -337,6 +387,22 @@ public class RaiderIoClient {
     }
 
     public record MPlusRun(int level, String dungeon, String completedAt) {
+    }
+
+    public record MPlusSeasonRunCounts(
+            String name,
+            String realm,
+            String region,
+            String season,
+            List<DungeonRunCount> dungeons,
+            String profileUrl
+    ) {
+    }
+
+    public record DungeonRunCount(String dungeon, String shortName, int total, int timed) {
+        public int depleted() {
+            return total - timed;
+        }
     }
 
 }

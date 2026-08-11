@@ -13,11 +13,12 @@ public class BlizzardMountService {
 
     private final BlizzardApiClient api;
     private final BlizzardApiProperties props;
-    private final BlizzardCache<MountProgress> mountCache = new BlizzardCache<>();
+    private final BlizzardCache<MountProgress> mountCache;
 
     public BlizzardMountService(BlizzardApiClient api, BlizzardApiProperties props) {
         this.api = api;
         this.props = props;
+        this.mountCache = new BlizzardCache<>(Math.max(1, props.cache().maxItemEntries()), value -> 1);
     }
 
     public MountProgress getMountProgress(String realm, String characterName) {

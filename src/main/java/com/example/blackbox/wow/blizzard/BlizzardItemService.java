@@ -17,13 +17,17 @@ public class BlizzardItemService {
     private final BlizzardApiClient api;
     private final BlizzardApiProperties props;
 
-    private final BlizzardCache<ItemRef> byNameCache = new BlizzardCache<>();
-    private final BlizzardCache<ItemRef> byIdCache = new BlizzardCache<>();
-    private final BlizzardCache<List<ItemRef>> exactByNameCache = new BlizzardCache<>();
+    private final BlizzardCache<ItemRef> byNameCache;
+    private final BlizzardCache<ItemRef> byIdCache;
+    private final BlizzardCache<List<ItemRef>> exactByNameCache;
 
     public BlizzardItemService(BlizzardApiClient api, BlizzardApiProperties props) {
         this.api = api;
         this.props = props;
+        long maximumEntries = Math.max(1, props.cache().maxItemEntries());
+        this.byNameCache = new BlizzardCache<>(maximumEntries, value -> 1);
+        this.byIdCache = new BlizzardCache<>(maximumEntries, value -> 1);
+        this.exactByNameCache = new BlizzardCache<>(maximumEntries, values -> Math.max(1, values.size()));
     }
 
     public ItemRef findByName(String itemName) {
