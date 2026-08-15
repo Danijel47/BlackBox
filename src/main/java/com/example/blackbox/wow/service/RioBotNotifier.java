@@ -17,11 +17,21 @@ public class RioBotNotifier {
         this.telegram = telegram;
     }
 
-    public void send(Long chatId, String text) {
+    public boolean send(Long chatId, String text) {
         try {
             telegram.execute(SendMessage.builder().chatId(chatId).text(text).build());
+            return true;
         } catch (TelegramApiException e) {
-            log.error("Failed to send message to chatId={}: {}", chatId, e.getMessage(), e);
+            log.error("Failed to send Telegram message ({})", rootCauseType(e));
+            return false;
         }
+    }
+
+    private static String rootCauseType(Throwable failure) {
+        Throwable rootCause = failure;
+        while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+            rootCause = rootCause.getCause();
+        }
+        return rootCause.getClass().getSimpleName();
     }
 }
