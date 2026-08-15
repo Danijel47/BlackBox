@@ -9,4 +9,5 @@ User=ubuntu
 StateDirectory=blackbox-monitor
 EnvironmentFile=/etc/blackbox-monitor.env
 Environment=BLACKBOX_MONITOR_STATE_DIR=/var/lib/blackbox-monitor
+Environment=BLACKBOX_TELEGRAM_FAILURE_THRESHOLD=3
 ExecStart=/opt/blackbox/scripts/monitor-vps-health.sh
