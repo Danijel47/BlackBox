@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
-@Component
+@Component("telegramApiHealthIndicator")
 public class TelegramHealthIndicator implements HealthIndicator {
 
     private static final Duration CACHE_TTL = Duration.ofSeconds(30);
