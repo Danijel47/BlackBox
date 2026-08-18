@@ -62,7 +62,15 @@ fi
 
 polling_error_count="$(grep -c 'Error received from Telegram GetUpdates Request' <<<"$recent_logs" || true)"
 if [[ "$polling_error_count" =~ ^[0-9]+$ && "$polling_error_count" -ge 5 ]]; then
-    signal_failure "$polling_error_count Telegram polling errors occurred in six minutes"
+    timeout_signal_count="$(grep -ciE 'timed out|timeout|SocketTimeoutException' <<<"$recent_logs" || true)"
+    dns_signal_count="$(grep -ciE 'UnknownHostException|name or service not known|name resolution' <<<"$recent_logs" || true)"
+    connection_signal_count="$(grep -ciE 'ConnectException|connection refused|connection reset|unexpected end of stream' <<<"$recent_logs" || true)"
+    rate_limit_signal_count="$(grep -ciE '429|too many requests|retry after' <<<"$recent_logs" || true)"
+    tls_signal_count="$(grep -ciE 'SSLException|SSLHandshakeException|certificate' <<<"$recent_logs" || true)"
+
+    echo "Telegram polling warning: $polling_error_count errors occurred in six minutes" \
+        "(timeout=$timeout_signal_count, dns=$dns_signal_count, connection=$connection_signal_count," \
+        "rate_limit=$rate_limit_signal_count, tls=$tls_signal_count)" >&2
 fi
 
 telegram_failure_count=0

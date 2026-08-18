@@ -66,8 +66,12 @@ services:
 
       SERVER_PORT: 8100
       JAVA_OPTS: ${JAVA_OPTS:--Xms128m -Xmx768m}
-      LOGGING_LEVEL_COM_EXAMPLE_BLACKBOX: INFO
-      LOGGING_LEVEL_ORG_TELEGRAM_TELEGRAMBOTS: INFO
+      BLACKBOX_LOG_FILE: /app/logs/blackbox.log
+      BLACKBOX_LOG_MAX_HISTORY: ${BLACKBOX_LOG_MAX_HISTORY:-1}
+      BLACKBOX_LOG_MAX_FILE_SIZE: ${BLACKBOX_LOG_MAX_FILE_SIZE:-10MB}
+      BLACKBOX_LOG_TOTAL_SIZE_CAP: ${BLACKBOX_LOG_TOTAL_SIZE_CAP:-20MB}
+      LOGGING_LEVEL_COM_BLACKBOX: ${LOGGING_LEVEL_COM_BLACKBOX:-INFO}
+      LOGGING_LEVEL_ORG_TELEGRAM_TELEGRAMBOTS: ${LOGGING_LEVEL_ORG_TELEGRAM_TELEGRAMBOTS:-INFO}
     ports:
       - "127.0.0.1:8100:8100"
     healthcheck:
@@ -78,11 +82,12 @@ services:
       start_period: 60s
     volumes:
       - ./helper:/app/helper:ro
+      - ./logs:/app/logs
     logging:
       driver: local
       options:
-        max-size: 10m
-        max-file: "3"
+        max-size: 5m
+        max-file: "1"
 
 volumes:
   blackbox_postgres_data:
