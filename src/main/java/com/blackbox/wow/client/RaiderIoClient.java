@@ -166,6 +166,74 @@ public class RaiderIoClient {
         return new WeeklyVaultProgress(resolvedName, resolvedRealm, region, runs, profileUrl);
     }
 
+    public List<RaidRanking> getMythicRaidRankings(String raidSlug, int limit) {
+        String body = rio.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/v1/raiding/raid-rankings")
+                        .queryParam("raid", raidSlug)
+                        .queryParam("difficulty", "mythic")
+                        .queryParam("region", "world")
+                        .queryParam("limit", Math.max(1, Math.min(limit, 200)))
+                        .queryParam("page", 0)
+                        .build())
+                .retrieve()
+                .body(String.class);
+
+        try {
+            return parseRaidRankings(json.readTree(body));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse Raider.IO raid rankings JSON", e);
+        }
+    }
+
+    static List<RaidRanking> parseRaidRankings(JsonNode response) {
+        JsonNode rankingNodes = response.path("raidRankings");
+        if (!rankingNodes.isArray()) {
+            return List.of();
+        }
+
+        List<RaidRanking> rankings = new java.util.ArrayList<>();
+        for (JsonNode rankingNode : rankingNodes) {
+            JsonNode guild = rankingNode.path("guild");
+            String guildName = firstText(guild, "displayName", "name");
+            if (guildName.isBlank()) {
+                continue;
+            }
+            rankings.add(new RaidRanking(
+                    Math.max(0, rankingNode.path("rank").asInt(0)),
+                    guildName,
+                    guild.path("realm").path("name").asText("Unknown realm"),
+                    guild.path("region").path("short_name").asText("World"),
+                    parseBossDefeats(rankingNode.path("encountersDefeated")),
+                    guild.path("path").asText("")
+            ));
+        }
+        return List.copyOf(rankings);
+    }
+
+    private static List<RaidBossDefeat> parseBossDefeats(JsonNode defeatNodes) {
+        if (!defeatNodes.isArray()) {
+            return List.of();
+        }
+        List<RaidBossDefeat> defeats = new java.util.ArrayList<>();
+        for (JsonNode defeatNode : defeatNodes) {
+            String slug = defeatNode.path("slug").asText("");
+            Instant firstDefeatedAt = parseInstant(defeatNode.path("firstDefeated").asText(""));
+            if (!slug.isBlank() && firstDefeatedAt != null) {
+                defeats.add(new RaidBossDefeat(slug, firstDefeatedAt));
+            }
+        }
+        return List.copyOf(defeats);
+    }
+
+    private static Instant parseInstant(String value) {
+        try {
+            return Instant.parse(value);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     public MPlusSeasonRunCounts getMPlusSeasonRunCounts(
             String region,
             String realm,
@@ -387,6 +455,19 @@ public class RaiderIoClient {
     }
 
     public record MPlusRun(int level, String dungeon, String completedAt) {
+    }
+
+    public record RaidRanking(
+            int rank,
+            String guildName,
+            String realm,
+            String region,
+            List<RaidBossDefeat> defeatedBosses,
+            String guildPath
+    ) {
+    }
+
+    public record RaidBossDefeat(String slug, Instant firstDefeatedAt) {
     }
 
     public record MPlusSeasonRunCounts(

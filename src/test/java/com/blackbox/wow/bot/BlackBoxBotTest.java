@@ -8,6 +8,7 @@ import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaiderIoAbandonedRunService;
+import com.blackbox.wow.service.RaceToWorldFirstService;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TrackedPlayerService;
@@ -50,6 +51,7 @@ class BlackBoxBotTest {
     @Mock private RaiderIoAbandonedRunService abandonedRunService;
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private VaultReminderService vaultReminderService;
+    @Mock private RaceToWorldFirstService raceToWorldFirstService;
     @Mock private WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     @Mock private TelegramAccessPolicy accessPolicy;
     @Mock private TelegramBotUserService telegramBotUserService;
@@ -205,6 +207,20 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
     }
 
+    @Test
+    void showsTheRaceToWorldFirstStandings() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/rwf");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(raceToWorldFirstService.currentStandingsMessage()).thenReturn("RWF standings");
+
+        bot().consume(update);
+
+        verify(raceToWorldFirstService).currentStandingsMessage();
+        assertThat(sentMessage().getText()).isEqualTo("RWF standings");
+    }
+
     private BlackBoxBot bot() {
         bot = new BlackBoxBot(
                 "token",
@@ -220,6 +236,7 @@ class BlackBoxBotTest {
                 abandonedRunService,
                 trackedPlayerService,
                 vaultReminderService,
+                raceToWorldFirstService,
                 warcraftLogsStatisticsService,
                 accessPolicy,
                 telegramBotUserService

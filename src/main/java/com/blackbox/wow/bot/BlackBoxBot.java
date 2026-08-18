@@ -8,6 +8,7 @@ import com.blackbox.wow.helper.RaidProgressFormatter;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaiderIoAbandonedRunService;
+import com.blackbox.wow.service.RaceToWorldFirstService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
@@ -94,6 +95,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final RaiderIoAbandonedRunService abandonedRunService;
     private final TrackedPlayerService trackedPlayerService;
     private final VaultReminderService vaultReminderService;
+    private final RaceToWorldFirstService raceToWorldFirstService;
     private final WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     private final TelegramAccessPolicy telegramAccessPolicy;
     private final TelegramBotUserService telegramBotUserService;
@@ -124,6 +126,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             RaiderIoAbandonedRunService abandonedRunService,
             TrackedPlayerService trackedPlayerService,
             VaultReminderService vaultReminderService,
+            RaceToWorldFirstService raceToWorldFirstService,
             WarcraftLogsStatisticsService warcraftLogsStatisticsService,
             TelegramAccessPolicy telegramAccessPolicy,
             TelegramBotUserService telegramBotUserService
@@ -141,6 +144,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.abandonedRunService = abandonedRunService;
         this.trackedPlayerService = trackedPlayerService;
         this.vaultReminderService = vaultReminderService;
+        this.raceToWorldFirstService = raceToWorldFirstService;
         this.warcraftLogsStatisticsService = warcraftLogsStatisticsService;
         this.telegramAccessPolicy = telegramAccessPolicy;
         this.telegramBotUserService = telegramBotUserService;
@@ -482,8 +486,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             ));
             case "/guild" -> handled(() -> handleGuildCommand(context));
             case "/guildlist" -> handled(() -> send(context.chatId(), formatAvailableRaids()));
+            case "/rwf" -> handled(() -> sendRaceToWorldFirstStandings(context.chatId()));
             default -> false;
         };
+    }
+
+    private void sendRaceToWorldFirstStandings(long chatId) {
+        try {
+            send(chatId, raceToWorldFirstService.currentStandingsMessage());
+        } catch (RuntimeException e) {
+            send(chatId, "Could not fetch the Race to World First standings from Raider.IO.");
+        }
     }
 
     private void handleGuildCommand(CommandContext context) {
@@ -802,7 +815,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n"
                 + "/mains\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
                 + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
-                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n"
+                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n/mount-achiv <realm> <name>\n"
                 + "/price <itemId|item name> [realm-if-itemId]\n"
                 + "/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs";
     }
@@ -820,7 +833,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 + "/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n"
                 + "/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
                 + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
-                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n"
+                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n"
                 + "/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n"
                 + "/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n"
                 + "/price <itemId|item name> [realm-if-itemId]\n"
