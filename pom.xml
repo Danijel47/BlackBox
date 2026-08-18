@@ -8,7 +8,7 @@
         <version>4.0.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
-    <groupId>com.example</groupId>
+    <groupId>com.blackbox</groupId>
     <artifactId>BlackBox</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>BlackBox</name>
