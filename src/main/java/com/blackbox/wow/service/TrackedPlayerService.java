@@ -3,12 +3,14 @@ package com.blackbox.wow.service;
 import com.blackbox.wow.entity.PlayerProfileEntity;
 import com.blackbox.wow.entity.TrackedCharacterEntity;
 import com.blackbox.wow.repository.PlayerProfileRepository;
+import com.blackbox.wow.repository.TelegramBotUserRepository;
 import com.blackbox.wow.repository.TrackedCharacterRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 @Service
@@ -16,13 +18,16 @@ public class TrackedPlayerService {
 
     private final PlayerProfileRepository profileRepository;
     private final TrackedCharacterRepository characterRepository;
+    private final TelegramBotUserRepository telegramUserRepository;
 
     public TrackedPlayerService(
             PlayerProfileRepository profileRepository,
-            TrackedCharacterRepository characterRepository
+            TrackedCharacterRepository characterRepository,
+            TelegramBotUserRepository telegramUserRepository
     ) {
         this.profileRepository = profileRepository;
         this.characterRepository = characterRepository;
+        this.telegramUserRepository = telegramUserRepository;
     }
 
     @Transactional(readOnly = true)
@@ -64,20 +69,13 @@ public class TrackedPlayerService {
     @Transactional(readOnly = true)
     public List<PlayerProfile> profiles() {
         return profileRepository.findAllByOrderByDisplayOrderAscIdAsc().stream()
-                .map(profile -> new PlayerProfile(
-                        profile.getProfileName(),
-                        profile.isActive(),
-                        characterRepository.findByProfileIdOrderBySelectedDescIdAsc(profile.getId()).stream()
-                                .map(character -> new ProfileCharacter(
-                                        character.getRegion(),
-                                        character.getRealm(),
-                                        character.getCharacterName(),
-                                        character.isSelected(),
-                                        character.isActive()
-                                ))
-                                .toList()
-                ))
+                .map(this::toProfile)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PlayerProfile> profileForTelegramUser(long telegramUserId) {
+        return profileRepository.findByTelegramUserId(telegramUserId).map(this::toProfile);
     }
 
     @Transactional
@@ -92,7 +90,7 @@ public class TrackedPlayerService {
             PlayerProfileEntity profile = profileRepository.saveAndFlush(
                     new PlayerProfileEntity(profileName, profileRepository.findMaximumDisplayOrder() + 1)
             );
-            characterRepository.save(new TrackedCharacterEntity(
+            characterRepository.saveAndFlush(new TrackedCharacterEntity(
                     profile,
                     normalizeRegion(region),
                     normalizeRealm(realm),
@@ -100,7 +98,7 @@ public class TrackedPlayerService {
                     true
             ));
         } catch (DataIntegrityViolationException e) {
-            throw new IllegalArgumentException("That profile or character already exists.");
+            throw new IllegalArgumentException("That profile or character already exists.", e);
         }
     }
 
@@ -134,6 +132,81 @@ public class TrackedPlayerService {
     }
 
     @Transactional
+    public void addCharacter(String profileName, String realm, String characterName) {
+        validateCharacter("eu", realm, characterName);
+        PlayerProfileEntity profile = requireProfile(profileName);
+        boolean alreadyRegistered = characterRepository
+                .findByProfileIdAndRegionIgnoreCaseAndRealmIgnoreCaseAndCharacterNameIgnoreCase(
+                        profile.getId(),
+                        "eu",
+                        normalizeRealm(realm),
+                        characterName
+                )
+                .isPresent();
+        if (alreadyRegistered) {
+            throw new IllegalArgumentException("Character is already registered to this profile.");
+        }
+
+        try {
+            characterRepository.saveAndFlush(new TrackedCharacterEntity(
+                    profile,
+                    "eu",
+                    normalizeRealm(realm),
+                    characterName,
+                    false
+            ));
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalArgumentException("Character could not be added because it already exists.", e);
+        }
+    }
+
+    @Transactional
+    public void switchOwnedCharacter(long telegramUserId, String realm, String characterName) {
+        validateCharacter("eu", realm, characterName);
+        PlayerProfileEntity profile = profileRepository.findByTelegramUserId(telegramUserId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No player profile is linked to your Telegram account."
+                ));
+        TrackedCharacterEntity character = characterRepository
+                .findByProfileIdAndRegionIgnoreCaseAndRealmIgnoreCaseAndCharacterNameIgnoreCase(
+                        profile.getId(),
+                        "eu",
+                        normalizeRealm(realm),
+                        characterName
+                )
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "That character is not registered to your profile. Ask the bot admin to add it."
+                ));
+
+        characterRepository.clearSelectedCharacter(profile.getId());
+        character.select();
+        characterRepository.save(character);
+    }
+
+    @Transactional
+    public void linkProfile(long telegramUserId, String profileName) {
+        if (telegramUserId <= 0 || !telegramUserRepository.existsById(telegramUserId)) {
+            throw new IllegalArgumentException("Register the Telegram user with /useradd first.");
+        }
+        PlayerProfileEntity profile = requireProfile(profileName);
+        Optional<PlayerProfileEntity> linkedProfile = profileRepository.findByTelegramUserId(telegramUserId);
+        if (linkedProfile.isPresent() && !linkedProfile.get().getId().equals(profile.getId())) {
+            throw new IllegalArgumentException("That Telegram user already has a player profile.");
+        }
+        try {
+            profile.assignTelegramUser(telegramUserId);
+            profileRepository.saveAndFlush(profile);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalArgumentException("That Telegram user or profile is already linked.", e);
+        }
+    }
+
+    @Transactional
+    public void unlinkProfile(String profileName) {
+        requireProfile(profileName).clearTelegramUser();
+    }
+
+    @Transactional
     public void setProfileActive(String profileName, boolean active) {
         PlayerProfileEntity profile = requireProfile(profileName);
         profile.setActive(active);
@@ -162,6 +235,26 @@ public class TrackedPlayerService {
                 ));
     }
 
+    private PlayerProfile toProfile(PlayerProfileEntity profile) {
+        List<ProfileCharacter> characters = characterRepository
+                .findByProfileIdOrderBySelectedDescIdAsc(profile.getId())
+                .stream()
+                .map(character -> new ProfileCharacter(
+                        character.getRegion(),
+                        character.getRealm(),
+                        character.getCharacterName(),
+                        character.isSelected(),
+                        character.isActive()
+                ))
+                .toList();
+        return new PlayerProfile(
+                profile.getProfileName(),
+                profile.getTelegramUserId(),
+                profile.isActive(),
+                characters
+        );
+    }
+
     private static void validateProfileName(String profileName) {
         if (profileName == null || !profileName.matches("[\\p{L}\\p{N}_-]{1,64}")) {
             throw new IllegalArgumentException("Profile name must be 1-64 letters, numbers, _ or -.");
@@ -181,17 +274,17 @@ public class TrackedPlayerService {
     }
 
     private static String normalizeRegion(String region) {
-        return region.toLowerCase();
+        return region.toLowerCase(Locale.ROOT);
     }
 
     private static String normalizeRealm(String realm) {
-        return realm.toLowerCase().replace(' ', '-');
+        return realm.toLowerCase(Locale.ROOT).replace(' ', '-');
     }
 
     public record TrackedPlayer(long profileId, String profileName, String region, String realm, String name) {
     }
 
-    public record PlayerProfile(String name, boolean active, List<ProfileCharacter> characters) {
+    public record PlayerProfile(String name, Long telegramUserId, boolean active, List<ProfileCharacter> characters) {
     }
 
     public record ProfileCharacter(

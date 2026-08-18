@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 public class WowTuningNewsNotifierService {
 
     private static final Pattern TUNING_SUBJECT = Pattern.compile(
-            "\\b(class|classes|pve|pvp|tank|healer|dps|specialization|spec)\\b",
+            "\\b(class|classes|pve|pvp|tank|healer|dps|specialization|spec|dungeon|dungeons)\\b",
             Pattern.CASE_INSENSITIVE
     );
     private static final DateTimeFormatter MESSAGE_TIME = DateTimeFormatter.ofPattern(

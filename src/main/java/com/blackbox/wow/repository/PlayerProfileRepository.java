@@ -24,6 +24,8 @@ public interface PlayerProfileRepository extends JpaRepository<PlayerProfileEnti
 
     Optional<PlayerProfileEntity> findByProfileNameIgnoreCase(String profileName);
 
+    Optional<PlayerProfileEntity> findByTelegramUserId(long telegramUserId);
+
     @Query("select coalesce(max(profile.displayOrder), 0) from PlayerProfileEntity profile")
     int findMaximumDisplayOrder();
 }

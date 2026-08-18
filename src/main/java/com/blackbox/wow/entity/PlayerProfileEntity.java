@@ -24,6 +24,9 @@ public class PlayerProfileEntity {
     @Column(name = "active", nullable = false)
     private boolean active;
 
+    @Column(name = "telegram_user_id")
+    private Long telegramUserId;
+
     @Column(name = "season_recap_enabled", nullable = false)
     private boolean seasonRecapEnabled;
 
@@ -65,6 +68,10 @@ public class PlayerProfileEntity {
         return active;
     }
 
+    public Long getTelegramUserId() {
+        return telegramUserId;
+    }
+
     public boolean isSeasonRecapEnabled() {
         return seasonRecapEnabled;
     }
@@ -83,5 +90,13 @@ public class PlayerProfileEntity {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public void assignTelegramUser(long userId) {
+        this.telegramUserId = userId;
+    }
+
+    public void clearTelegramUser() {
+        this.telegramUserId = null;
     }
 }

@@ -41,7 +41,7 @@ class WowTuningNewsNotifierServiceTest {
     private BlackBoxBotNotifier notifier;
 
     @Test
-    void acceptsLiveClassAndPvpTuningTitles() {
+    void acceptsSupportedLiveTuningTitles() {
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Season 2 Class Tuning Incoming", "Live"))).isTrue();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(
                 "Even More Class Tuning Added - Season 2 Class Tuning Incoming with Weekly Reset",
@@ -49,11 +49,24 @@ class WowTuningNewsNotifierServiceTest {
         ))).isTrue();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Upcoming PvP Tuning Changes", "Live"))).isTrue();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Tank, Healer and DPS Tuning", "Live"))).isTrue();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(
+                "Buffs to Algeth'ar Academy and Windrunner Spire for Mythic+ Week - Upcoming Dungeon Tuning Incoming",
+                "Live"
+        ))).isTrue();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(
+                "Al'gethar Academy Timer Increased Again - Upcoming Mythic+ Dungeon Tuning",
+                "Live"
+        ))).isTrue();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(
+                "Mythic+ Dungeon Tuning with Season 2 Launch",
+                "Live"
+        ))).isTrue();
     }
 
     @Test
     void rejectsPtrAndUnrelatedTuningPosts() {
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("PTR Class Tuning", "PTR"))).isFalse();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Mythic+ Dungeon Tuning", "Beta"))).isFalse();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Raid Encounter Tuning", "Live"))).isFalse();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Trinket Tuning Hotfixes", "Live"))).isFalse();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Weekly Maintenance", "Live"))).isFalse();

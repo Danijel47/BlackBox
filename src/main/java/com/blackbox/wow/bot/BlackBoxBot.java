@@ -42,6 +42,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -145,6 +146,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.telegramBotUserService = telegramBotUserService;
         this.commandHandlers = List.of(
                 this::handleUserAdministrationCommand,
+                this::handlePlayerProfileCommand,
                 this::handleProfileAdministrationCommand,
                 this::handleWarcraftInformationCommand,
                 this::handleEconomyCommand,
@@ -277,92 +279,168 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return false;
     }
 
+    private boolean handlePlayerProfileCommand(CommandContext context) {
+        return switch (context.command()) {
+            case "/profile-help" -> handled(() -> send(context.chatId(), profileHelpMessage()));
+            case "/profile" -> handled(() -> sendOwnProfile(context));
+            case "/profilemain" -> handled(() -> changeOwnMain(context));
+            case "/mains" -> handled(() -> send(context.chatId(), formatCurrentMains()));
+            default -> false;
+        };
+    }
+
+    private void sendOwnProfile(CommandContext context) {
+        Long telegramUserId = context.senderUserId();
+        if (telegramUserId == null) {
+            send(context.chatId(), "Telegram user information is unavailable for this message.");
+            return;
+        }
+        send(context.chatId(), trackedPlayerService.profileForTelegramUser(telegramUserId)
+                .map(BlackBoxBot::formatOwnPlayerProfile)
+                .orElse("No player profile is linked to your Telegram account. Ask the bot admin to link it."));
+    }
+
+    private void changeOwnMain(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 3) {
+            send(context.chatId(), "Usage: /profilemain <realm> <character>\n"
+                    + "Example: /profilemain stormscale Alicemage");
+            return;
+        }
+        Long telegramUserId = context.senderUserId();
+        if (telegramUserId == null) {
+            send(context.chatId(), "Telegram user information is unavailable for this message.");
+            return;
+        }
+
+        try {
+            trackedPlayerService.switchOwnedCharacter(telegramUserId, parts[1], parts[2]);
+            send(context.chatId(), "Your selected main is now " + parts[2] + "-" + parts[1] + " (EU).");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not change your main: " + e.getMessage());
+        }
+    }
+
     private boolean handleProfileAdministrationCommand(CommandContext context) {
-        Update update = context.update();
-        long chatId = context.chatId();
-        String text = context.text();
-        String cmd = context.command();
-
-        if (cmd.equals("/profiles") || cmd.equals("/profilelist")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            send(chatId, formatPlayerProfiles());
-            return true;
+        Runnable adminAction = switch (context.command()) {
+            case "/profiles", "/profilelist" -> () -> send(context.chatId(), formatPlayerProfiles());
+            case "/profileadd" -> () -> addProfile(context);
+            case "/profilecharadd" -> () -> addProfileCharacter(context);
+            case "/profilelink" -> () -> linkProfile(context);
+            case "/profileunlink" -> () -> unlinkProfile(context);
+            case "/profileswitch" -> () -> switchProfileCharacter(context);
+            case "/profiledisable", "/profileenable" -> () -> changeProfileStatus(context);
+            case "/vaultremindernow" -> () -> send(context.chatId(), vaultReminderService.checkNowMessage());
+            default -> null;
+        };
+        if (adminAction == null) {
+            return false;
         }
+        runAdminCommand(context, adminAction);
+        return true;
+    }
 
-        if (cmd.equals("/profileadd")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            String[] parts = text.split("\\s+");
-            if (parts.length != 5) {
-                send(chatId, "Usage: /profileadd <profile> <region> <realm> <character>\n"
-                        + "Example: /profileadd Alice eu stormscale Alicechar");
-                return true;
-            }
-            try {
-                trackedPlayerService.addProfile(parts[1], parts[2], parts[3], parts[4]);
-                send(chatId, "Profile " + parts[1] + " added with selected character " + parts[4] + ".");
-            } catch (IllegalArgumentException e) {
-                send(chatId, "Could not add profile: " + e.getMessage());
-            }
-            return true;
+    private void runAdminCommand(CommandContext context, Runnable action) {
+        if (isAdmin(context.update())) {
+            action.run();
+        } else {
+            send(context.chatId(), adminOnlyMessage());
         }
+    }
 
-        if (cmd.equals("/profileswitch")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            String[] parts = text.split("\\s+");
-            if (parts.length != 5) {
-                send(chatId, "Usage: /profileswitch <profile> <region> <realm> <character>\n"
-                        + "Example: /profileswitch Alice eu tarren-mill Alicealt");
-                return true;
-            }
-            try {
-                trackedPlayerService.switchCharacter(parts[1], parts[2], parts[3], parts[4]);
-                send(chatId, "Profile " + parts[1] + " now uses " + parts[4]
-                        + ". The previous character was kept as an alt.");
-            } catch (IllegalArgumentException e) {
-                send(chatId, "Could not switch character: " + e.getMessage());
-            }
-            return true;
+    private void addProfile(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 5) {
+            send(context.chatId(), "Usage: /profileadd <profile> <region> <realm> <character>\n"
+                    + "Example: /profileadd Alice eu stormscale Alicechar");
+            return;
         }
-
-        if (cmd.equals("/profiledisable") || cmd.equals("/profileenable")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            String[] parts = text.split("\\s+");
-            if (parts.length != 2) {
-                send(chatId, "Usage: " + cmd + " <profile>");
-                return true;
-            }
-            boolean active = cmd.equals("/profileenable");
-            try {
-                trackedPlayerService.setProfileActive(parts[1], active);
-                send(chatId, "Profile " + parts[1] + (active ? " enabled." : " disabled."));
-            } catch (IllegalArgumentException e) {
-                send(chatId, "Could not update profile: " + e.getMessage());
-            }
-            return true;
+        try {
+            trackedPlayerService.addProfile(parts[1], parts[2], parts[3], parts[4]);
+            send(context.chatId(), "Profile " + parts[1] + " added with selected character " + parts[4] + ".");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not add profile: " + e.getMessage());
         }
+    }
 
-        if (cmd.equals("/vaultremindernow")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            send(chatId, vaultReminderService.checkNowMessage());
-            return true;
+    private void addProfileCharacter(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 4) {
+            send(context.chatId(), "Usage: /profilecharadd <profile> <realm> <character>\n"
+                    + "Example: /profilecharadd Alice stormscale Alicemage");
+            return;
         }
+        try {
+            trackedPlayerService.addCharacter(parts[1], parts[2], parts[3]);
+            send(context.chatId(), parts[3] + "-" + parts[2] + " added to profile " + parts[1] + ".");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not add character: " + e.getMessage());
+        }
+    }
 
-        return false;
+    private void linkProfile(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 3) {
+            send(context.chatId(), "Usage: /profilelink <telegramUserId> <profile>\n"
+                    + "Example: /profilelink 123456789 Alice");
+            return;
+        }
+        Long telegramUserId = parseLong(parts[1]);
+        if (telegramUserId == null || telegramUserId <= 0) {
+            send(context.chatId(), "Telegram user ID must be a positive number.");
+            return;
+        }
+        try {
+            trackedPlayerService.linkProfile(telegramUserId, parts[2]);
+            send(context.chatId(), "Profile " + parts[2] + " linked to Telegram user " + telegramUserId + ".");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not link profile: " + e.getMessage());
+        }
+    }
+
+    private void unlinkProfile(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 2) {
+            send(context.chatId(), "Usage: /profileunlink <profile>");
+            return;
+        }
+        try {
+            trackedPlayerService.unlinkProfile(parts[1]);
+            send(context.chatId(), "Profile " + parts[1] + " is no longer linked to a Telegram user.");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not unlink profile: " + e.getMessage());
+        }
+    }
+
+    private void switchProfileCharacter(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 5) {
+            send(context.chatId(), "Usage: /profileswitch <profile> <region> <realm> <character>\n"
+                    + "Example: /profileswitch Alice eu tarren-mill Alicealt");
+            return;
+        }
+        try {
+            trackedPlayerService.switchCharacter(parts[1], parts[2], parts[3], parts[4]);
+            send(context.chatId(), "Profile " + parts[1] + " now uses " + parts[4]
+                    + ". The previous character was kept as an alt.");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not switch character: " + e.getMessage());
+        }
+    }
+
+    private void changeProfileStatus(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 2) {
+            send(context.chatId(), "Usage: " + context.command() + " <profile>");
+            return;
+        }
+        boolean active = context.command().equals("/profileenable");
+        try {
+            trackedPlayerService.setProfileActive(parts[1], active);
+            send(context.chatId(), "Profile " + parts[1] + (active ? " enabled." : " disabled."));
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not update profile: " + e.getMessage());
+        }
     }
 
     private boolean handleWarcraftInformationCommand(CommandContext context) {
@@ -712,7 +790,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         // Public help deliberately omits administration and TomTom commands.
         if (cmd.equals("/help") || cmd.equals("/commands")) {
-            send(chatId, "Commands:\n/myid\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
+            send(chatId, "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n/mains\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
             return true;
         }
 
@@ -721,7 +799,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 send(chatId, adminOnlyMessage());
                 return true;
             }
-            send(chatId, "All commands:\n/help\n/myid\n/groupid\n/users\n/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n/userenable <telegramUserId>\n/profiles\n/profileadd <profile> <region> <realm> <character>\n/profileswitch <profile> <region> <realm> <character>\n/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
+            send(chatId, "All commands:\n/help\n/myid\n/groupid\n/users\n/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n/userenable <telegramUserId>\n/profile\n/profile-help\n/profilemain <realm> <character>\n/mains\n/profiles\n/profileadd <profile> <region> <realm> <character>\n/profilecharadd <profile> <realm> <character>\n/profilelink <telegramUserId> <profile>\n/profileunlink <profile>\n/profileswitch <profile> <region> <realm> <character>\n/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
             return true;
         }
         return false;
@@ -843,6 +921,40 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return "This command can only be used by the configured bot administrator.";
     }
 
+    private static String profileHelpMessage() {
+        return "Player profile help\n\n"
+                + "View your registered characters:\n/profile\n\n"
+                + "Select one of your registered EU Retail characters as your main:\n"
+                + "/profilemain <realm> <character>\n"
+                + "Example: /profilemain stormscale Alicemage\n\n"
+                + "View all current group mains:\n/mains\n\n"
+                + "Only the characters registered to your profile can be selected. "
+                + "Ask the bot admin to add another character. The group statistics commands "
+                + "/avginterrupts, /avgdeaths and /avglogs follow each profile's selected main.";
+    }
+
+    private static String formatOwnPlayerProfile(TrackedPlayerService.PlayerProfile profile) {
+        StringBuilder message = new StringBuilder("Your player profile\n");
+        appendPlayerProfile(message, profile, false);
+        return message.toString().trim();
+    }
+
+    private String formatCurrentMains() {
+        List<TrackedPlayer> players = trackedPlayerService.activePlayers();
+        if (players.isEmpty()) {
+            return "No active group mains are configured.";
+        }
+
+        StringBuilder message = new StringBuilder("Current group mains\n");
+        for (TrackedPlayer player : players) {
+            message.append("\n• ").append(player.profileName())
+                    .append(" — ").append(player.name())
+                    .append("-").append(player.realm())
+                    .append(" (").append(player.region().toUpperCase(Locale.ROOT)).append(")");
+        }
+        return message.toString();
+    }
+
     private String formatPlayerProfiles() {
         var profiles = trackedPlayerService.profiles();
         if (profiles.isEmpty()) {
@@ -851,23 +963,36 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         StringBuilder sb = new StringBuilder("Player profiles\n");
         for (var profile : profiles) {
-            sb.append("\n• ").append(profile.name());
-            if (!profile.active()) {
-                sb.append(" (disabled)");
-            }
-            sb.append("\n");
-            for (var character : profile.characters()) {
-                sb.append(character.selected() ? "  → " : "    ")
-                        .append(character.name())
-                        .append("-").append(character.realm())
-                        .append(" (").append(character.region()).append(")");
-                if (!character.active()) {
-                    sb.append(" [inactive]");
-                }
-                sb.append("\n");
-            }
+            appendPlayerProfile(sb, profile, true);
         }
         return sb.toString().trim();
+    }
+
+    private static void appendPlayerProfile(
+            StringBuilder message,
+            TrackedPlayerService.PlayerProfile profile,
+            boolean showTelegramLink
+    ) {
+        message.append("\n• ").append(profile.name());
+        if (!profile.active()) {
+            message.append(" (disabled)");
+        }
+        if (showTelegramLink) {
+            message.append(profile.telegramUserId() == null
+                    ? " — Telegram: not linked"
+                    : " — Telegram: " + profile.telegramUserId());
+        }
+        message.append("\n");
+        for (var character : profile.characters()) {
+            message.append(character.selected() ? "  → " : "    ")
+                    .append(character.name())
+                    .append("-").append(character.realm())
+                    .append(" (").append(character.region().toUpperCase(Locale.ROOT)).append(")");
+            if (!character.active()) {
+                message.append(" [inactive]");
+            }
+            message.append("\n");
+        }
     }
 
     private String formatSeasonRecap() {
