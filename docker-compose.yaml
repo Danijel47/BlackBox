@@ -49,4 +49,4 @@ services:
       driver: local
       options:
         max-size: 5m
-        max-file: "1"
+        max-file: "2"
