@@ -199,84 +199,69 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private boolean handleUserAdministrationCommand(CommandContext context) {
-        Update update = context.update();
-        long chatId = context.chatId();
-        String text = context.text();
-        String cmd = context.command();
-
-        if (cmd.equals("/groupid") || cmd.equals("/chatid")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            send(chatId, "Chat ID: " + chatId);
-            return true;
+        Runnable adminAction = switch (context.command()) {
+            case "/groupid", "/chatid" -> () -> send(context.chatId(), "Chat ID: " + context.chatId());
+            case "/users", "/userlist" -> () -> send(context.chatId(), formatTelegramUsers());
+            case "/useradd" -> () -> addTelegramUser(context);
+            case "/userdisable", "/userenable" -> () -> changeTelegramUserStatus(context);
+            default -> null;
+        };
+        if (adminAction == null) {
+            return false;
         }
+        runAdminCommand(context, adminAction);
+        return true;
+    }
 
-        if (cmd.equals("/users") || cmd.equals("/userlist")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            send(chatId, formatTelegramUsers());
-            return true;
+    private void addTelegramUser(CommandContext context) {
+        String[] parts = context.text().split("\\s+", 3);
+        if (parts.length < 2) {
+            send(context.chatId(), "Usage: /useradd <telegramUserId> [display name]\n"
+                    + "Example: /useradd 123456789 Alice");
+            return;
         }
-
-        if (cmd.equals("/useradd")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            String[] parts = text.split("\\s+", 3);
-            if (parts.length < 2) {
-                send(chatId, "Usage: /useradd <telegramUserId> [display name]\n"
-                        + "Example: /useradd 123456789 Alice");
-                return true;
-            }
-            Long telegramUserId = parseLong(parts[1]);
-            if (telegramUserId == null || telegramUserId <= 0) {
-                send(chatId, "Telegram user ID must be a positive number.");
-                return true;
-            }
-            String displayName = parts.length == 3 ? parts[2].trim() : null;
-            try {
-                telegramBotUserService.addOrEnable(telegramUserId, displayName);
-                telegramAccessPolicy.userAccessChanged(telegramUserId);
-                send(chatId, "Telegram user " + telegramUserId + " is now allowed.");
-            } catch (IllegalArgumentException e) {
-                send(chatId, "Could not add user: " + e.getMessage());
-            }
-            return true;
+        Long telegramUserId = parsePositiveTelegramUserId(parts[1], context.chatId());
+        if (telegramUserId == null) {
+            return;
         }
-
-        if (cmd.equals("/userdisable") || cmd.equals("/userenable")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            String[] parts = text.split("\\s+");
-            if (parts.length != 2) {
-                send(chatId, "Usage: " + cmd + " <telegramUserId>");
-                return true;
-            }
-            Long telegramUserId = parseLong(parts[1]);
-            if (telegramUserId == null || telegramUserId <= 0) {
-                send(chatId, "Telegram user ID must be a positive number.");
-                return true;
-            }
-            boolean active = cmd.equals("/userenable");
-            try {
-                telegramBotUserService.setActive(telegramUserId, active);
-                telegramAccessPolicy.userAccessChanged(telegramUserId);
-                send(chatId, "Telegram user " + telegramUserId
-                        + (active ? " enabled." : " disabled."));
-            } catch (IllegalArgumentException e) {
-                send(chatId, "Could not update user: " + e.getMessage());
-            }
-            return true;
+        String displayName = parts.length == 3 ? parts[2].trim() : null;
+        try {
+            telegramBotUserService.addOrEnable(telegramUserId, displayName);
+            telegramAccessPolicy.userAccessChanged(telegramUserId);
+            send(context.chatId(), "Telegram user " + telegramUserId + " is now allowed.");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not add user: " + e.getMessage());
         }
+    }
 
-        return false;
+    private void changeTelegramUserStatus(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 2) {
+            send(context.chatId(), "Usage: " + context.command() + " <telegramUserId>");
+            return;
+        }
+        Long telegramUserId = parsePositiveTelegramUserId(parts[1], context.chatId());
+        if (telegramUserId == null) {
+            return;
+        }
+        boolean active = context.command().equals("/userenable");
+        try {
+            telegramBotUserService.setActive(telegramUserId, active);
+            telegramAccessPolicy.userAccessChanged(telegramUserId);
+            send(context.chatId(), "Telegram user " + telegramUserId
+                    + (active ? " enabled." : " disabled."));
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not update user: " + e.getMessage());
+        }
+    }
+
+    private Long parsePositiveTelegramUserId(String value, long chatId) {
+        Long telegramUserId = parseLong(value);
+        if (telegramUserId == null || telegramUserId <= 0) {
+            send(chatId, "Telegram user ID must be a positive number.");
+            return null;
+        }
+        return telegramUserId;
     }
 
     private boolean handlePlayerProfileCommand(CommandContext context) {
@@ -326,6 +311,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/profiles", "/profilelist" -> () -> send(context.chatId(), formatPlayerProfiles());
             case "/profileadd" -> () -> addProfile(context);
             case "/profilecharadd" -> () -> addProfileCharacter(context);
+            case "/profilechardelete", "/profilecharremove" -> () -> deleteProfileCharacter(context);
             case "/profilelink" -> () -> linkProfile(context);
             case "/profileunlink" -> () -> unlinkProfile(context);
             case "/profileswitch" -> () -> switchProfileCharacter(context);
@@ -375,6 +361,21 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(context.chatId(), parts[3] + "-" + parts[2] + " added to profile " + parts[1] + ".");
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not add character: " + e.getMessage());
+        }
+    }
+
+    private void deleteProfileCharacter(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length != 4) {
+            send(context.chatId(), "Usage: /profilechardelete <profile> <realm> <character>\n"
+                    + "Example: /profilechardelete Alice stormscale Alicealt");
+            return;
+        }
+        try {
+            trackedPlayerService.deleteCharacter(parts[1], parts[2], parts[3]);
+            send(context.chatId(), "Character removed from the profile.");
+        } catch (IllegalArgumentException e) {
+            send(context.chatId(), "Could not delete character: " + e.getMessage());
         }
     }
 
@@ -444,98 +445,97 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private boolean handleWarcraftInformationCommand(CommandContext context) {
-        long chatId = context.chatId();
-        String text = context.text();
-        String cmd = context.command();
-
-        if (cmd.equals("/avginterrupts") || cmd.equals("/wclinterrupts")) {
-            send(chatId, formatWarcraftLogsStatistic(
+        return switch (context.command()) {
+            case "/avginterrupts", "/wclinterrupts" -> handled(() -> send(
+                    context.chatId(),
+                    formatWarcraftLogsStatistic(
                     "TOP INTRUPT MASINA",
                     "Average interrupts per logged M+ dungeon",
                     PlayerStatistics::averageInterrupts,
                     " interrupts",
                     PlayerStatistics::dungeonRuns,
                     "logged dungeons"
-            ));
-            return true;
-        }
-
-        if (cmd.equals("/avgdeaths") || cmd.equals("/wcldeaths")) {
-            send(chatId, formatWarcraftLogsStatistic(
+            )));
+            case "/avgdeaths", "/wcldeaths" -> handled(() -> send(
+                    context.chatId(),
+                    formatWarcraftLogsStatistic(
                     "MOST FLOOR POV",
                     "Average deaths per logged M+ dungeon",
                     PlayerStatistics::averageDeaths,
                     " deaths",
                     PlayerStatistics::dungeonRuns,
                     "logged dungeons"
-            ));
-            return true;
-        }
-
-        if (cmd.equals("/avglogs") || cmd.equals("/avgparse") || cmd.equals("/wclaverage")) {
-            send(chatId, formatWarcraftLogsStatistic(
+            )));
+            case "/avglogs", "/avgparse", "/wclaverage" -> handled(() -> send(
+                    context.chatId(),
+                    formatWarcraftLogsStatistic(
                     null,
                     "Average per-key Warcraft Logs parse",
                     PlayerStatistics::averageParsePercentage,
                     "%",
                     PlayerStatistics::parsedDungeonRuns,
                     "parsed dungeons"
+            )));
+            case "/affixes" -> handled(() -> send(
+                    context.chatId(),
+                    AffixFormatter.formatWeeklyAffixes(raiderIoClient.getWeeklyAffixes("eu", "en"))
             ));
-            return true;
+            case "/guild" -> handled(() -> handleGuildCommand(context));
+            case "/guildlist" -> handled(() -> send(context.chatId(), formatAvailableRaids()));
+            default -> false;
+        };
+    }
+
+    private void handleGuildCommand(CommandContext context) {
+        String argument = commandArguments(context);
+        JsonNode guild = fetchDefaultGuild();
+        if (argument.equalsIgnoreCase("list")) {
+            send(context.chatId(), formatRaidProgressionList(guild));
+            return;
         }
 
-        if (cmd.equals("/affixes")) {
-            JsonNode data = raiderIoClient.getWeeklyAffixes("eu", "en");
-            send(chatId, AffixFormatter.formatWeeklyAffixes(data));
-            return true;
+        String raidKey = selectRaidKey(argument, guild);
+        String lastCrawledAt = guild.path("last_crawled_at").asText("n/a");
+        send(context.chatId(), defaultGuildProps.guildName() + "\n"
+                + RaidProgressFormatter.formatRaidLine(guild, raidKey)
+                + "\nLast update: " + formatLastCrawled(lastCrawledAt));
+    }
+
+    private JsonNode fetchDefaultGuild() {
+        return raiderIoClient.getGuildProfile(
+                defaultGuildProps.region(),
+                defaultGuildProps.realm(),
+                defaultGuildProps.guildName()
+        );
+    }
+
+    private String selectRaidKey(String argument, JsonNode guild) {
+        if (!argument.isBlank()) {
+            return argument;
         }
+        String configuredRaid = defaultGuildProps.raidName();
+        return configuredRaid == null || configuredRaid.isBlank()
+                ? RaidPicker.pickBestRaidKey(guild)
+                : configuredRaid;
+    }
 
-        if (cmd.equals("/guild")) {
-            String[] parts = text.split("\\s+", 2);
-            String arg = parts.length > 1 ? parts[1].trim() : "";
+    private static String formatRaidProgressionList(JsonNode guild) {
+        StringBuilder message = new StringBuilder("Raids:\n");
+        guild.path("raid_progression").fieldNames().forEachRemaining(raidKey -> message
+                .append("• ")
+                .append(RaidProgressFormatter.formatRaidLine(guild, raidKey))
+                .append("\n"));
+        return message.append("\nUse: /guild <raidKey>").toString();
+    }
 
-            var p = defaultGuildProps;
-            JsonNode g = raiderIoClient.getGuildProfile(p.region(), p.realm(), p.guildName());
-
-            String raidKey;
-            if (!arg.isBlank() && !arg.equalsIgnoreCase("list")) {
-                raidKey = arg; // user chooses: /guild nerubar-palace
-            } else if (defaultGuildProps.raidName() != null && !defaultGuildProps.raidName().isBlank()) {
-                raidKey = defaultGuildProps.raidName(); // property chooses
-            } else {
-                raidKey = RaidPicker.pickBestRaidKey(g); // auto
-            }
-
-            String last = g.path("last_crawled_at").asText("n/a");
-
-            if (arg.equalsIgnoreCase("list")) {
-                StringBuilder sb = new StringBuilder("Raids:\n");
-                g.path("raid_progression").fieldNames().forEachRemaining(k -> sb.append("• ").append(RaidProgressFormatter.formatRaidLine(g, k)).append("\n"));
-                sb.append("\nUse: /guild <raidKey>");
-                send(chatId, sb.toString());
-                return true;
-            }
-
-            send(chatId,
-                    defaultGuildProps.guildName() + "\n" +
-                    RaidProgressFormatter.formatRaidLine(g, raidKey) + "\nLast update: " + formatLastCrawled(last)
-            );
-            return true;
-        }
-
-
-        if (cmd.equals("/guildlist")) {
-            var p = defaultGuildProps;
-            JsonNode g = raiderIoClient.getGuildProfile(p.region(), p.realm(), p.guildName());
-
-            StringBuilder sb = new StringBuilder("Available raids:\n");
-            g.path("raid_progression").fieldNames().forEachRemaining(k -> sb.append("• ").append(k).append("\n"));
-
-            send(chatId, sb.toString());
-            return true;
-        }
-
-        return false;
+    private String formatAvailableRaids() {
+        JsonNode guild = fetchDefaultGuild();
+        StringBuilder message = new StringBuilder("Available raids:\n");
+        guild.path("raid_progression").fieldNames().forEachRemaining(raidKey -> message
+                .append("• ")
+                .append(raidKey)
+                .append("\n"));
+        return message.toString();
     }
 
     private boolean handleEconomyCommand(CommandContext context) {
@@ -709,100 +709,122 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private boolean handleTravelCommand(CommandContext context) {
-        Update update = context.update();
-        long chatId = context.chatId();
-        String text = context.text();
-        String cmd = context.command();
+        return switch (context.command()) {
+            case "/road", "/travel", "/timetogo" -> handled(() -> send(
+                    context.chatId(),
+                    timeToGoCommands.formatCurrent(context.text())
+            ));
+            case "/roadbest", "/travelbest", "/timetogobest" -> handled(() -> send(
+                    context.chatId(),
+                    timeToGoCommands.formatBest(context.text())
+            ));
+            case "/timetogoimport30", "/roadimport30", "/travelimport30" -> handled(() ->
+                    runAdminCommand(context, () -> submitHistoricalImport(context.chatId())));
+            case "/timetogoimportstatus", "/roadimportstatus", "/travelimportstatus" -> handled(() ->
+                    runAdminCommand(context, () -> refreshHistoricalImport(context.chatId())));
+            default -> false;
+        };
+    }
 
-        if (cmd.equals("/road") || cmd.equals("/travel") || cmd.equals("/timetogo")) {
-            send(chatId, timeToGoCommands.formatCurrent(text));
-            return true;
+    private void submitHistoricalImport(long chatId) {
+        try {
+            send(chatId, timeToGoCommands.submitHistoricalImport());
+        } catch (Exception e) {
+            send(chatId, "TomTom historical import submit failed: " + e.getMessage());
         }
+    }
 
-        if (cmd.equals("/roadbest") || cmd.equals("/travelbest") || cmd.equals("/timetogobest")) {
-            send(chatId, timeToGoCommands.formatBest(text));
-            return true;
+    private void refreshHistoricalImport(long chatId) {
+        try {
+            send(chatId, timeToGoCommands.refreshHistoricalImport());
+        } catch (Exception e) {
+            send(chatId, "TomTom historical import status failed: " + e.getMessage());
         }
-
-        if (cmd.equals("/timetogoimport30") || cmd.equals("/roadimport30") || cmd.equals("/travelimport30")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            try {
-                send(chatId, timeToGoCommands.submitHistoricalImport());
-            } catch (Exception e) {
-                send(chatId, "TomTom historical import submit failed: " + e.getMessage());
-            }
-            return true;
-        }
-
-        if (cmd.equals("/timetogoimportstatus") || cmd.equals("/roadimportstatus") || cmd.equals("/travelimportstatus")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            try {
-                send(chatId, timeToGoCommands.refreshHistoricalImport());
-            } catch (Exception e) {
-                send(chatId, "TomTom historical import status failed: " + e.getMessage());
-            }
-            return true;
-        }
-
-        return false;
     }
 
     private boolean handleGeneralCommand(CommandContext context) {
-        Update update = context.update();
-        long chatId = context.chatId();
-        String text = context.text();
-        String cmd = context.command();
+        return switch (context.command()) {
+            case "/vault" -> handled(() -> handleVaultCommand(context));
+            case "/rio" -> handled(() -> handleRaiderIoCommand(context));
+            case "/help", "/commands" -> handled(() -> send(context.chatId(), publicHelpMessage()));
+            case "/help-admin" -> handled(() -> runAdminCommand(
+                    context,
+                    () -> send(context.chatId(), adminHelpMessage())
+            ));
+            default -> false;
+        };
+    }
 
-        if (cmd.equals("/vault")) {
-            String[] parts = text.split("\\s+");
-            if (parts.length == 1) {
-                send(chatId, formatWeeklyVaultWatch());
-                return true;
-            }
-            if (parts.length != 3 && parts.length != 4) {
-                send(chatId, "Usage: /vault\nOptional Mythic+ lookup: /vault <realm> <name>");
-                return true;
-            }
-
-            String region = parts.length >= 4 ? parts[1].toLowerCase() : "eu";
-            String realm = parts.length >= 4 ? parts[2] : parts[1];
-            String name = parts.length >= 4 ? parts[3] : parts[2];
-
-            try {
-                var progress = raiderIoClient.getWeeklyVaultProgress(region, realm, name);
-                send(chatId, formatWeeklyVault(progress));
-            } catch (Exception e) {
-                send(chatId, "Couldn’t fetch weekly Mythic+ vault data for " + name + " on " + realm
-                             + " (" + region + ").\n" +
-                             "Use: /vault <realm> <name>\n" +
-                             "Example: /vault stormscale bucothered");
-            }
-            return true;
+    private void handleVaultCommand(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length == 1) {
+            send(context.chatId(), formatWeeklyVaultWatch());
+            return;
+        }
+        if (parts.length != 3 && parts.length != 4) {
+            send(context.chatId(), "Usage: /vault\nOptional Mythic+ lookup: /vault <realm> <name>");
+            return;
         }
 
-        if (checkRio(cmd, text, chatId)) return true;
+        String region = parts.length == 4 ? parts[1].toLowerCase(Locale.ROOT) : "eu";
+        String realm = parts.length == 4 ? parts[2] : parts[1];
+        String name = parts.length == 4 ? parts[3] : parts[2];
+        try {
+            send(context.chatId(), formatWeeklyVault(raiderIoClient.getWeeklyVaultProgress(region, realm, name)));
+        } catch (Exception e) {
+            send(context.chatId(), "Couldn’t fetch weekly Mythic+ vault data for " + name + " on " + realm
+                    + " (" + region + ").\nUse: /vault <realm> <name>\n"
+                    + "Example: /vault stormscale bucothered");
+        }
+    }
 
+    private void handleRaiderIoCommand(CommandContext context) {
+        String[] parts = context.text().split("\\s+");
+        if (parts.length < 4) {
+            send(context.chatId(), "Usage: /rio <region> <realm> <name>\n"
+                    + "Example: /rio eu stormscale bucothered");
+            return;
+        }
+
+        String region = parts[1].toLowerCase(Locale.ROOT);
+        String realm = parts[2];
+        String name = parts[3];
+        try {
+            send(context.chatId(), formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(region, realm, name)));
+        } catch (Exception e) {
+            send(context.chatId(), "Couldn’t fetch Raider.IO for " + region + "/" + realm + "/" + name
+                    + "\nReason: " + e.getMessage());
+        }
+    }
+
+    private static String publicHelpMessage() {
         // Public help deliberately omits administration and TomTom commands.
-        if (cmd.equals("/help") || cmd.equals("/commands")) {
-            send(chatId, "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n/mains\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
-            return true;
-        }
+        return "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n"
+                + "/mains\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
+                + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
+                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/mount-achiv <realm> <name>\n"
+                + "/price <itemId|item name> [realm-if-itemId]\n"
+                + "/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs";
+    }
 
-        if (cmd.equals("/help-admin")) {
-            if (!isAdmin(update)) {
-                send(chatId, adminOnlyMessage());
-                return true;
-            }
-            send(chatId, "All commands:\n/help\n/myid\n/groupid\n/users\n/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n/userenable <telegramUserId>\n/profile\n/profile-help\n/profilemain <realm> <character>\n/mains\n/profiles\n/profileadd <profile> <region> <realm> <character>\n/profilecharadd <profile> <realm> <character>\n/profilelink <telegramUserId> <profile>\n/profileunlink <profile>\n/profileswitch <profile> <region> <realm> <character>\n/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n/price <itemId|item name> [realm-if-itemId]\n/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs");
-            return true;
-        }
-        return false;
+    private static String adminHelpMessage() {
+        return "All commands:\n/help\n/myid\n/groupid\n/users\n"
+                + "/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n"
+                + "/userenable <telegramUserId>\n/profile\n/profile-help\n"
+                + "/profilemain <realm> <character>\n/mains\n/profiles\n"
+                + "/profileadd <profile> <region> <realm> <character>\n"
+                + "/profilecharadd <profile> <realm> <character>\n"
+                + "/profilechardelete <profile> <realm> <character>\n"
+                + "/profilelink <telegramUserId> <profile>\n/profileunlink <profile>\n"
+                + "/profileswitch <profile> <region> <realm> <character>\n"
+                + "/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n"
+                + "/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
+                + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
+                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n"
+                + "/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n"
+                + "/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n"
+                + "/price <itemId|item name> [realm-if-itemId]\n"
+                + "/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs";
     }
 
     private ScheduledFuture<?> scheduleWorkingMessage(long chatId) {
@@ -1290,61 +1312,90 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
 
         Instant now = Instant.now();
-        if (titleWatchCache != null
-                && titleWatchCache.expiresAt().isAfter(now)
-                && titleWatchCache.players().equals(players)) {
+        if (isCurrentTitleWatchCache(players, now)) {
             return titleWatchCache.message();
         }
 
         var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(players.getFirst().region());
         BigDecimal cutoffScore = cutoff.score();
-
-        List<TitleWatchResult> results = new ArrayList<>();
-        for (TrackedPlayer player : players) {
-            try {
-                var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
-                BigDecimal all = score.all();
-                BigDecimal remaining = all == null ? null : cutoffScore.subtract(all).max(BigDecimal.ZERO);
-                BigDecimal above = all == null ? null : all.subtract(cutoffScore).max(BigDecimal.ZERO);
-                results.add(new TitleWatchResult(score.name(), score.realm(), score.region(), all, remaining, above, null));
-            } catch (Exception e) {
-                results.add(new TitleWatchResult(player.name(), player.realm(), player.region(), null, null, null, e.getMessage()));
-            }
-        }
-
+        List<TitleWatchResult> results = loadTitleWatchResults(players, cutoffScore);
         results.sort(Comparator.comparing(
                 TitleWatchResult::score,
                 Comparator.nullsLast(Comparator.reverseOrder())
         ));
 
-        StringBuilder sb = new StringBuilder("M+ 1% title watch\n");
-        sb.append("Cutoff: ").append(formatScore(cutoffScore))
-                .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
-                .append("\n");
-        appendTitlePrediction(sb, "p990", players.getFirst().region());
-        for (TitleWatchResult result : results) {
-            sb.append("• ")
-                    .append(result.name()).append(": ");
-            if (result.error() != null) {
-                sb.append("error: ").append(result.error()).append("\n");
-            } else if (result.score() == null) {
-                sb.append("n/a\n");
-            } else if (result.remaining() == null) {
-                sb.append(formatScore(result.score())).append(" | remaining n/a\n");
-            } else if (result.remaining().compareTo(BigDecimal.ZERO) == 0) {
-                sb.append(formatScore(result.score()))
-                        .append(" | above by ").append(formatScore(result.above()))
-                        .append("\n");
-            } else {
-                sb.append(formatScore(result.score()))
-                        .append(" | remaining ").append(formatScore(result.remaining()))
-                        .append("\n");
-            }
-        }
-
-        String message = sb.toString().trim();
+        String message = formatTitleWatchMessage(players, cutoff, cutoffScore, results);
         titleWatchCache = new TitleWatchCache(message, players, now.plus(TITLE_WATCH_CACHE_TTL));
         return message;
+    }
+
+    private boolean isCurrentTitleWatchCache(List<TrackedPlayer> players, Instant now) {
+        return titleWatchCache != null
+                && titleWatchCache.expiresAt().isAfter(now)
+                && titleWatchCache.players().equals(players);
+    }
+
+    private List<TitleWatchResult> loadTitleWatchResults(
+            List<TrackedPlayer> players,
+            BigDecimal cutoffScore
+    ) {
+        List<TitleWatchResult> results = new ArrayList<>();
+        for (TrackedPlayer player : players) {
+            results.add(loadTitleWatchResult(player, cutoffScore));
+        }
+        return results;
+    }
+
+    private TitleWatchResult loadTitleWatchResult(TrackedPlayer player, BigDecimal cutoffScore) {
+        try {
+            var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
+            BigDecimal all = score.all();
+            BigDecimal remaining = all == null ? null : cutoffScore.subtract(all).max(BigDecimal.ZERO);
+            BigDecimal above = all == null ? null : all.subtract(cutoffScore).max(BigDecimal.ZERO);
+            return new TitleWatchResult(
+                    score.name(),
+                    score.realm(),
+                    score.region(),
+                    all,
+                    remaining,
+                    above,
+                    null
+            );
+        } catch (Exception e) {
+            return new TitleWatchResult(
+                    player.name(),
+                    player.realm(),
+                    player.region(),
+                    null,
+                    null,
+                    null,
+                    e.getMessage()
+            );
+        }
+    }
+
+    private String formatTitleWatchMessage(
+            List<TrackedPlayer> players,
+            RaiderIoClient.MPlusTitleCutoff cutoff,
+            BigDecimal cutoffScore,
+            List<TitleWatchResult> results
+    ) {
+        StringBuilder message = new StringBuilder("M+ 1% title watch\n");
+        message.append("Cutoff: ").append(formatScore(cutoffScore))
+                .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
+                .append("\n");
+        appendTitlePrediction(message, "p990", players.getFirst().region());
+        results.forEach(result -> appendTitleWatchResult(message, result));
+        return message.toString().trim();
+    }
+
+    private static void appendTitleWatchResult(StringBuilder message, TitleWatchResult result) {
+        message.append("• ").append(result.name()).append(": ");
+        if (result.error() != null) {
+            message.append("error: ").append(result.error()).append("\n");
+            return;
+        }
+        message.append(formatTitleScoreLine(result.score(), result.remaining(), result.above())).append("\n");
     }
 
     private void appendTitlePrediction(StringBuilder sb, String percentileKey, String region) {
@@ -1394,38 +1445,21 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return formatScore(score) + " | remaining " + formatScore(remaining);
     }
 
-    private boolean checkRio(String cmd, String text, long chatId) {
-        if (cmd.equals("/rio")) {
-            String[] parts = text.split("\\s+");
-            if (parts.length < 4) {
-                send(chatId, "Usage: /rio <region> <realm> <name>\nExample: /rio eu stormscale bucothered");
-                return true;
-            }
+    private static String formatRaiderIoScore(RaiderIoClient.RaiderIoScore score) {
+        String profile = score.profileUrl() == null || score.profileUrl().isBlank()
+                ? ""
+                : "\nProfile: " + score.profileUrl();
+        return "Raider.IO (current season)\n"
+                + score.name() + " - " + score.realm() + " (" + score.region() + ")\n"
+                + "Score: " + valueOrUnavailable(score.all()) + "\n"
+                + "DPS: " + valueOrUnavailable(score.dps())
+                + " | Healer: " + valueOrUnavailable(score.healer())
+                + " | Tank: " + valueOrUnavailable(score.tank())
+                + profile;
+    }
 
-            String region = parts[1].toLowerCase();
-            String realm = parts[2];
-            String name = parts[3];
-
-            try {
-                var s = raiderIoClient.getCurrentMPlusScore(region, realm, name);
-
-                String msg =
-                        "Raider.IO (current season)\n" +
-                        s.name() + " - " + s.realm() + " (" + s.region() + ")\n" +
-                        "Score: " + (s.all() == null ? "n/a" : s.all()) + "\n" +
-                        "DPS: " + (s.dps() == null ? "n/a" : s.dps()) +
-                        " | Healer: " + (s.healer() == null ? "n/a" : s.healer()) +
-                        " | Tank: " + (s.tank() == null ? "n/a" : s.tank()) +
-                        (s.profileUrl() == null || s.profileUrl().isBlank() ? "" : ("\nProfile: " + s.profileUrl()));
-
-                send(chatId, msg);
-            } catch (Exception e) {
-                send(chatId, "Couldn’t fetch Raider.IO for " + region + "/" + realm + "/" + name +
-                             "\nReason: " + e.getMessage());
-            }
-            return true;
-        }
-        return false;
+    private static String valueOrUnavailable(BigDecimal value) {
+        return value == null ? "n/a" : value.toString();
     }
 
     private void send(long chatId, String msg) {
@@ -1472,7 +1506,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         try {
             ZonedDateTime utc = ZonedDateTime.parse(
                     updatedAt,
-                    DateTimeFormatter.ofPattern("EEE MMM dd yyyy HH:mm:ss 'GMT'Z '('zzzz')'", java.util.Locale.ENGLISH)
+                    DateTimeFormatter.ofPattern("EEE MMM dd yyyy HH:mm:ss 'GMT'Z '('zzzz')'", Locale.ENGLISH)
             );
             return utc.withZoneSameInstant(ZoneId.of("Europe/Zagreb"))
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z"));
@@ -1572,7 +1606,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return ranks.size() >= 3 ? ranks.get(1) : ranks.get(0);
         }
         if (qualityRank == 3) {
-            return ranks.size() >= 3 ? ranks.get(2) : (ranks.size() >= 2 ? ranks.get(1) : null);
+            return ranks.size() >= 3 ? ranks.get(2) : ranks.size() >= 2 ? ranks.get(1) : null;
         }
         return null;
     }
@@ -1587,7 +1621,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private static String formatCopper(long copper) {
         long gold = copper / 10_000;
-        long silver = (copper % 10_000) / 100;
+        long silver = copper % 10_000 / 100;
         return gold + "g " + silver + "s";
     }
 

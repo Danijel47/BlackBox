@@ -221,46 +221,91 @@ public class WarcraftLogsStatisticsService {
         }
 
         for (JsonNode reportNode : character.path("recentReports").path("data")) {
-            Instant reportStartedAt = instantFromMilliseconds(reportNode.path("startTime").asLong(0));
-            if (reportStartedAt == null || reportStartedAt.isBefore(properties.seasonStart())) {
-                continue;
-            }
-            String code = reportNode.path("code").asText("");
-            if (code.isBlank()) continue;
-            int revision = Math.max(0, reportNode.path("revision").asInt(0));
-            Integer actorId = findActorId(reportNode.path("masterData").path("actors"), player);
-            if (actorId == null) continue;
-
-            for (JsonNode fight : reportNode.path("fights")) {
-                int fightId = fight.path("id").asInt(0);
-                int keyLevel = fight.path("keystoneLevel").asInt(0);
-                if (fightId <= 0 || keyLevel <= 0 || !containsInt(fight.path("friendlyPlayers"), actorId)) {
-                    continue;
-                }
-                RunIdentity identity = new RunIdentity(player.profileId(), code, fightId);
-                WarcraftLogPlayerRunEntity existing = existingRuns.get(identity);
-                if (existing != null
-                        && existing.getReportRevision() >= revision
-                        && existing.getParsePercentage() != null) {
-                    continue;
-                }
-
-                ReportWork report = reports.computeIfAbsent(
-                        code,
-                        ignored -> new ReportWork(code, revision, reportStartedAt)
-                );
-                report.revision = Math.max(report.revision, revision);
-                report.fightIds.add(fightId);
-                report.participants.add(new Participant(
-                        player,
-                        fightId,
-                        actorId,
-                        fight.path("name").asText("Unknown dungeon"),
-                        keyLevel,
-                        existing
-                ));
+            DiscoveredReport discoveredReport = discoverReport(reportNode, player);
+            if (discoveredReport != null) {
+                addReportFights(reportNode, player, discoveredReport, existingRuns, reports);
             }
         }
+    }
+
+    private DiscoveredReport discoverReport(JsonNode reportNode, TrackedPlayer player) {
+        Instant startedAt = instantFromMilliseconds(reportNode.path("startTime").asLong(0));
+        if (startedAt == null || startedAt.isBefore(properties.seasonStart())) {
+            return null;
+        }
+        String code = reportNode.path("code").asText("");
+        if (code.isBlank()) {
+            return null;
+        }
+        Integer actorId = findActorId(reportNode.path("masterData").path("actors"), player);
+        if (actorId == null) {
+            return null;
+        }
+        int revision = Math.max(0, reportNode.path("revision").asInt(0));
+        return new DiscoveredReport(code, revision, startedAt, actorId);
+    }
+
+    private static void addReportFights(
+            JsonNode reportNode,
+            TrackedPlayer player,
+            DiscoveredReport discoveredReport,
+            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns,
+            Map<String, ReportWork> reports
+    ) {
+        for (JsonNode fight : reportNode.path("fights")) {
+            addReportFight(fight, player, discoveredReport, existingRuns, reports);
+        }
+    }
+
+    private static void addReportFight(
+            JsonNode fight,
+            TrackedPlayer player,
+            DiscoveredReport discoveredReport,
+            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns,
+            Map<String, ReportWork> reports
+    ) {
+        int fightId = fight.path("id").asInt(0);
+        int keyLevel = fight.path("keystoneLevel").asInt(0);
+        if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())) {
+            return;
+        }
+
+        RunIdentity identity = new RunIdentity(player.profileId(), discoveredReport.code(), fightId);
+        WarcraftLogPlayerRunEntity existing = existingRuns.get(identity);
+        if (isCurrentRun(existing, discoveredReport.revision())) {
+            return;
+        }
+
+        ReportWork report = reports.computeIfAbsent(
+                discoveredReport.code(),
+                ignored -> new ReportWork(
+                        discoveredReport.code(),
+                        discoveredReport.revision(),
+                        discoveredReport.startedAt()
+                )
+        );
+        report.revision = Math.max(report.revision, discoveredReport.revision());
+        report.fightIds.add(fightId);
+        report.participants.add(new Participant(
+                player,
+                fightId,
+                discoveredReport.actorId(),
+                fight.path("name").asText("Unknown dungeon"),
+                keyLevel,
+                existing
+        ));
+    }
+
+    private static boolean isEligibleFight(JsonNode fight, int fightId, int keyLevel, int actorId) {
+        return fightId > 0
+                && keyLevel > 0
+                && containsInt(fight.path("friendlyPlayers"), actorId);
+    }
+
+    private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
+        return existing != null
+                && existing.getReportRevision() >= revision
+                && existing.getParsePercentage() != null;
     }
 
     private int loadAndSaveReportEvents(
@@ -395,28 +440,28 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static BigDecimal findParsePercentage(JsonNode node, int actorId, String characterName) {
-        if (node == null || node.isMissingNode() || node.isNull()) return null;
-        if (node.isObject()) {
-            JsonNode rankPercent = node.path("rankPercent");
-            if (rankPercent.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)) {
-                return rankPercent.decimalValue();
-            }
-            var children = node.elements();
-            while (children.hasNext()) {
-                BigDecimal found = findParsePercentage(children.next(), actorId, characterName);
-                if (found != null) {
-                    return found;
-                }
-            }
-        } else if (node.isArray()) {
-            for (JsonNode child : node) {
-                BigDecimal found = findParsePercentage(child, actorId, characterName);
-                if (found != null) {
-                    return found;
-                }
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        BigDecimal directMatch = parsePercentageForPlayer(node, actorId, characterName);
+        if (directMatch != null) {
+            return directMatch;
+        }
+        var children = node.elements();
+        while (children.hasNext()) {
+            BigDecimal nestedMatch = findParsePercentage(children.next(), actorId, characterName);
+            if (nestedMatch != null) {
+                return nestedMatch;
             }
         }
         return null;
+    }
+
+    private static BigDecimal parsePercentageForPlayer(JsonNode node, int actorId, String characterName) {
+        JsonNode rankPercent = node.path("rankPercent");
+        return rankPercent.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)
+                ? rankPercent.decimalValue()
+                : null;
     }
 
     private static boolean rankingBelongsToPlayer(JsonNode ranking, int actorId, String characterName) {
@@ -452,6 +497,9 @@ public class WarcraftLogsStatisticsService {
     }
 
     private record RunIdentity(long profileId, String reportCode, int fightId) {
+    }
+
+    private record DiscoveredReport(String code, int revision, Instant startedAt, int actorId) {
     }
 
     private record Participant(

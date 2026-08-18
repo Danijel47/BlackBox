@@ -82,19 +82,22 @@ public class TrackedPlayerService {
     public void addProfile(String profileName, String region, String realm, String characterName) {
         validateProfileName(profileName);
         validateCharacter(region, realm, characterName);
-        if (profileRepository.findByProfileNameIgnoreCase(profileName).isPresent()) {
-            throw new IllegalArgumentException("Profile already exists: " + profileName);
+        String normalizedProfileName = capitalizeFirst(profileName);
+        String normalizedRealm = normalizeRealm(realm);
+        String normalizedCharacterName = capitalizeFirst(characterName);
+        if (profileRepository.findByProfileNameIgnoreCase(normalizedProfileName).isPresent()) {
+            throw new IllegalArgumentException("Profile already exists: " + normalizedProfileName);
         }
 
         try {
             PlayerProfileEntity profile = profileRepository.saveAndFlush(
-                    new PlayerProfileEntity(profileName, profileRepository.findMaximumDisplayOrder() + 1)
+                    new PlayerProfileEntity(normalizedProfileName, profileRepository.findMaximumDisplayOrder() + 1)
             );
             characterRepository.saveAndFlush(new TrackedCharacterEntity(
                     profile,
                     normalizeRegion(region),
-                    normalizeRealm(realm),
-                    characterName,
+                    normalizedRealm,
+                    normalizedCharacterName,
                     true
             ));
         } catch (DataIntegrityViolationException e) {
@@ -106,13 +109,15 @@ public class TrackedPlayerService {
     public void switchCharacter(String profileName, String region, String realm, String characterName) {
         validateCharacter(region, realm, characterName);
         PlayerProfileEntity profile = requireProfile(profileName);
+        String normalizedRealm = normalizeRealm(realm);
+        String normalizedCharacterName = capitalizeFirst(characterName);
 
         TrackedCharacterEntity character = characterRepository
                 .findByProfileIdAndRegionIgnoreCaseAndRealmIgnoreCaseAndCharacterNameIgnoreCase(
                         profile.getId(),
                         normalizeRegion(region),
-                        normalizeRealm(realm),
-                        characterName
+                        normalizedRealm,
+                        normalizedCharacterName
                 )
                 .orElse(null);
 
@@ -121,8 +126,8 @@ public class TrackedPlayerService {
             character = new TrackedCharacterEntity(
                     profile,
                     normalizeRegion(region),
-                    normalizeRealm(realm),
-                    characterName,
+                    normalizedRealm,
+                    normalizedCharacterName,
                     true
             );
         } else {
@@ -135,12 +140,14 @@ public class TrackedPlayerService {
     public void addCharacter(String profileName, String realm, String characterName) {
         validateCharacter("eu", realm, characterName);
         PlayerProfileEntity profile = requireProfile(profileName);
+        String normalizedRealm = normalizeRealm(realm);
+        String normalizedCharacterName = capitalizeFirst(characterName);
         boolean alreadyRegistered = characterRepository
                 .findByProfileIdAndRegionIgnoreCaseAndRealmIgnoreCaseAndCharacterNameIgnoreCase(
                         profile.getId(),
                         "eu",
-                        normalizeRealm(realm),
-                        characterName
+                        normalizedRealm,
+                        normalizedCharacterName
                 )
                 .isPresent();
         if (alreadyRegistered) {
@@ -151,8 +158,8 @@ public class TrackedPlayerService {
             characterRepository.saveAndFlush(new TrackedCharacterEntity(
                     profile,
                     "eu",
-                    normalizeRealm(realm),
-                    characterName,
+                    normalizedRealm,
+                    normalizedCharacterName,
                     false
             ));
         } catch (DataIntegrityViolationException e) {
@@ -172,7 +179,7 @@ public class TrackedPlayerService {
                         profile.getId(),
                         "eu",
                         normalizeRealm(realm),
-                        characterName
+                        capitalizeFirst(characterName)
                 )
                 .orElseThrow(() -> new IllegalArgumentException(
                         "That character is not registered to your profile. Ask the bot admin to add it."
@@ -181,6 +188,28 @@ public class TrackedPlayerService {
         characterRepository.clearSelectedCharacter(profile.getId());
         character.select();
         characterRepository.save(character);
+    }
+
+    @Transactional
+    public void deleteCharacter(String profileName, String realm, String characterName) {
+        validateCharacter("eu", realm, characterName);
+        PlayerProfileEntity profile = requireProfile(profileName);
+        TrackedCharacterEntity character = characterRepository
+                .findByProfileIdAndRegionIgnoreCaseAndRealmIgnoreCaseAndCharacterNameIgnoreCase(
+                        profile.getId(),
+                        "eu",
+                        normalizeRealm(realm),
+                        capitalizeFirst(characterName)
+                )
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Character is not registered to profile " + profile.getProfileName() + "."
+                ));
+        if (character.isSelected()) {
+            throw new IllegalArgumentException(
+                    "The selected main cannot be deleted. Use /profileswitch to select another character first."
+            );
+        }
+        characterRepository.delete(character);
     }
 
     @Transactional
@@ -278,7 +307,17 @@ public class TrackedPlayerService {
     }
 
     private static String normalizeRealm(String realm) {
-        return realm.toLowerCase(Locale.ROOT).replace(' ', '-');
+        return capitalizeFirst(realm.replace(' ', '-'));
+    }
+
+    private static String capitalizeFirst(String value) {
+        String lowercaseValue = value.toLowerCase(Locale.ROOT);
+        int firstCodePoint = lowercaseValue.codePointAt(0);
+        int firstCodePointLength = Character.charCount(firstCodePoint);
+        return new StringBuilder(lowercaseValue.length())
+                .appendCodePoint(Character.toUpperCase(firstCodePoint))
+                .append(lowercaseValue.substring(firstCodePointLength))
+                .toString();
     }
 
     public record TrackedPlayer(long profileId, String profileName, String region, String realm, String name) {

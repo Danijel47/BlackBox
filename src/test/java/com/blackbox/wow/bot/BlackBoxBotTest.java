@@ -179,6 +179,32 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText()).contains("Profile Alice now uses Alicemage");
     }
 
+    @Test
+    void letsTheAdminDeleteACharacterFromAProfile() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        Update update = update(chatId, adminId, "/profilechardelete Buco stormscale Bucomonk");
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+
+        bot().consume(update);
+
+        verify(trackedPlayerService).deleteCharacter("Buco", "stormscale", "Bucomonk");
+        assertThat(sentMessage().getText()).contains("Character removed from the profile");
+    }
+
+    @Test
+    void preventsARegularUserFromDeletingAProfileCharacter() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/profilechardelete Buco stormscale Bucomonk");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update);
+
+        verify(trackedPlayerService, never()).deleteCharacter("Buco", "stormscale", "Bucomonk");
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+    }
+
     private BlackBoxBot bot() {
         bot = new BlackBoxBot(
                 "token",
