@@ -51,8 +51,8 @@ public class WarcraftLogPlayerRunEntity {
     @Column(name = "deaths", nullable = false)
     private int deaths;
 
-    @Column(name = "parse_percentage", precision = 8, scale = 2)
-    private BigDecimal parsePercentage;
+    @Column(name = "key_parse_percentage", precision = 8, scale = 2)
+    private BigDecimal keyParsePercentage;
 
     @Column(name = "captured_at", nullable = false)
     private Instant capturedAt;
@@ -72,7 +72,7 @@ public class WarcraftLogPlayerRunEntity {
             int keystoneLevel,
             int interrupts,
             int deaths,
-            BigDecimal parsePercentage
+            BigDecimal keyParsePercentage
     ) {
         this.seasonKey = seasonKey;
         this.profileId = profileId;
@@ -83,7 +83,7 @@ public class WarcraftLogPlayerRunEntity {
         this.fightId = fightId;
         this.dungeonName = dungeonName;
         this.keystoneLevel = keystoneLevel;
-        update(reportRevision, characterName, dungeonName, keystoneLevel, interrupts, deaths, parsePercentage);
+        update(reportRevision, characterName, dungeonName, keystoneLevel, interrupts, deaths, keyParsePercentage);
     }
 
     public void update(
@@ -93,7 +93,7 @@ public class WarcraftLogPlayerRunEntity {
             int keystoneLevel,
             int interrupts,
             int deaths,
-            BigDecimal parsePercentage
+            BigDecimal keyParsePercentage
     ) {
         this.reportRevision = reportRevision;
         this.characterName = characterName;
@@ -101,7 +101,7 @@ public class WarcraftLogPlayerRunEntity {
         this.keystoneLevel = keystoneLevel;
         this.interrupts = interrupts;
         this.deaths = deaths;
-        this.parsePercentage = parsePercentage;
+        this.keyParsePercentage = keyParsePercentage;
         this.capturedAt = Instant.now();
     }
 
@@ -111,5 +111,5 @@ public class WarcraftLogPlayerRunEntity {
     public int getFightId() { return fightId; }
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
-    public BigDecimal getParsePercentage() { return parsePercentage; }
+    public BigDecimal getKeyParsePercentage() { return keyParsePercentage; }
 }

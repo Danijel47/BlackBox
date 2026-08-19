@@ -108,8 +108,8 @@ public class WarcraftLogsStatisticsService {
             List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of());
             int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
-            List<BigDecimal> runParses = runs.stream()
-                    .map(WarcraftLogPlayerRunEntity::getParsePercentage)
+            List<BigDecimal> keyParses = runs.stream()
+                    .map(WarcraftLogPlayerRunEntity::getKeyParsePercentage)
                     .filter(value -> value != null)
                     .toList();
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
@@ -117,10 +117,10 @@ public class WarcraftLogsStatisticsService {
                     player.profileName(),
                     player.name(),
                     runs.size(),
-                    runParses.size(),
+                    keyParses.size(),
                     average(interrupts, runs.size()),
                     average(deaths, runs.size()),
-                    average(runParses),
+                    average(keyParses),
                     snapshot == null ? null : snapshot.getLastError()
             ));
         }
@@ -158,9 +158,9 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
                 .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
                 .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
-                .append(", parse ").append(formatPercentMetric(statistic.averageParsePercentage()));
-        if (statistic.averageParsePercentage() != null) {
-            message.append(" (parse N=").append(statistic.parsedDungeonRuns()).append(')');
+                .append(", key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()));
+        if (statistic.averageKeyParsePercentage() != null) {
+            message.append(" (key-parse N=").append(statistic.keyParsedDungeonRuns()).append(')');
         }
         message.append('\n');
     }
@@ -358,7 +358,7 @@ public class WarcraftLogsStatisticsService {
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
         return existing != null
                 && existing.getReportRevision() >= revision
-                && existing.getParsePercentage() != null;
+                && existing.getKeyParsePercentage() != null;
     }
 
     private void correlateFight(
@@ -407,7 +407,7 @@ public class WarcraftLogsStatisticsService {
             FightEvents events = eventsByFight.get(participant.fightId);
             int interruptCount = countEventsForActor(events.interrupts(), "sourceID", participant.actorId);
             int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
-            BigDecimal parsePercentage = findParsePercentage(
+            BigDecimal keyParsePercentage = findKeyParsePercentage(
                     reportData.path("p" + participant.fightId),
                     participant.actorId,
                     participant.player.name()
@@ -426,7 +426,7 @@ public class WarcraftLogsStatisticsService {
                         participant.keystoneLevel,
                         interruptCount,
                         deathCount,
-                        parsePercentage
+                        keyParsePercentage
                 );
             } else {
                 entity.update(
@@ -436,7 +436,7 @@ public class WarcraftLogsStatisticsService {
                         participant.keystoneLevel,
                         interruptCount,
                         deathCount,
-                        parsePercentage
+                        keyParsePercentage
                 );
             }
             entity = runRepository.save(entity);
@@ -546,17 +546,17 @@ public class WarcraftLogsStatisticsService {
         return count;
     }
 
-    private static BigDecimal findParsePercentage(JsonNode node, int actorId, String characterName) {
+    static BigDecimal findKeyParsePercentage(JsonNode node, int actorId, String characterName) {
         if (node == null || node.isMissingNode() || node.isNull()) {
             return null;
         }
-        BigDecimal directMatch = parsePercentageForPlayer(node, actorId, characterName);
+        BigDecimal directMatch = keyParsePercentageForPlayer(node, actorId, characterName);
         if (directMatch != null) {
             return directMatch;
         }
         var children = node.elements();
         while (children.hasNext()) {
-            BigDecimal nestedMatch = findParsePercentage(children.next(), actorId, characterName);
+            BigDecimal nestedMatch = findKeyParsePercentage(children.next(), actorId, characterName);
             if (nestedMatch != null) {
                 return nestedMatch;
             }
@@ -564,10 +564,10 @@ public class WarcraftLogsStatisticsService {
         return null;
     }
 
-    private static BigDecimal parsePercentageForPlayer(JsonNode node, int actorId, String characterName) {
-        JsonNode rankPercent = node.path("rankPercent");
-        return rankPercent.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)
-                ? rankPercent.decimalValue()
+    private static BigDecimal keyParsePercentageForPlayer(JsonNode node, int actorId, String characterName) {
+        JsonNode bracketPercent = node.path("bracketPercent");
+        return bracketPercent.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)
+                ? bracketPercent.decimalValue()
                 : null;
     }
 
@@ -595,10 +595,10 @@ public class WarcraftLogsStatisticsService {
             String profileName,
             String characterName,
             int dungeonRuns,
-            int parsedDungeonRuns,
+            int keyParsedDungeonRuns,
             BigDecimal averageInterrupts,
             BigDecimal averageDeaths,
-            BigDecimal averageParsePercentage,
+            BigDecimal averageKeyParsePercentage,
             String error
     ) {
     }
