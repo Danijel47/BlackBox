@@ -14,7 +14,7 @@ import java.time.Instant;
 @Table(name = "warcraft_log_player_run")
 public class WarcraftLogPlayerRunEntity {
 
-    public static final int CURRENT_METRICS_VERSION = 2;
+    public static final int CURRENT_METRICS_VERSION = 3;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -56,6 +56,12 @@ public class WarcraftLogPlayerRunEntity {
     @Column(name = "key_parse_percentage", precision = 8, scale = 2)
     private BigDecimal keyParsePercentage;
 
+    @Column(name = "parse_percentage", precision = 8, scale = 2)
+    private BigDecimal parsePercentage;
+
+    @Column(name = "damage_per_second", precision = 14, scale = 2)
+    private BigDecimal damagePerSecond;
+
     @Column(name = "metrics_version", nullable = false)
     private int metricsVersion;
 
@@ -77,7 +83,9 @@ public class WarcraftLogPlayerRunEntity {
             int keystoneLevel,
             int interrupts,
             int deaths,
-            BigDecimal keyParsePercentage
+            BigDecimal parsePercentage,
+            BigDecimal keyParsePercentage,
+            BigDecimal damagePerSecond
     ) {
         this.seasonKey = seasonKey;
         this.profileId = profileId;
@@ -88,7 +96,10 @@ public class WarcraftLogPlayerRunEntity {
         this.fightId = fightId;
         this.dungeonName = dungeonName;
         this.keystoneLevel = keystoneLevel;
-        update(reportRevision, characterName, dungeonName, keystoneLevel, interrupts, deaths, keyParsePercentage);
+        update(
+                reportRevision, characterName, dungeonName, keystoneLevel, interrupts, deaths,
+                parsePercentage, keyParsePercentage, damagePerSecond
+        );
     }
 
     public void update(
@@ -98,7 +109,9 @@ public class WarcraftLogPlayerRunEntity {
             int keystoneLevel,
             int interrupts,
             int deaths,
-            BigDecimal keyParsePercentage
+            BigDecimal parsePercentage,
+            BigDecimal keyParsePercentage,
+            BigDecimal damagePerSecond
     ) {
         this.reportRevision = reportRevision;
         this.characterName = characterName;
@@ -106,7 +119,9 @@ public class WarcraftLogPlayerRunEntity {
         this.keystoneLevel = keystoneLevel;
         this.interrupts = interrupts;
         this.deaths = deaths;
+        this.parsePercentage = parsePercentage;
         this.keyParsePercentage = keyParsePercentage;
+        this.damagePerSecond = damagePerSecond;
         this.metricsVersion = CURRENT_METRICS_VERSION;
         this.capturedAt = Instant.now();
     }
@@ -117,6 +132,8 @@ public class WarcraftLogPlayerRunEntity {
     public int getFightId() { return fightId; }
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
+    public BigDecimal getParsePercentage() { return parsePercentage; }
     public BigDecimal getKeyParsePercentage() { return keyParsePercentage; }
+    public BigDecimal getDamagePerSecond() { return damagePerSecond; }
     public int getMetricsVersion() { return metricsVersion; }
 }

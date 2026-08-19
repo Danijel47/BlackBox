@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.LinkedHashSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -14,7 +13,7 @@ class WarcraftLogsRankingParserTest {
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     @Test
-    void selectsTheKeystoneBracketPercentInsteadOfTheGlobalRankPercent() throws Exception {
+    void selectsParseKeyAndDpsFromTheSamePlayerRanking() throws Exception {
         JsonNode rankings = jsonMapper.readTree("""
                 {
                   "roles": {
@@ -23,8 +22,9 @@ class WarcraftLogsRankingParserTest {
                         {
                           "id": 42,
                           "name": "Bucothered",
-                          "rankPercent": 97.31,
-                          "bracketPercent": 63.27
+                          "rankPercent": 77,
+                          "bracketPercent": 49,
+                          "amount": 124013.3
                         }
                       ]
                     }
@@ -32,15 +32,17 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        BigDecimal result = WarcraftLogsStatisticsService.findKeyParsePercentage(
+        WarcraftLogsStatisticsService.RankingMetrics result = WarcraftLogsStatisticsService.findRankingMetrics(
                 rankings, 42, "Bucothered"
         );
 
-        assertThat(result).isEqualByComparingTo("63.27");
+        assertThat(result.parsePercentage()).isEqualByComparingTo("77");
+        assertThat(result.keyParsePercentage()).isEqualByComparingTo("49");
+        assertThat(result.damagePerSecond()).isEqualByComparingTo("124013.3");
     }
 
     @Test
-    void doesNotFallBackToGlobalParseWhenKeyParseIsMissing() throws Exception {
+    void rejectsAnIncompleteRankingInsteadOfMixingMetrics() throws Exception {
         JsonNode rankings = jsonMapper.readTree("""
                 {
                   "characters": [
@@ -49,11 +51,13 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        BigDecimal result = WarcraftLogsStatisticsService.findKeyParsePercentage(
+        WarcraftLogsStatisticsService.RankingMetrics result = WarcraftLogsStatisticsService.findRankingMetrics(
                 rankings, 42, "Bucothered"
         );
 
-        assertThat(result).isNull();
+        assertThat(result.parsePercentage()).isNull();
+        assertThat(result.keyParsePercentage()).isNull();
+        assertThat(result.damagePerSecond()).isNull();
     }
 
     @Test
@@ -61,14 +65,20 @@ class WarcraftLogsRankingParserTest {
         JsonNode rankings = jsonMapper.readTree("""
                 {
                   "characters": [
-                    {"id": 99, "name": "Other", "bracketPercent": 88.0}
+                    {
+                      "id": 99,
+                      "name": "Other",
+                      "rankPercent": 90,
+                      "bracketPercent": 88,
+                      "amount": 150000
+                    }
                   ]
                 }
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findKeyParsePercentage(
+        assertThat(WarcraftLogsStatisticsService.findRankingMetrics(
                 rankings, 42, "Bucothered"
-        )).isNull();
+        ).parsePercentage()).isNull();
     }
 
     @Test
@@ -78,7 +88,7 @@ class WarcraftLogsRankingParserTest {
         );
 
         assertThat(query)
-                .contains("p7: rankings(compare: Parses, playerMetric: dps, fightIDs: [7])")
-                .contains("p9: rankings(compare: Parses, playerMetric: dps, fightIDs: [9])");
+                .contains("p7: rankings(compare: Rankings, playerMetric: dps, fightIDs: [7])")
+                .contains("p9: rankings(compare: Rankings, playerMetric: dps, fightIDs: [9])");
     }
 }

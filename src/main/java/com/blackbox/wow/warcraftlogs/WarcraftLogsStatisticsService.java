@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -108,19 +110,24 @@ public class WarcraftLogsStatisticsService {
             List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of());
             int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
-            List<BigDecimal> keyParses = runs.stream()
-                    .map(WarcraftLogPlayerRunEntity::getKeyParsePercentage)
-                    .filter(value -> value != null)
-                    .toList();
+            List<BigDecimal> parses = nonNullMetrics(runs, WarcraftLogPlayerRunEntity::getParsePercentage);
+            List<BigDecimal> keyParses = nonNullMetrics(
+                    runs, WarcraftLogPlayerRunEntity::getKeyParsePercentage
+            );
+            List<BigDecimal> damagePerSecond = nonNullMetrics(
+                    runs, WarcraftLogPlayerRunEntity::getDamagePerSecond
+            );
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
             result.add(new PlayerStatistics(
                     player.profileName(),
                     player.name(),
                     runs.size(),
-                    keyParses.size(),
+                    Math.toIntExact(runs.stream().filter(WarcraftLogsStatisticsService::hasRankingMetrics).count()),
                     average(interrupts, runs.size()),
                     average(deaths, runs.size()),
+                    average(parses),
                     average(keyParses),
+                    average(damagePerSecond),
                     snapshot == null ? null : snapshot.getLastError()
             ));
         }
@@ -158,9 +165,11 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
                 .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
                 .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
-                .append(", DPS key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()));
-        if (statistic.averageKeyParsePercentage() != null) {
-            message.append(" (DPS-key N=").append(statistic.keyParsedDungeonRuns()).append(')');
+                .append(", Parse ").append(formatPercentMetric(statistic.averageParsePercentage()))
+                .append(", Key ").append(formatPercentMetric(statistic.averageKeyParsePercentage()))
+                .append(", DPS ").append(formatDamagePerSecond(statistic.averageDamagePerSecond()));
+        if (statistic.rankedDungeonRuns() > 0) {
+            message.append(" (ranked N=").append(statistic.rankedDungeonRuns()).append(')');
         }
         message.append('\n');
     }
@@ -171,6 +180,14 @@ public class WarcraftLogsStatisticsService {
 
     private static String formatPercentMetric(BigDecimal value) {
         return value == null ? "unavailable" : formatMetric(value) + '%';
+    }
+
+    private static String formatDamagePerSecond(BigDecimal value) {
+        if (value == null) return "unavailable";
+        DecimalFormat formatter = new DecimalFormat(
+                "#,##0.##", DecimalFormatSymbols.getInstance(Locale.US)
+        );
+        return formatter.format(value);
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -358,7 +375,9 @@ public class WarcraftLogsStatisticsService {
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
         return existing != null
                 && existing.getReportRevision() >= revision
+                && existing.getParsePercentage() != null
                 && existing.getKeyParsePercentage() != null
+                && existing.getDamagePerSecond() != null
                 && existing.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION;
     }
 
@@ -400,7 +419,7 @@ public class WarcraftLogsStatisticsService {
             FightEvents events = eventsByFight.get(participant.fightId);
             int interruptCount = countEventsForActor(events.interrupts(), "sourceID", participant.actorId);
             int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
-            BigDecimal keyParsePercentage = findKeyParsePercentage(
+            RankingMetrics rankingMetrics = findRankingMetrics(
                     reportData.path("p" + participant.fightId),
                     participant.actorId,
                     participant.player.name()
@@ -419,7 +438,9 @@ public class WarcraftLogsStatisticsService {
                         participant.keystoneLevel,
                         interruptCount,
                         deathCount,
-                        keyParsePercentage
+                        rankingMetrics.parsePercentage(),
+                        rankingMetrics.keyParsePercentage(),
+                        rankingMetrics.damagePerSecond()
                 );
             } else {
                 entity.update(
@@ -429,7 +450,9 @@ public class WarcraftLogsStatisticsService {
                         participant.keystoneLevel,
                         interruptCount,
                         deathCount,
-                        keyParsePercentage
+                        rankingMetrics.parsePercentage(),
+                        rankingMetrics.keyParsePercentage(),
+                        rankingMetrics.damagePerSecond()
                 );
             }
             entity = runRepository.save(entity);
@@ -448,7 +471,7 @@ public class WarcraftLogsStatisticsService {
         );
         for (Integer fightId : fightIds) {
             query.append(" p").append(fightId)
-                    .append(": rankings(compare: Parses, playerMetric: dps, fightIDs: [")
+                    .append(": rankings(compare: Rankings, playerMetric: dps, fightIDs: [")
                     .append(fightId).append("])");
         }
         return query.append(" } } }").toString();
@@ -551,29 +574,35 @@ public class WarcraftLogsStatisticsService {
         return count;
     }
 
-    static BigDecimal findKeyParsePercentage(JsonNode node, int actorId, String characterName) {
+    static RankingMetrics findRankingMetrics(JsonNode node, int actorId, String characterName) {
         if (node == null || node.isMissingNode() || node.isNull()) {
-            return null;
+            return RankingMetrics.unavailable();
         }
-        BigDecimal directMatch = keyParsePercentageForPlayer(node, actorId, characterName);
-        if (directMatch != null) {
+        RankingMetrics directMatch = rankingMetricsForPlayer(node, actorId, characterName);
+        if (directMatch.available()) {
             return directMatch;
         }
         var children = node.elements();
         while (children.hasNext()) {
-            BigDecimal nestedMatch = findKeyParsePercentage(children.next(), actorId, characterName);
-            if (nestedMatch != null) {
+            RankingMetrics nestedMatch = findRankingMetrics(children.next(), actorId, characterName);
+            if (nestedMatch.available()) {
                 return nestedMatch;
             }
         }
-        return null;
+        return RankingMetrics.unavailable();
     }
 
-    private static BigDecimal keyParsePercentageForPlayer(JsonNode node, int actorId, String characterName) {
+    private static RankingMetrics rankingMetricsForPlayer(JsonNode node, int actorId, String characterName) {
+        JsonNode rankPercent = node.path("rankPercent");
         JsonNode bracketPercent = node.path("bracketPercent");
-        return bracketPercent.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)
-                ? bracketPercent.decimalValue()
-                : null;
+        JsonNode amount = node.path("amount");
+        if (!rankingBelongsToPlayer(node, actorId, characterName)
+                || !rankPercent.isNumber() || !bracketPercent.isNumber() || !amount.isNumber()) {
+            return RankingMetrics.unavailable();
+        }
+        return new RankingMetrics(
+                rankPercent.decimalValue(), bracketPercent.decimalValue(), amount.decimalValue()
+        );
     }
 
     private static boolean rankingBelongsToPlayer(JsonNode ranking, int actorId, String characterName) {
@@ -596,16 +625,45 @@ public class WarcraftLogsStatisticsService {
                 .divide(BigDecimal.valueOf(values.size()), 1, RoundingMode.HALF_UP);
     }
 
+    private static List<BigDecimal> nonNullMetrics(
+            List<WarcraftLogPlayerRunEntity> runs,
+            java.util.function.Function<WarcraftLogPlayerRunEntity, BigDecimal> metric
+    ) {
+        return runs.stream().map(metric).filter(value -> value != null).toList();
+    }
+
+    private static boolean hasRankingMetrics(WarcraftLogPlayerRunEntity run) {
+        return run.getParsePercentage() != null
+                && run.getKeyParsePercentage() != null
+                && run.getDamagePerSecond() != null;
+    }
+
     public record PlayerStatistics(
             String profileName,
             String characterName,
             int dungeonRuns,
-            int keyParsedDungeonRuns,
+            int rankedDungeonRuns,
             BigDecimal averageInterrupts,
             BigDecimal averageDeaths,
+            BigDecimal averageParsePercentage,
             BigDecimal averageKeyParsePercentage,
+            BigDecimal averageDamagePerSecond,
             String error
     ) {
+    }
+
+    record RankingMetrics(
+            BigDecimal parsePercentage,
+            BigDecimal keyParsePercentage,
+            BigDecimal damagePerSecond
+    ) {
+        private static RankingMetrics unavailable() {
+            return new RankingMetrics(null, null, null);
+        }
+
+        private boolean available() {
+            return parsePercentage != null && keyParsePercentage != null && damagePerSecond != null;
+        }
     }
 
     private record RunIdentity(long profileId, String reportCode, int fightId) {
