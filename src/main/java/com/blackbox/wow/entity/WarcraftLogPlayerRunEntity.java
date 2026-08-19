@@ -14,6 +14,8 @@ import java.time.Instant;
 @Table(name = "warcraft_log_player_run")
 public class WarcraftLogPlayerRunEntity {
 
+    public static final int CURRENT_METRICS_VERSION = 2;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -53,6 +55,9 @@ public class WarcraftLogPlayerRunEntity {
 
     @Column(name = "key_parse_percentage", precision = 8, scale = 2)
     private BigDecimal keyParsePercentage;
+
+    @Column(name = "metrics_version", nullable = false)
+    private int metricsVersion;
 
     @Column(name = "captured_at", nullable = false)
     private Instant capturedAt;
@@ -102,6 +107,7 @@ public class WarcraftLogPlayerRunEntity {
         this.interrupts = interrupts;
         this.deaths = deaths;
         this.keyParsePercentage = keyParsePercentage;
+        this.metricsVersion = CURRENT_METRICS_VERSION;
         this.capturedAt = Instant.now();
     }
 
@@ -112,4 +118,5 @@ public class WarcraftLogPlayerRunEntity {
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
     public BigDecimal getKeyParsePercentage() { return keyParsePercentage; }
+    public int getMetricsVersion() { return metricsVersion; }
 }

@@ -158,9 +158,9 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
                 .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
                 .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
-                .append(", key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()));
+                .append(", DPS key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()));
         if (statistic.averageKeyParsePercentage() != null) {
-            message.append(" (key-parse N=").append(statistic.keyParsedDungeonRuns()).append(')');
+            message.append(" (DPS-key N=").append(statistic.keyParsedDungeonRuns()).append(')');
         }
         message.append('\n');
     }
@@ -358,7 +358,8 @@ public class WarcraftLogsStatisticsService {
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
         return existing != null
                 && existing.getReportRevision() >= revision
-                && existing.getKeyParsePercentage() != null;
+                && existing.getKeyParsePercentage() != null
+                && existing.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION;
     }
 
     private void correlateFight(
@@ -390,15 +391,7 @@ public class WarcraftLogsStatisticsService {
     ) {
         if (report.fightIds.isEmpty()) return 0;
 
-        StringBuilder query = new StringBuilder("query ReportRankings($code: String!) { reportData { report(code: $code) {");
-        for (Integer fightId : report.fightIds) {
-            query.append(" p").append(fightId)
-                    .append(": rankings(compare: Parses, fightIDs: [").append(fightId)
-                    .append("])");
-        }
-        query.append(" } } }");
-
-        JsonNode reportData = client.query(query.toString(), Map.of("code", report.code))
+        JsonNode reportData = client.query(rankingsQuery(report.fightIds), Map.of("code", report.code))
                 .path("reportData")
                 .path("report");
         int saved = 0;
@@ -447,6 +440,18 @@ public class WarcraftLogsStatisticsService {
             saved++;
         }
         return saved;
+    }
+
+    static String rankingsQuery(Set<Integer> fightIds) {
+        StringBuilder query = new StringBuilder(
+                "query ReportRankings($code: String!) { reportData { report(code: $code) {"
+        );
+        for (Integer fightId : fightIds) {
+            query.append(" p").append(fightId)
+                    .append(": rankings(compare: Parses, playerMetric: dps, fightIDs: [")
+                    .append(fightId).append("])");
+        }
+        return query.append(" } } }").toString();
     }
 
     private Map<Integer, FightEvents> loadFightEvents(ReportWork report) {

@@ -19,10 +19,7 @@ public class WarcraftLogsEventPager {
                     dataType: $dataType,
                     fightIDs: [$fightId],
                     startTime: $start,
-                    limit: 10000,
-                    translate: false,
-                    useAbilityIDs: false,
-                    useActorIDs: false
+                    limit: 10000
                   ) {
                     data
                     nextPageTimestamp
@@ -43,7 +40,11 @@ public class WarcraftLogsEventPager {
         double cursor = 0;
         for (int page = 0; page < MAX_PAGES; page++) {
             JsonNode paginator = loadPage(reportCode, fightId, eventType, cursor);
-            paginator.path("data").forEach(events::add);
+            JsonNode pageData = paginator.path("data");
+            if (!pageData.isArray()) {
+                throw new IllegalStateException("Warcraft Logs returned incomplete event data.");
+            }
+            pageData.forEach(events::add);
             JsonNode nextNode = paginator.path("nextPageTimestamp");
             if (!nextNode.isNumber()) {
                 return List.copyOf(events);

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -68,5 +69,16 @@ class WarcraftLogsRankingParserTest {
         assertThat(WarcraftLogsStatisticsService.findKeyParsePercentage(
                 rankings, 42, "Bucothered"
         )).isNull();
+    }
+
+    @Test
+    void requestsDamageRankingsExplicitlyInsteadOfTheMythicPlusDefaultMetric() {
+        String query = WarcraftLogsStatisticsService.rankingsQuery(
+                new LinkedHashSet<>(java.util.List.of(7, 9))
+        );
+
+        assertThat(query)
+                .contains("p7: rankings(compare: Parses, playerMetric: dps, fightIDs: [7])")
+                .contains("p9: rankings(compare: Parses, playerMetric: dps, fightIDs: [9])");
     }
 }
