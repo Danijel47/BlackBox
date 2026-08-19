@@ -110,19 +110,22 @@ public class WarcraftLogsStatisticsService {
             List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of());
             int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
-            List<BigDecimal> parses = nonNullMetrics(runs, WarcraftLogPlayerRunEntity::getParsePercentage);
+            List<WarcraftLogPlayerRunEntity> rankedRuns = runs.stream()
+                    .filter(WarcraftLogsStatisticsService::hasRankingMetrics)
+                    .toList();
+            List<BigDecimal> parses = nonNullMetrics(rankedRuns, WarcraftLogPlayerRunEntity::getParsePercentage);
             List<BigDecimal> keyParses = nonNullMetrics(
-                    runs, WarcraftLogPlayerRunEntity::getKeyParsePercentage
+                    rankedRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
             );
             List<BigDecimal> damagePerSecond = nonNullMetrics(
-                    runs, WarcraftLogPlayerRunEntity::getDamagePerSecond
+                    rankedRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
             );
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
             result.add(new PlayerStatistics(
                     player.profileName(),
                     player.name(),
                     runs.size(),
-                    Math.toIntExact(runs.stream().filter(WarcraftLogsStatisticsService::hasRankingMetrics).count()),
+                    rankedRuns.size(),
                     average(interrupts, runs.size()),
                     average(deaths, runs.size()),
                     average(parses),
@@ -373,12 +376,7 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
-        return existing != null
-                && existing.getReportRevision() >= revision
-                && existing.getParsePercentage() != null
-                && existing.getKeyParsePercentage() != null
-                && existing.getDamagePerSecond() != null
-                && existing.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION;
+        return existing != null && existing.getReportRevision() >= revision && hasRankingMetrics(existing);
     }
 
     private void correlateFight(
@@ -419,10 +417,20 @@ public class WarcraftLogsStatisticsService {
             FightEvents events = eventsByFight.get(participant.fightId);
             int interruptCount = countEventsForActor(events.interrupts(), "sourceID", participant.actorId);
             int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
-            RankingMetrics rankingMetrics = findRankingMetrics(
+            RankingPercentiles rankingPercentiles = findRankingPercentiles(
                     reportData.path("p" + participant.fightId),
                     participant.actorId,
                     participant.player.name()
+            );
+            BigDecimal damagePerSecond = findDamagePerSecond(
+                    reportData.path("d" + participant.fightId),
+                    participant.actorId,
+                    participant.player.name()
+            );
+            RankingMetrics rankingMetrics = new RankingMetrics(
+                    rankingPercentiles.parsePercentage(),
+                    rankingPercentiles.keyParsePercentage(),
+                    damagePerSecond
             );
             WarcraftLogPlayerRunEntity entity = participant.existing;
             if (entity == null) {
@@ -472,6 +480,9 @@ public class WarcraftLogsStatisticsService {
         for (Integer fightId : fightIds) {
             query.append(" p").append(fightId)
                     .append(": rankings(compare: Rankings, playerMetric: dps, fightIDs: [")
+                    .append(fightId).append("])")
+                    .append(" d").append(fightId)
+                    .append(": table(dataType: DamageDone, viewBy: Source, fightIDs: [")
                     .append(fightId).append("])");
         }
         return query.append(" } } }").toString();
@@ -574,35 +585,67 @@ public class WarcraftLogsStatisticsService {
         return count;
     }
 
-    static RankingMetrics findRankingMetrics(JsonNode node, int actorId, String characterName) {
+    static RankingPercentiles findRankingPercentiles(JsonNode node, int actorId, String characterName) {
         if (node == null || node.isMissingNode() || node.isNull()) {
-            return RankingMetrics.unavailable();
+            return RankingPercentiles.unavailable();
         }
-        RankingMetrics directMatch = rankingMetricsForPlayer(node, actorId, characterName);
+        RankingPercentiles directMatch = rankingPercentilesForPlayer(node, actorId, characterName);
         if (directMatch.available()) {
             return directMatch;
         }
         var children = node.elements();
         while (children.hasNext()) {
-            RankingMetrics nestedMatch = findRankingMetrics(children.next(), actorId, characterName);
+            RankingPercentiles nestedMatch = findRankingPercentiles(children.next(), actorId, characterName);
             if (nestedMatch.available()) {
                 return nestedMatch;
             }
         }
-        return RankingMetrics.unavailable();
+        return RankingPercentiles.unavailable();
     }
 
-    private static RankingMetrics rankingMetricsForPlayer(JsonNode node, int actorId, String characterName) {
+    private static RankingPercentiles rankingPercentilesForPlayer(
+            JsonNode node,
+            int actorId,
+            String characterName
+    ) {
         JsonNode rankPercent = node.path("rankPercent");
         JsonNode bracketPercent = node.path("bracketPercent");
-        JsonNode amount = node.path("amount");
         if (!rankingBelongsToPlayer(node, actorId, characterName)
-                || !rankPercent.isNumber() || !bracketPercent.isNumber() || !amount.isNumber()) {
-            return RankingMetrics.unavailable();
+                || !rankPercent.isNumber() || !bracketPercent.isNumber()) {
+            return RankingPercentiles.unavailable();
         }
-        return new RankingMetrics(
-                rankPercent.decimalValue(), bracketPercent.decimalValue(), amount.decimalValue()
-        );
+        return new RankingPercentiles(rankPercent.decimalValue(), bracketPercent.decimalValue());
+    }
+
+    static BigDecimal findDamagePerSecond(JsonNode table, int actorId, String characterName) {
+        JsonNode totalTime = table == null ? null : table.path("totalTime");
+        if (totalTime == null || !totalTime.isNumber() || totalTime.decimalValue().signum() <= 0) {
+            return null;
+        }
+        BigDecimal totalDamage = findTotalDamage(table.path("entries"), actorId, characterName);
+        if (totalDamage == null) {
+            return null;
+        }
+        return totalDamage.multiply(BigDecimal.valueOf(1_000))
+                .divide(totalTime.decimalValue(), 1, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal findTotalDamage(JsonNode node, int actorId, String characterName) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        JsonNode total = node.path("total");
+        if (total.isNumber() && rankingBelongsToPlayer(node, actorId, characterName)) {
+            return total.decimalValue();
+        }
+        var children = node.elements();
+        while (children.hasNext()) {
+            BigDecimal nestedTotal = findTotalDamage(children.next(), actorId, characterName);
+            if (nestedTotal != null) {
+                return nestedTotal;
+            }
+        }
+        return null;
     }
 
     private static boolean rankingBelongsToPlayer(JsonNode ranking, int actorId, String characterName) {
@@ -633,7 +676,8 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static boolean hasRankingMetrics(WarcraftLogPlayerRunEntity run) {
-        return run.getParsePercentage() != null
+        return run.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION
+                && run.getParsePercentage() != null
                 && run.getKeyParsePercentage() != null
                 && run.getDamagePerSecond() != null;
     }
@@ -657,12 +701,15 @@ public class WarcraftLogsStatisticsService {
             BigDecimal keyParsePercentage,
             BigDecimal damagePerSecond
     ) {
-        private static RankingMetrics unavailable() {
-            return new RankingMetrics(null, null, null);
+    }
+
+    record RankingPercentiles(BigDecimal parsePercentage, BigDecimal keyParsePercentage) {
+        private static RankingPercentiles unavailable() {
+            return new RankingPercentiles(null, null);
         }
 
         private boolean available() {
-            return parsePercentage != null && keyParsePercentage != null && damagePerSecond != null;
+            return parsePercentage != null && keyParsePercentage != null;
         }
     }
 

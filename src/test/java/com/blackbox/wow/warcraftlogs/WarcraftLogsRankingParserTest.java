@@ -13,7 +13,7 @@ class WarcraftLogsRankingParserTest {
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     @Test
-    void selectsParseKeyAndDpsFromTheSamePlayerRanking() throws Exception {
+    void selectsParseAndKeyFromTheSamePlayerRanking() throws Exception {
         JsonNode rankings = jsonMapper.readTree("""
                 {
                   "roles": {
@@ -23,8 +23,7 @@ class WarcraftLogsRankingParserTest {
                           "id": 42,
                           "name": "Bucothered",
                           "rankPercent": 77,
-                          "bracketPercent": 49,
-                          "amount": 124013.3
+                          "bracketPercent": 49
                         }
                       ]
                     }
@@ -32,13 +31,13 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        WarcraftLogsStatisticsService.RankingMetrics result = WarcraftLogsStatisticsService.findRankingMetrics(
+        WarcraftLogsStatisticsService.RankingPercentiles result =
+                WarcraftLogsStatisticsService.findRankingPercentiles(
                 rankings, 42, "Bucothered"
         );
 
         assertThat(result.parsePercentage()).isEqualByComparingTo("77");
         assertThat(result.keyParsePercentage()).isEqualByComparingTo("49");
-        assertThat(result.damagePerSecond()).isEqualByComparingTo("124013.3");
     }
 
     @Test
@@ -51,13 +50,13 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        WarcraftLogsStatisticsService.RankingMetrics result = WarcraftLogsStatisticsService.findRankingMetrics(
+        WarcraftLogsStatisticsService.RankingPercentiles result =
+                WarcraftLogsStatisticsService.findRankingPercentiles(
                 rankings, 42, "Bucothered"
         );
 
         assertThat(result.parsePercentage()).isNull();
         assertThat(result.keyParsePercentage()).isNull();
-        assertThat(result.damagePerSecond()).isNull();
     }
 
     @Test
@@ -69,16 +68,30 @@ class WarcraftLogsRankingParserTest {
                       "id": 99,
                       "name": "Other",
                       "rankPercent": 90,
-                      "bracketPercent": 88,
-                      "amount": 150000
+                      "bracketPercent": 88
                     }
                   ]
                 }
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findRankingMetrics(
+        assertThat(WarcraftLogsStatisticsService.findRankingPercentiles(
                 rankings, 42, "Bucothered"
         ).parsePercentage()).isNull();
+    }
+
+    @Test
+    void calculatesDpsFromTheDamageDoneTable() throws Exception {
+        JsonNode table = jsonMapper.readTree("""
+                {
+                  "entries": [
+                    {"id": 42, "name": "Linqq", "total": 193709836}
+                  ],
+                  "totalTime": 1562008.558759
+                }
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.findDamagePerSecond(table, 42, "Linqq"))
+                .isEqualByComparingTo("124013.3");
     }
 
     @Test
@@ -89,6 +102,8 @@ class WarcraftLogsRankingParserTest {
 
         assertThat(query)
                 .contains("p7: rankings(compare: Rankings, playerMetric: dps, fightIDs: [7])")
-                .contains("p9: rankings(compare: Rankings, playerMetric: dps, fightIDs: [9])");
+                .contains("d7: table(dataType: DamageDone, viewBy: Source, fightIDs: [7])")
+                .contains("p9: rankings(compare: Rankings, playerMetric: dps, fightIDs: [9])")
+                .contains("d9: table(dataType: DamageDone, viewBy: Source, fightIDs: [9])");
     }
 }
