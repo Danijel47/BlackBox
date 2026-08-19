@@ -11,6 +11,7 @@ import com.blackbox.wow.helper.MPlusRunMatcher.LogFight;
 import com.blackbox.wow.helper.MPlusRunMatcher.PlayerIdentity;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -618,16 +619,25 @@ public class WarcraftLogsStatisticsService {
     }
 
     static BigDecimal findDamagePerSecond(JsonNode table, int actorId, String characterName) {
-        JsonNode totalTime = table == null ? null : table.path("totalTime");
-        if (totalTime == null || !totalTime.isNumber() || totalTime.decimalValue().signum() <= 0) {
+        JsonNode tableData = unwrapTableData(table);
+        JsonNode totalTime = tableData.path("totalTime");
+        if (!totalTime.isNumber() || totalTime.decimalValue().signum() <= 0) {
             return null;
         }
-        BigDecimal totalDamage = findTotalDamage(table.path("entries"), actorId, characterName);
+        BigDecimal totalDamage = findTotalDamage(tableData.path("entries"), actorId, characterName);
         if (totalDamage == null) {
             return null;
         }
         return totalDamage.multiply(BigDecimal.valueOf(1_000))
                 .divide(totalTime.decimalValue(), 1, RoundingMode.HALF_UP);
+    }
+
+    private static JsonNode unwrapTableData(JsonNode table) {
+        if (table == null || table.isMissingNode() || table.isNull()) {
+            return MissingNode.getInstance();
+        }
+        JsonNode data = table.path("data");
+        return data.isObject() ? data : table;
     }
 
     private static BigDecimal findTotalDamage(JsonNode node, int actorId, String characterName) {

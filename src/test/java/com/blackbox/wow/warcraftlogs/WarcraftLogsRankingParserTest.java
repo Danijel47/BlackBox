@@ -83,9 +83,26 @@ class WarcraftLogsRankingParserTest {
     void calculatesDpsFromTheDamageDoneTable() throws Exception {
         JsonNode table = jsonMapper.readTree("""
                 {
-                  "entries": [
-                    {"id": 42, "name": "Linqq", "total": 193709836}
-                  ],
+                  "data": {
+                    "entries": [
+                      {"id": 42, "name": "Linqq", "total": 193709836}
+                    ],
+                    "totalTime": 1562008.558759,
+                    "logVersion": 17,
+                    "gameVersion": 1
+                  }
+                }
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.findDamagePerSecond(table, 42, "Linqq"))
+                .isEqualByComparingTo("124013.3");
+    }
+
+    @Test
+    void retainsCompatibilityWithTheUnwrappedDamageTable() throws Exception {
+        JsonNode table = jsonMapper.readTree("""
+                {
+                  "entries": [{"id": 42, "name": "Linqq", "total": 193709836}],
                   "totalTime": 1562008.558759
                 }
                 """);
