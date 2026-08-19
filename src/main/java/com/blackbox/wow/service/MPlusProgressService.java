@@ -37,14 +37,6 @@ public class MPlusProgressService {
     public MPlusProgressService(
             TrackedPlayerService trackedPlayerService,
             MPlusProgressRepository repository,
-            MPlusProgressProperties properties
-    ) {
-        this(trackedPlayerService, repository, properties, Clock.systemUTC());
-    }
-
-    MPlusProgressService(
-            TrackedPlayerService trackedPlayerService,
-            MPlusProgressRepository repository,
             MPlusProgressProperties properties,
             Clock clock
     ) {

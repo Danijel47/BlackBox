@@ -42,25 +42,6 @@ public class MPlusDataCollectionService {
             MPlusCollectionPersistenceService persistence,
             MPlusCollectionProperties properties,
             MPlusDungeonProperties dungeonProperties,
-            MPlusDungeonVaultRepository dungeonVaultRepository
-    ) {
-        this(
-                raiderIoClient,
-                trackedPlayerService,
-                persistence,
-                properties,
-                dungeonProperties,
-                dungeonVaultRepository,
-                Clock.systemUTC()
-        );
-    }
-
-    MPlusDataCollectionService(
-            RaiderIoClient raiderIoClient,
-            TrackedPlayerService trackedPlayerService,
-            MPlusCollectionPersistenceService persistence,
-            MPlusCollectionProperties properties,
-            MPlusDungeonProperties dungeonProperties,
             MPlusDungeonVaultRepository dungeonVaultRepository,
             Clock clock
     ) {
