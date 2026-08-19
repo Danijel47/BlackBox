@@ -1,4 +1,6 @@
 helper/*
+!helper/tasks/
+!helper/tasks/*.md
 .DS_Store
 .env
 .env.*

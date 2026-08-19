@@ -5,17 +5,25 @@ import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.helper.AffixFormatter;
 import com.blackbox.wow.helper.RaidPicker;
 import com.blackbox.wow.helper.RaidProgressFormatter;
+import com.blackbox.wow.helper.VaultSlotCalculator;
+import com.blackbox.wow.helper.VaultSlotCalculator.VaultSlots;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaiderIoAbandonedRunService;
 import com.blackbox.wow.service.RaceToWorldFirstService;
+import com.blackbox.wow.service.MPlusDataCollectionService;
+import com.blackbox.wow.service.MPlusProgressService;
+import com.blackbox.wow.service.MPlusDungeonVaultService;
+import com.blackbox.wow.service.MPlusPerformanceService;
+import com.blackbox.wow.service.MPlusAdvancedService;
+import com.blackbox.wow.service.MPlusRunCorrelationService;
+import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.VaultReminderService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
-import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService.PlayerStatistics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
@@ -50,8 +58,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
-import java.util.function.ToIntFunction;
 
 @Component
 public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
@@ -96,6 +102,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TrackedPlayerService trackedPlayerService;
     private final VaultReminderService vaultReminderService;
     private final RaceToWorldFirstService raceToWorldFirstService;
+    private final MPlusDataCollectionService mplusDataCollectionService;
+    private final MPlusProgressService mplusProgressService;
+    private final MPlusDungeonVaultService mplusDungeonVaultService;
+    private final MPlusPerformanceService mplusPerformanceService;
+    private final MPlusTeamService mplusTeamService;
+    private final MPlusAdvancedService mplusAdvancedService;
+    private final MPlusRunCorrelationService mplusRunCorrelationService;
     private final WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     private final TelegramAccessPolicy telegramAccessPolicy;
     private final TelegramBotUserService telegramBotUserService;
@@ -127,6 +140,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TrackedPlayerService trackedPlayerService,
             VaultReminderService vaultReminderService,
             RaceToWorldFirstService raceToWorldFirstService,
+            MPlusDataCollectionService mplusDataCollectionService,
+            MPlusProgressService mplusProgressService,
+            MPlusDungeonVaultService mplusDungeonVaultService,
+            MPlusPerformanceService mplusPerformanceService,
+            MPlusTeamService mplusTeamService,
+            MPlusAdvancedService mplusAdvancedService,
+            MPlusRunCorrelationService mplusRunCorrelationService,
             WarcraftLogsStatisticsService warcraftLogsStatisticsService,
             TelegramAccessPolicy telegramAccessPolicy,
             TelegramBotUserService telegramBotUserService
@@ -145,6 +165,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.trackedPlayerService = trackedPlayerService;
         this.vaultReminderService = vaultReminderService;
         this.raceToWorldFirstService = raceToWorldFirstService;
+        this.mplusDataCollectionService = mplusDataCollectionService;
+        this.mplusProgressService = mplusProgressService;
+        this.mplusDungeonVaultService = mplusDungeonVaultService;
+        this.mplusPerformanceService = mplusPerformanceService;
+        this.mplusTeamService = mplusTeamService;
+        this.mplusAdvancedService = mplusAdvancedService;
+        this.mplusRunCorrelationService = mplusRunCorrelationService;
         this.warcraftLogsStatisticsService = warcraftLogsStatisticsService;
         this.telegramAccessPolicy = telegramAccessPolicy;
         this.telegramBotUserService = telegramBotUserService;
@@ -270,12 +297,64 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handlePlayerProfileCommand(CommandContext context) {
         return switch (context.command()) {
+            case "/mplus" -> handled(() -> handleUnifiedMPlusCommand(context));
             case "/profile-help" -> handled(() -> send(context.chatId(), profileHelpMessage()));
             case "/profile" -> handled(() -> sendOwnProfile(context));
             case "/profilemain" -> handled(() -> changeOwnMain(context));
             case "/mains" -> handled(() -> send(context.chatId(), formatCurrentMains()));
             default -> false;
         };
+    }
+
+    private void handleUnifiedMPlusCommand(CommandContext context) {
+        MPlusRequest request = MPlusRequest.from(context.text());
+        String response = switch (request.section()) {
+            case "progress" -> mplusProgressService.progressMessage(request.arguments(), context.senderUserId());
+            case "dungeons" -> mplusDungeonVaultService.dungeonCoverageMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "vault" -> mplusDungeonVaultService.vaultHistoryMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "performance" -> mplusPerformanceService.performanceMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "highlights" -> mplusPerformanceService.highlightsMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "team" -> mplusTeamService.teamMessage(request.arguments(), context.senderUserId());
+            case "pair" -> mplusTeamService.pairMessage(request.arguments());
+            case "consistency" -> mplusAdvancedService.consistencyMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "affixes" -> mplusAdvancedService.affixMessage(request.arguments(), context.senderUserId());
+            case "awards" -> mplusAdvancedService.awardsMessage();
+            case "coverage" -> mplusRunCorrelationService.coverageMessage(
+                    request.arguments(), context.senderUserId()
+            );
+            case "combat" -> warcraftLogsStatisticsService.combatMessage(request.arguments());
+            case "status" -> adminMPlusStatus(context);
+            default -> mplusHelpMessage();
+        };
+        send(context.chatId(), response);
+    }
+
+    private String adminMPlusStatus(CommandContext context) {
+        if (!isAdmin(context.update())) {
+            return adminOnlyMessage();
+        }
+        return mplusDataCollectionService.statusMessage() + "\n\n"
+                + mplusRunCorrelationService.statusMessage(warcraftLogsStatisticsService.seasonKey());
+    }
+
+    private static String mplusHelpMessage() {
+        return "M+ commands:\n"
+                + "/mplus progress [profile]\n/mplus dungeons [profile]\n/mplus vault [profile]\n"
+                + "/mplus performance [profile]\n/mplus highlights [profile]\n"
+                + "/mplus team [profile]\n/mplus pair <profile-a> <profile-b>\n"
+                + "/mplus consistency [profile]\n/mplus affixes [profile]\n/mplus awards\n"
+                + "/mplus coverage [profile]\n/mplus combat [profile]\n"
+                + "/mplus status — admin only";
     }
 
     private void sendOwnProfile(CommandContext context) {
@@ -450,36 +529,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleWarcraftInformationCommand(CommandContext context) {
         return switch (context.command()) {
-            case "/avginterrupts", "/wclinterrupts" -> handled(() -> send(
-                    context.chatId(),
-                    formatWarcraftLogsStatistic(
-                    "TOP INTRUPT MASINA",
-                    "Average interrupts per logged M+ dungeon",
-                    PlayerStatistics::averageInterrupts,
-                    " interrupts",
-                    PlayerStatistics::dungeonRuns,
-                    "logged dungeons"
-            )));
-            case "/avgdeaths", "/wcldeaths" -> handled(() -> send(
-                    context.chatId(),
-                    formatWarcraftLogsStatistic(
-                    "MOST FLOOR POV",
-                    "Average deaths per logged M+ dungeon",
-                    PlayerStatistics::averageDeaths,
-                    " deaths",
-                    PlayerStatistics::dungeonRuns,
-                    "logged dungeons"
-            )));
-            case "/avglogs", "/avgparse", "/wclaverage" -> handled(() -> send(
-                    context.chatId(),
-                    formatWarcraftLogsStatistic(
-                    null,
-                    "Average per-key Warcraft Logs parse",
-                    PlayerStatistics::averageParsePercentage,
-                    "%",
-                    PlayerStatistics::parsedDungeonRuns,
-                    "parsed dungeons"
-            )));
             case "/affixes" -> handled(() -> send(
                     context.chatId(),
                     AffixFormatter.formatWeeklyAffixes(raiderIoClient.getWeeklyAffixes("eu", "en"))
@@ -679,9 +728,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private static String commandArguments(CommandContext context) {
-        return context.text().length() > context.command().length()
-                ? context.text().substring(context.command().length()).trim()
-                : "";
+        String[] commandAndArguments = context.text().split("\\s+", 2);
+        return commandAndArguments.length == 2 ? commandAndArguments[1].trim() : "";
     }
 
     private static boolean handled(Runnable action) {
@@ -813,7 +861,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static String publicHelpMessage() {
         // Public help deliberately omits administration and TomTom commands.
         return "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n"
-                + "/mains\n/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
+                + "/mains\n/mplus — all Mythic+ tracking and combat commands\n"
+                + "/rio <region> <realm> <name>\n"
                 + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
                 + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n/mount-achiv <realm> <name>\n"
                 + "/price <itemId|item name> [realm-if-itemId]\n"
@@ -825,13 +874,14 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 + "/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n"
                 + "/userenable <telegramUserId>\n/profile\n/profile-help\n"
                 + "/profilemain <realm> <character>\n/mains\n/profiles\n"
+                + "/mplus — all Mythic+ commands, including admin status\n"
                 + "/profileadd <profile> <region> <realm> <character>\n"
                 + "/profilecharadd <profile> <realm> <character>\n"
                 + "/profilechardelete <profile> <realm> <character>\n"
                 + "/profilelink <telegramUserId> <profile>\n/profileunlink <profile>\n"
                 + "/profileswitch <profile> <region> <realm> <character>\n"
                 + "/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n"
-                + "/avginterrupts\n/avgdeaths\n/avglogs\n/rio <region> <realm> <name>\n"
+                + "/rio <region> <realm> <name>\n"
                 + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
                 + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n"
                 + "/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n"
@@ -853,62 +903,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     @PreDestroy
     void stopWorkingMessageScheduler() {
         workingMessageScheduler.shutdownNow();
-    }
-
-    private String formatWarcraftLogsStatistic(
-            String winnerTitle,
-            String title,
-            Function<PlayerStatistics, BigDecimal> valueExtractor,
-            String suffix,
-            ToIntFunction<PlayerStatistics> runCountExtractor,
-            String runCountLabel
-    ) {
-        List<PlayerStatistics> statistics;
-        try {
-            statistics = warcraftLogsStatisticsService.statistics();
-        } catch (Exception e) {
-            return "Warcraft Logs lookup failed: " + e.getMessage();
-        }
-
-        List<PlayerStatistics> sorted = statistics.stream()
-                .sorted(Comparator.comparing(
-                        valueExtractor,
-                        Comparator.nullsLast(Comparator.reverseOrder())
-                ))
-                .toList();
-        StringBuilder sb = new StringBuilder();
-        if (winnerTitle != null) {
-            sorted.stream()
-                    .filter(player -> valueExtractor.apply(player) != null)
-                    .findFirst()
-                    .ifPresent(winner -> sb.append(winnerTitle)
-                            .append(": ")
-                            .append(winner.profileName())
-                            .append("\n\n"));
-        }
-        int recordedPlayerRuns = statistics.stream()
-                .mapToInt(runCountExtractor)
-                .sum();
-        sb.append(title)
-                .append("\nOnly ")
-                .append(recordedPlayerRuns)
-                .append(" recorded player-runs are included.\n");
-        for (PlayerStatistics player : sorted) {
-            sb.append("• ").append(player.profileName()).append(": ");
-            BigDecimal value = valueExtractor.apply(player);
-            if (value == null) {
-                sb.append("n/a");
-            } else {
-                sb.append(value.stripTrailingZeros().toPlainString()).append(suffix);
-            }
-            sb.append(" (").append(runCountExtractor.applyAsInt(player))
-                    .append(" ").append(runCountLabel).append(")");
-            if (player.error() != null) {
-                sb.append(" [").append(player.error()).append("]");
-            }
-            sb.append("\n");
-        }
-        return sb.toString().trim();
     }
 
     private String formatTelegramIdentity(Update update) {
@@ -964,8 +958,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 + "Example: /profilemain stormscale Alicemage\n\n"
                 + "View all current group mains:\n/mains\n\n"
                 + "Only the characters registered to your profile can be selected. "
-                + "Ask the bot admin to add another character. The group statistics commands "
-                + "/avginterrupts, /avgdeaths and /avglogs follow each profile's selected main.";
+                + "Ask the bot admin to add another character. /mplus combat follows each "
+                + "profile's selected main.";
     }
 
     private static String formatOwnPlayerProfile(TrackedPlayerService.PlayerProfile profile) {
@@ -1275,10 +1269,19 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private static String formatVaultSlot(List<RaiderIoClient.MPlusRun> runs, int requiredRuns) {
-        if (runs.size() < requiredRuns) {
-            return "locked (" + (requiredRuns - runs.size()) + " more)";
+        VaultSlots slots = VaultSlotCalculator.calculate(runs.stream()
+                .map(RaiderIoClient.MPlusRun::level)
+                .toList());
+        Integer level = switch (requiredRuns) {
+            case 1 -> slots.slotOne();
+            case 4 -> slots.slotFour();
+            case 8 -> slots.slotEight();
+            default -> throw new IllegalArgumentException("Unsupported vault slot: " + requiredRuns);
+        };
+        if (level == null) {
+            return "locked (" + (requiredRuns - slots.runCount()) + " more)";
         }
-        return "+" + runs.get(requiredRuns - 1).level();
+        return "+" + level;
     }
 
     private String formatTitle01Watch() {
@@ -1675,6 +1678,20 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     @FunctionalInterface
     private interface CommandHandler {
         boolean handle(CommandContext context);
+    }
+
+    private record MPlusRequest(String section, String arguments) {
+
+        private static MPlusRequest from(String text) {
+            String[] parts = text.trim().split("\\s+", 3);
+            if (parts.length < 2) {
+                return new MPlusRequest("help", "");
+            }
+            return new MPlusRequest(
+                    parts[1].toLowerCase(Locale.ROOT),
+                    parts.length == 3 ? parts[2].trim() : ""
+            );
+        }
     }
 
     private record CommandContext(Update update, long chatId, Long senderUserId, String text, String command) {

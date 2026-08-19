@@ -9,6 +9,13 @@ import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaiderIoAbandonedRunService;
 import com.blackbox.wow.service.RaceToWorldFirstService;
+import com.blackbox.wow.service.MPlusDataCollectionService;
+import com.blackbox.wow.service.MPlusProgressService;
+import com.blackbox.wow.service.MPlusDungeonVaultService;
+import com.blackbox.wow.service.MPlusPerformanceService;
+import com.blackbox.wow.service.MPlusTeamService;
+import com.blackbox.wow.service.MPlusAdvancedService;
+import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TrackedPlayerService;
@@ -52,6 +59,13 @@ class BlackBoxBotTest {
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
+    @Mock private MPlusDataCollectionService mplusDataCollectionService;
+    @Mock private MPlusProgressService mplusProgressService;
+    @Mock private MPlusDungeonVaultService mplusDungeonVaultService;
+    @Mock private MPlusPerformanceService mplusPerformanceService;
+    @Mock private MPlusTeamService mplusTeamService;
+    @Mock private MPlusAdvancedService mplusAdvancedService;
+    @Mock private MPlusRunCorrelationService mplusRunCorrelationService;
     @Mock private WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     @Mock private TelegramAccessPolicy accessPolicy;
     @Mock private TelegramBotUserService telegramBotUserService;
@@ -143,7 +157,7 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText())
                 .contains("/profilemain <realm> <character>")
                 .contains("Only the characters registered to your profile can be selected")
-                .contains("/avginterrupts", "/avgdeaths", "/avglogs");
+                .contains("/mplus combat");
     }
 
     @Test
@@ -221,6 +235,92 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText()).isEqualTo("RWF standings");
     }
 
+    @Test
+    void letsTheAdminViewMPlusCollectionStatus() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        Update update = update(chatId, adminId, "/mplus status");
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(mplusDataCollectionService.statusMessage()).thenReturn("M+ collection status");
+        when(warcraftLogsStatisticsService.seasonKey()).thenReturn("season-mn-2");
+        when(mplusRunCorrelationService.statusMessage("season-mn-2")).thenReturn("Match status");
+
+        bot().consume(update);
+
+        verify(mplusDataCollectionService).statusMessage();
+        assertThat(sentMessage().getText()).contains("M+ collection status", "Match status");
+    }
+
+    @Test
+    void preventsARegularUserFromViewingMPlusCollectionStatus() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus status");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update);
+
+        verify(mplusDataCollectionService, never()).statusMessage();
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+    }
+
+    @Test
+    void showsTheRequestingUsersMPlusProgress() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus@BlackBoxBot progress me");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mplusProgressService.progressMessage("me", userId)).thenReturn("Personal M+ progress");
+
+        bot().consume(update);
+
+        verify(mplusProgressService).progressMessage("me", userId);
+        assertThat(sentMessage().getText()).isEqualTo("Personal M+ progress");
+    }
+
+    @Test
+    void showsTheRequestingUsersDungeonCoverage() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus dungeons");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mplusDungeonVaultService.dungeonCoverageMessage("", userId))
+                .thenReturn("Dungeon coverage");
+
+        bot().consume(update);
+
+        verify(mplusDungeonVaultService).dungeonCoverageMessage("", userId);
+        assertThat(sentMessage().getText()).isEqualTo("Dungeon coverage");
+    }
+
+    @Test
+    void showsAProfilesObservedMPlusHighlights() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus highlights Buco");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mplusPerformanceService.highlightsMessage("Buco", userId)).thenReturn("M+ highlights");
+
+        bot().consume(update);
+
+        verify(mplusPerformanceService).highlightsMessage("Buco", userId);
+        assertThat(sentMessage().getText()).isEqualTo("M+ highlights");
+    }
+
+    @Test
+    void routesTheUnifiedMPlusCommandToItsRequestedView() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus consistency Buco");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mplusAdvancedService.consistencyMessage("Buco", userId)).thenReturn("Consistency result");
+
+        bot().consume(update);
+
+        verify(mplusAdvancedService).consistencyMessage("Buco", userId);
+        assertThat(sentMessage().getText()).isEqualTo("Consistency result");
+    }
+
     private BlackBoxBot bot() {
         bot = new BlackBoxBot(
                 "token",
@@ -237,6 +337,13 @@ class BlackBoxBotTest {
                 trackedPlayerService,
                 vaultReminderService,
                 raceToWorldFirstService,
+                mplusDataCollectionService,
+                mplusProgressService,
+                mplusDungeonVaultService,
+                mplusPerformanceService,
+                mplusTeamService,
+                mplusAdvancedService,
+                mplusRunCorrelationService,
                 warcraftLogsStatisticsService,
                 accessPolicy,
                 telegramBotUserService

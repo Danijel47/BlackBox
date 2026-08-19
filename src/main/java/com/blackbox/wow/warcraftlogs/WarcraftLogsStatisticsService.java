@@ -6,6 +6,10 @@ import com.blackbox.wow.repository.WarcraftLogPlayerRunRepository;
 import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
+import com.blackbox.wow.service.MPlusRunCorrelationService;
+import com.blackbox.wow.helper.MPlusRunMatcher.LogFight;
+import com.blackbox.wow.helper.MPlusRunMatcher.PlayerIdentity;
+import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -44,6 +48,8 @@ public class WarcraftLogsStatisticsService {
                         id
                         name
                         keystoneLevel
+                        startTime
+                        endTime
                         friendlyPlayers
                       }
                       masterData(translate: false) {
@@ -65,6 +71,8 @@ public class WarcraftLogsStatisticsService {
     private final TrackedPlayerService trackedPlayerService;
     private final WarcraftLogPlayerRunRepository runRepository;
     private final WarcraftLogProfileSnapshotRepository snapshotRepository;
+    private final MPlusRunCorrelationService correlationService;
+    private final WarcraftLogsEventPager eventPager;
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
 
     public WarcraftLogsStatisticsService(
@@ -72,13 +80,17 @@ public class WarcraftLogsStatisticsService {
             WarcraftLogsProperties properties,
             TrackedPlayerService trackedPlayerService,
             WarcraftLogPlayerRunRepository runRepository,
-            WarcraftLogProfileSnapshotRepository snapshotRepository
+            WarcraftLogProfileSnapshotRepository snapshotRepository,
+            MPlusRunCorrelationService correlationService,
+            WarcraftLogsEventPager eventPager
     ) {
         this.client = client;
         this.properties = properties;
         this.trackedPlayerService = trackedPlayerService;
         this.runRepository = runRepository;
         this.snapshotRepository = snapshotRepository;
+        this.correlationService = correlationService;
+        this.eventPager = eventPager;
     }
 
     public List<PlayerStatistics> statistics() {
@@ -121,6 +133,44 @@ public class WarcraftLogsStatisticsService {
 
     public Instant seasonStart() {
         return properties.seasonStart();
+    }
+
+    public String combatMessage(String profileArgument) {
+        String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
+        List<PlayerStatistics> selected = statistics().stream()
+                .filter(statistic -> requestedProfile.isBlank()
+                        || statistic.profileName().equalsIgnoreCase(requestedProfile))
+                .toList();
+        if (selected.isEmpty()) {
+            return requestedProfile.isBlank()
+                    ? "No Warcraft Logs combat statistics are available."
+                    : "Active player profile not found: " + requestedProfile;
+        }
+        StringBuilder message = new StringBuilder("Warcraft Logs M+ combat — ")
+                .append(properties.seasonKey()).append('\n');
+        selected.forEach(statistic -> appendCombatStatistic(message, statistic));
+        return message.append("Averages use logged runs only; missing/private logs are unavailable, not zero.")
+                .toString();
+    }
+
+    private static void appendCombatStatistic(StringBuilder message, PlayerStatistics statistic) {
+        message.append("• ").append(statistic.profileName()).append(" (")
+                .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
+                .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
+                .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
+                .append(", parse ").append(formatPercentMetric(statistic.averageParsePercentage()));
+        if (statistic.averageParsePercentage() != null) {
+            message.append(" (parse N=").append(statistic.parsedDungeonRuns()).append(')');
+        }
+        message.append('\n');
+    }
+
+    private static String formatMetric(BigDecimal value) {
+        return value == null ? "unavailable" : value.stripTrailingZeros().toPlainString();
+    }
+
+    private static String formatPercentMetric(BigDecimal value) {
+        return value == null ? "unavailable" : formatMetric(value) + '%';
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -237,15 +287,16 @@ public class WarcraftLogsStatisticsService {
         if (code.isBlank()) {
             return null;
         }
-        Integer actorId = findActorId(reportNode.path("masterData").path("actors"), player);
+        Map<Integer, ReportActor> actors = reportActors(reportNode.path("masterData").path("actors"));
+        Integer actorId = findActorId(actors, player);
         if (actorId == null) {
             return null;
         }
         int revision = Math.max(0, reportNode.path("revision").asInt(0));
-        return new DiscoveredReport(code, revision, startedAt, actorId);
+        return new DiscoveredReport(code, revision, startedAt, actorId, actors);
     }
 
-    private static void addReportFights(
+    private void addReportFights(
             JsonNode reportNode,
             TrackedPlayer player,
             DiscoveredReport discoveredReport,
@@ -257,7 +308,7 @@ public class WarcraftLogsStatisticsService {
         }
     }
 
-    private static void addReportFight(
+    private void addReportFight(
             JsonNode fight,
             TrackedPlayer player,
             DiscoveredReport discoveredReport,
@@ -269,6 +320,8 @@ public class WarcraftLogsStatisticsService {
         if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())) {
             return;
         }
+
+        correlateFight(fight, player, discoveredReport, fightId, keyLevel);
 
         RunIdentity identity = new RunIdentity(player.profileId(), discoveredReport.code(), fightId);
         WarcraftLogPlayerRunEntity existing = existingRuns.get(identity);
@@ -308,20 +361,37 @@ public class WarcraftLogsStatisticsService {
                 && existing.getParsePercentage() != null;
     }
 
+    private void correlateFight(
+            JsonNode fight,
+            TrackedPlayer player,
+            DiscoveredReport report,
+            int fightId,
+            int keyLevel
+    ) {
+        long startOffset = fight.path("startTime").asLong(-1);
+        long endOffset = fight.path("endTime").asLong(-1);
+        if (startOffset < 0 || endOffset <= startOffset) {
+            return;
+        }
+        Set<PlayerIdentity> roster = friendlyRoster(
+                fight.path("friendlyPlayers"), report.actors(), player.region()
+        );
+        correlationService.correlate(new LogFight(
+                properties.seasonKey(), report.code(), report.revision(), fightId,
+                fight.path("name").asText(""), keyLevel,
+                report.startedAt().plusMillis(startOffset), report.startedAt().plusMillis(endOffset),
+                endOffset - startOffset, roster
+        ));
+    }
+
     private int loadAndSaveReportEvents(
             ReportWork report,
             Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns
     ) {
         if (report.fightIds.isEmpty()) return 0;
 
-        StringBuilder query = new StringBuilder("query ReportEvents($code: String!) { reportData { report(code: $code) {");
+        StringBuilder query = new StringBuilder("query ReportRankings($code: String!) { reportData { report(code: $code) {");
         for (Integer fightId : report.fightIds) {
-            query.append(" i").append(fightId)
-                    .append(": events(dataType: Interrupts, fightIDs: [").append(fightId)
-                    .append("], limit: 10000) { data }");
-            query.append(" d").append(fightId)
-                    .append(": events(dataType: Deaths, fightIDs: [").append(fightId)
-                    .append("], limit: 10000) { data }");
             query.append(" p").append(fightId)
                     .append(": rankings(compare: Parses, fightIDs: [").append(fightId)
                     .append("])");
@@ -332,11 +402,11 @@ public class WarcraftLogsStatisticsService {
                 .path("reportData")
                 .path("report");
         int saved = 0;
+        Map<Integer, FightEvents> eventsByFight = loadFightEvents(report);
         for (Participant participant : report.participants) {
-            JsonNode interrupts = reportData.path("i" + participant.fightId).path("data");
-            JsonNode deaths = reportData.path("d" + participant.fightId).path("data");
-            int interruptCount = countEventsForActor(interrupts, "sourceID", participant.actorId);
-            int deathCount = countDeathEventsForActor(deaths, participant.actorId);
+            FightEvents events = eventsByFight.get(participant.fightId);
+            int interruptCount = countEventsForActor(events.interrupts(), "sourceID", participant.actorId);
+            int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
             BigDecimal parsePercentage = findParsePercentage(
                     reportData.path("p" + participant.fightId),
                     participant.actorId,
@@ -379,6 +449,17 @@ public class WarcraftLogsStatisticsService {
         return saved;
     }
 
+    private Map<Integer, FightEvents> loadFightEvents(ReportWork report) {
+        Map<Integer, FightEvents> events = new LinkedHashMap<>();
+        for (Integer fightId : report.fightIds) {
+            events.put(fightId, new FightEvents(
+                    eventPager.events(report.code, fightId, EventType.INTERRUPTS),
+                    eventPager.events(report.code, fightId, EventType.DEATHS)
+            ));
+        }
+        return Map.copyOf(events);
+    }
+
     private void saveSnapshot(TrackedPlayer player, BigDecimal parsePercentage, String error) {
         WarcraftLogProfileSnapshotEntity snapshot = snapshotRepository
                 .findBySeasonKeyAndProfileId(properties.seasonKey(), player.profileId())
@@ -396,17 +477,43 @@ public class WarcraftLogsStatisticsService {
         return milliseconds <= 0 ? null : Instant.ofEpochMilli(milliseconds);
     }
 
-    private static Integer findActorId(JsonNode actors, TrackedPlayer player) {
+    private static Integer findActorId(Map<Integer, ReportActor> actors, TrackedPlayer player) {
         String expectedServer = normalizeServer(player.realm());
-        for (JsonNode actor : actors) {
-            if (!actor.path("name").asText("").equalsIgnoreCase(player.name())) continue;
-            String actorServer = normalizeServer(actor.path("server").asText(""));
+        for (ReportActor actor : actors.values()) {
+            if (!actor.name().equalsIgnoreCase(player.name())) continue;
+            String actorServer = normalizeServer(actor.server());
             if (actorServer.isBlank() || actorServer.equals(expectedServer)) {
-                int id = actor.path("id").asInt(0);
-                return id > 0 ? id : null;
+                return actor.id();
             }
         }
         return null;
+    }
+
+    private static Map<Integer, ReportActor> reportActors(JsonNode actors) {
+        Map<Integer, ReportActor> result = new LinkedHashMap<>();
+        for (JsonNode actor : actors) {
+            int id = actor.path("id").asInt(0);
+            String name = actor.path("name").asText("");
+            if (id > 0 && !name.isBlank()) {
+                result.put(id, new ReportActor(id, name, actor.path("server").asText("")));
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private static Set<PlayerIdentity> friendlyRoster(
+            JsonNode friendlyPlayers,
+            Map<Integer, ReportActor> actors,
+            String region
+    ) {
+        Set<PlayerIdentity> roster = new LinkedHashSet<>();
+        for (JsonNode playerId : friendlyPlayers) {
+            ReportActor actor = actors.get(playerId.asInt(0));
+            if (actor != null && !actor.server().isBlank()) {
+                roster.add(new PlayerIdentity(region, actor.server(), actor.name()));
+            }
+        }
+        return Set.copyOf(roster);
     }
 
     private static String normalizeServer(String server) {
@@ -420,7 +527,7 @@ public class WarcraftLogsStatisticsService {
         return false;
     }
 
-    private static int countEventsForActor(JsonNode events, String actorField, int actorId) {
+    private static int countEventsForActor(Iterable<JsonNode> events, String actorField, int actorId) {
         int count = 0;
         for (JsonNode event : events) {
             if (event.path(actorField).asInt(-1) == actorId) count++;
@@ -428,7 +535,7 @@ public class WarcraftLogsStatisticsService {
         return count;
     }
 
-    private static int countDeathEventsForActor(JsonNode events, int actorId) {
+    private static int countDeathEventsForActor(Iterable<JsonNode> events, int actorId) {
         int count = 0;
         for (JsonNode event : events) {
             if (event.path("targetID").asInt(-1) == actorId
@@ -499,7 +606,19 @@ public class WarcraftLogsStatisticsService {
     private record RunIdentity(long profileId, String reportCode, int fightId) {
     }
 
-    private record DiscoveredReport(String code, int revision, Instant startedAt, int actorId) {
+    private record DiscoveredReport(
+            String code,
+            int revision,
+            Instant startedAt,
+            int actorId,
+            Map<Integer, ReportActor> actors
+    ) {
+    }
+
+    private record ReportActor(int id, String name, String server) {
+    }
+
+    private record FightEvents(List<JsonNode> interrupts, List<JsonNode> deaths) {
     }
 
     private record Participant(
