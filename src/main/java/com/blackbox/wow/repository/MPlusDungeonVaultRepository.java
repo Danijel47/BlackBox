@@ -1,7 +1,6 @@
 package com.blackbox.wow.repository;
 
 import com.blackbox.wow.client.MPlusObservation;
-import com.blackbox.wow.client.MPlusObservation.RunSummary;
 import com.blackbox.wow.client.MPlusStaticData;
 import com.blackbox.wow.helper.MPlusResetCalendar;
 import com.blackbox.wow.helper.VaultSlotCalculator;
@@ -23,6 +22,12 @@ import static com.blackbox.wow.helper.JdbcTimestampMapper.toUtcOffset;
 @Repository
 public class MPlusDungeonVaultRepository {
 
+    private static final String PARAM_PROFILE_ID = "profileId";
+    private static final String PARAM_SEASON = "season";
+    private static final String PARAM_PERIOD_START = "periodStart";
+    private static final String REGION = "region";
+    private static final String REALM = "realm";
+    private static final String PARAM_CHARACTER_NAME = "characterName";
     private static final String UPSERT_VAULT_SNAPSHOT = """
             INSERT INTO mplus_weekly_vault_snapshot (
                 profile_id, season_key, reset_period_start, region, realm,
@@ -34,10 +39,22 @@ public class MPlusDungeonVaultRepository {
                 :slotEight, :finalized, :source, :capturedAt, :finalizedAt
             )
             ON CONFLICT (profile_id, season_key, reset_period_start) DO UPDATE SET
-                run_count = EXCLUDED.run_count,
-                slot_one_level = EXCLUDED.slot_one_level,
-                slot_four_level = EXCLUDED.slot_four_level,
-                slot_eight_level = EXCLUDED.slot_eight_level,
+                run_count = GREATEST(
+                    mplus_weekly_vault_snapshot.run_count,
+                    EXCLUDED.run_count
+                ),
+                slot_one_level = GREATEST(
+                    mplus_weekly_vault_snapshot.slot_one_level,
+                    EXCLUDED.slot_one_level
+                ),
+                slot_four_level = GREATEST(
+                    mplus_weekly_vault_snapshot.slot_four_level,
+                    EXCLUDED.slot_four_level
+                ),
+                slot_eight_level = GREATEST(
+                    mplus_weekly_vault_snapshot.slot_eight_level,
+                    EXCLUDED.slot_eight_level
+                ),
                 finalized = mplus_weekly_vault_snapshot.finalized OR EXCLUDED.finalized,
                 recovery_source = CASE WHEN EXCLUDED.finalized THEN EXCLUDED.recovery_source
                                        ELSE mplus_weekly_vault_snapshot.recovery_source END,
@@ -75,22 +92,47 @@ public class MPlusDungeonVaultRepository {
                 player,
                 observation,
                 currentPeriod,
-                observation.weeklyRuns(),
+                observedRunLevels(player.profileId(), observation.season(), currentPeriod, capturedAt),
                 false,
                 "CURRENT",
                 capturedAt
         );
         if (observation.previousWeekAvailable()) {
+            Instant previousPeriod = resetCalendar.previousPeriodStart(currentPeriod);
             saveVaultSnapshot(
                     player,
                     observation,
-                    resetCalendar.previousPeriodStart(currentPeriod),
-                    observation.previousWeeklyRuns(),
+                    previousPeriod,
+                    observedRunLevels(player.profileId(), observation.season(), previousPeriod, currentPeriod),
                     true,
                     "PREVIOUS",
                     capturedAt
             );
         }
+    }
+
+    private List<Integer> observedRunLevels(
+            long profileId,
+            String season,
+            Instant periodStart,
+            Instant periodEnd
+    ) {
+        return jdbc.sql("""
+                        SELECT run.mythic_level
+                        FROM mplus_observed_run run
+                        JOIN mplus_observed_run_profile run_profile ON run_profile.run_id = run.id
+                        WHERE run_profile.profile_id = :profileId
+                          AND run.season_key = :season
+                          AND run.completed_at >= :periodStart
+                          AND run.completed_at < :periodEnd
+                        ORDER BY run.mythic_level DESC, run.completed_at DESC, run.id DESC
+                        """)
+                .param(PARAM_PROFILE_ID, profileId)
+                .param(PARAM_SEASON, season)
+                .param(PARAM_PERIOD_START, toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("periodEnd", toUtcOffset(periodEnd), Types.TIMESTAMP_WITH_TIMEZONE)
+                .query(Integer.class)
+                .list();
     }
 
     public List<DungeonCoverage> dungeonCoverage(long profileId, String season) {
@@ -116,8 +158,8 @@ public class MPlusDungeonVaultRepository {
                                  dungeon.dungeon_name, dungeon.dungeon_short_name
                         ORDER BY dungeon.dungeon_name
                         """)
-                .param("profileId", profileId)
-                .param("season", season)
+                .param(PARAM_PROFILE_ID, profileId)
+                .param(PARAM_SEASON, season)
                 .query((resultSet, ignoredRowNumber) -> new DungeonCoverage(
                         resultSet.getInt("dungeon_id"),
                         resultSet.getInt("challenge_mode_id"),
@@ -139,13 +181,13 @@ public class MPlusDungeonVaultRepository {
                         ORDER BY reset_period_start DESC
                         LIMIT :historyLimit
                         """)
-                .param("profileId", profileId)
+                .param(PARAM_PROFILE_ID, profileId)
                 .param("historyLimit", limit)
                 .query((resultSet, ignoredRowNumber) -> new VaultHistory(
                         resultSet.getString("season_key"),
                         toInstant(resultSet.getObject("reset_period_start", OffsetDateTime.class)),
-                        resultSet.getString("region"),
-                        resultSet.getString("realm"),
+                        resultSet.getString(REGION),
+                        resultSet.getString(REALM),
                         resultSet.getString("character_name"),
                         resultSet.getInt("run_count"),
                         nullableInteger(resultSet.getObject("slot_one_level")),
@@ -174,7 +216,7 @@ public class MPlusDungeonVaultRepository {
                             keystone_timer_seconds = EXCLUDED.keystone_timer_seconds,
                             refreshed_at = EXCLUDED.refreshed_at
                         """)
-                .param("season", season)
+                .param(PARAM_SEASON, season)
                 .param("dungeonId", dungeon.id())
                 .param("challengeModeId", dungeon.challengeModeId())
                 .param("slug", dungeon.slug())
@@ -189,19 +231,19 @@ public class MPlusDungeonVaultRepository {
             TrackedPlayer player,
             MPlusObservation observation,
             Instant periodStart,
-            List<RunSummary> runs,
+            List<Integer> runLevels,
             boolean finalized,
             String source,
             Instant capturedAt
     ) {
-        VaultSlots slots = VaultSlotCalculator.calculate(runs.stream().map(RunSummary::mythicLevel).toList());
+        VaultSlots slots = VaultSlotCalculator.calculate(runLevels);
         jdbc.sql(UPSERT_VAULT_SNAPSHOT)
-                .param("profileId", player.profileId())
-                .param("season", observation.season())
-                .param("periodStart", toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
-                .param("region", observation.region())
-                .param("realm", observation.realm())
-                .param("characterName", observation.name())
+                .param(PARAM_PROFILE_ID, player.profileId())
+                .param(PARAM_SEASON, observation.season())
+                .param(PARAM_PERIOD_START, toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param(REGION, observation.region())
+                .param(REALM, observation.realm())
+                .param(PARAM_CHARACTER_NAME, observation.name())
                 .param("runCount", slots.runCount())
                 .param("slotOne", slots.slotOne(), Types.INTEGER)
                 .param("slotFour", slots.slotFour(), Types.INTEGER)
