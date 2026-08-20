@@ -19,6 +19,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.blackbox.wow.helper.JdbcTimestampMapper.toUtcOffset;
+
 @Service
 public class MPlusCollectionPersistenceService {
 
@@ -114,7 +116,7 @@ public class MPlusCollectionPersistenceService {
                 .param("region", player.region())
                 .param("realm", player.realm())
                 .param("characterName", player.name())
-                .param("attemptedAt", attemptedAt)
+                .param("attemptedAt", toUtcOffset(attemptedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("category", category.name())
                 .update();
     }
@@ -175,9 +177,10 @@ public class MPlusCollectionPersistenceService {
                 .param("scoreDps", observation.scoreDps(), Types.NUMERIC)
                 .param("scoreHealer", observation.scoreHealer(), Types.NUMERIC)
                 .param("scoreTank", observation.scoreTank(), Types.NUMERIC)
-                .param("crawledAt", observation.crawledAt(), Types.TIMESTAMP_WITH_TIMEZONE)
-                .param("capturedPeriod", Instant.ofEpochSecond(bucketEpoch))
-                .param("capturedAt", observedAt)
+                .param("crawledAt", toUtcOffset(observation.crawledAt()), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("capturedPeriod", toUtcOffset(Instant.ofEpochSecond(bucketEpoch)),
+                        Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("capturedAt", toUtcOffset(observedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -218,7 +221,7 @@ public class MPlusCollectionPersistenceService {
                 .param("shortName", nonBlank(run.dungeonShortName(), "Unknown"))
                 .param("challengeModeId", run.mapChallengeModeId(), Types.INTEGER)
                 .param("level", run.mythicLevel())
-                .param("completedAt", run.completedAt())
+                .param("completedAt", toUtcOffset(run.completedAt()), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("clearTime", run.clearTimeMs())
                 .param("parTime", run.parTimeMs())
                 .param("upgrades", run.keystoneUpgrades())
@@ -227,7 +230,7 @@ public class MPlusCollectionPersistenceService {
                 .param("recent", run.recent())
                 .param("best", run.best())
                 .param("weekly", run.weekly())
-                .param("observedAt", observedAt)
+                .param("observedAt", toUtcOffset(observedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .query((resultSet, rowNumber) -> new StoredRun(
                         resultSet.getLong("id"),
                         resultSet.getString("details_status")
@@ -255,7 +258,7 @@ public class MPlusCollectionPersistenceService {
                 .param("region", player.region())
                 .param("realm", player.realm())
                 .param("characterName", player.name())
-                .param("observedAt", observedAt)
+                .param("observedAt", toUtcOffset(observedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -327,8 +330,8 @@ public class MPlusCollectionPersistenceService {
                 .param("region", observation.region())
                 .param("realm", observation.realm())
                 .param("characterName", observation.name())
-                .param("observedAt", observedAt)
-                .param("crawledAt", observation.crawledAt(), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("observedAt", toUtcOffset(observedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("crawledAt", toUtcOffset(observation.crawledAt()), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("runCount", observation.runs().size())
                 .update();
     }

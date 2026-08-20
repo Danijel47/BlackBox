@@ -7,10 +7,13 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+
+import static com.blackbox.wow.helper.JdbcTimestampMapper.toUtcOffset;
 
 @Repository
 public class MPlusProgressRepository {
@@ -70,7 +73,7 @@ public class MPlusProgressRepository {
                         """)
                 .param("profileId", profileId)
                 .param("season", season)
-                .param("boundary", boundary)
+                .param("boundary", toUtcOffset(boundary), Types.TIMESTAMP_WITH_TIMEZONE)
                 .query(MPlusProgressRepository::mapScorePoint)
                 .optional();
     }
@@ -136,7 +139,7 @@ public class MPlusProgressRepository {
                 .param("region", observation.region())
                 .param("realm", observation.realm())
                 .param("characterName", observation.name())
-                .param("observedAt", observedAt)
+                .param("observedAt", toUtcOffset(observedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 

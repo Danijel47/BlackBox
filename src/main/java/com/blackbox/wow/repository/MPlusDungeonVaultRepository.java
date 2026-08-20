@@ -18,6 +18,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 
+import static com.blackbox.wow.helper.JdbcTimestampMapper.toUtcOffset;
+
 @Repository
 public class MPlusDungeonVaultRepository {
 
@@ -179,7 +181,7 @@ public class MPlusDungeonVaultRepository {
                 .param("name", dungeon.name())
                 .param("shortName", dungeon.shortName())
                 .param("timer", dungeon.keystoneTimerSeconds())
-                .param("refreshedAt", refreshedAt)
+                .param("refreshedAt", toUtcOffset(refreshedAt), Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
@@ -196,7 +198,7 @@ public class MPlusDungeonVaultRepository {
         jdbc.sql(UPSERT_VAULT_SNAPSHOT)
                 .param("profileId", player.profileId())
                 .param("season", observation.season())
-                .param("periodStart", periodStart)
+                .param("periodStart", toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("region", observation.region())
                 .param("realm", observation.realm())
                 .param("characterName", observation.name())
@@ -206,8 +208,9 @@ public class MPlusDungeonVaultRepository {
                 .param("slotEight", slots.slotEight(), Types.INTEGER)
                 .param("finalized", finalized)
                 .param("source", source)
-                .param("capturedAt", capturedAt)
-                .param("finalizedAt", finalized ? capturedAt : null, Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("capturedAt", toUtcOffset(capturedAt), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("finalizedAt", finalized ? toUtcOffset(capturedAt) : null,
+                        Types.TIMESTAMP_WITH_TIMEZONE)
                 .update();
     }
 
