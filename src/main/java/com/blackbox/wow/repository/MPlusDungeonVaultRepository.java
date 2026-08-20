@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.util.List;
 
 import static com.blackbox.wow.helper.JdbcTimestampMapper.toUtcOffset;
@@ -92,7 +93,7 @@ public class MPlusDungeonVaultRepository {
                 player,
                 observation,
                 currentPeriod,
-                observedRunLevels(player.profileId(), observation.season(), currentPeriod, capturedAt),
+                runLevels(observation.weeklyRuns()),
                 false,
                 "CURRENT",
                 capturedAt
@@ -103,7 +104,7 @@ public class MPlusDungeonVaultRepository {
                     player,
                     observation,
                     previousPeriod,
-                    observedRunLevels(player.profileId(), observation.season(), previousPeriod, currentPeriod),
+                    runLevels(observation.previousWeeklyRuns()),
                     true,
                     "PREVIOUS",
                     capturedAt
@@ -111,28 +112,11 @@ public class MPlusDungeonVaultRepository {
         }
     }
 
-    private List<Integer> observedRunLevels(
-            long profileId,
-            String season,
-            Instant periodStart,
-            Instant periodEnd
-    ) {
-        return jdbc.sql("""
-                        SELECT run.mythic_level
-                        FROM mplus_observed_run run
-                        JOIN mplus_observed_run_profile run_profile ON run_profile.run_id = run.id
-                        WHERE run_profile.profile_id = :profileId
-                          AND run.season_key = :season
-                          AND run.completed_at >= :periodStart
-                          AND run.completed_at < :periodEnd
-                        ORDER BY run.mythic_level DESC, run.completed_at DESC, run.id DESC
-                        """)
-                .param(PARAM_PROFILE_ID, profileId)
-                .param(PARAM_SEASON, season)
-                .param(PARAM_PERIOD_START, toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
-                .param("periodEnd", toUtcOffset(periodEnd), Types.TIMESTAMP_WITH_TIMEZONE)
-                .query(Integer.class)
-                .list();
+    static List<Integer> runLevels(List<MPlusObservation.RunSummary> runs) {
+        return runs.stream()
+                .map(MPlusObservation.RunSummary::mythicLevel)
+                .sorted(Comparator.reverseOrder())
+                .toList();
     }
 
     public List<DungeonCoverage> dungeonCoverage(long profileId, String season) {
