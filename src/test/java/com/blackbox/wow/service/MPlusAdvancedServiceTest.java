@@ -1,8 +1,6 @@
 package com.blackbox.wow.service;
 
 import com.blackbox.wow.properties.MPlusAdvancedProperties;
-import com.blackbox.wow.repository.MPlusAdvancedRepository;
-import com.blackbox.wow.repository.MPlusAdvancedRepository.ModifierRunRow;
 import com.blackbox.wow.repository.MPlusPerformanceRepository;
 import com.blackbox.wow.repository.MPlusPerformanceRepository.ObservedRun;
 import com.blackbox.wow.repository.MPlusProgressRepository;
@@ -31,7 +29,6 @@ class MPlusAdvancedServiceTest {
     @Mock private MPlusPlayerResolver playerResolver;
     @Mock private MPlusProgressRepository progressRepository;
     @Mock private MPlusPerformanceRepository performanceRepository;
-    @Mock private MPlusAdvancedRepository advancedRepository;
 
     @Test
     void refusesToPublishMetricsBelowTheConfiguredSample() {
@@ -41,44 +38,6 @@ class MPlusAdvancedServiceTest {
         String message = service(false, 2).consistencyMessage("", 123L);
 
         assertThat(message).contains("unavailable (N=1, need 2 deduplicated observed runs)");
-    }
-
-    @Test
-    void comparesOnlyModifierCombinationsThatMeetTheSampleThreshold() {
-        TrackedPlayer buco = player(1, "Buco");
-        prepareResolvedPlayer(buco, List.of(
-                run(1, "AD", 10, 20), run(2, "AD", 12, -5),
-                run(3, "BD", 8, 40), run(4, "BD", 10, 30)
-        ));
-        when(advancedRepository.modifierRunRows(1, "season-mn-2")).thenReturn(List.of(
-                modifier(1, 10, true, 9, "Tyrannical", null),
-                modifier(1, 10, true, 10, "Fortified", null),
-                modifier(2, 12, false, 10, "Fortified", null),
-                modifier(2, 12, false, 9, "Tyrannical", null),
-                modifier(3, 8, true, 11, "Bolstering", null),
-                modifier(4, 10, true, 11, "Bolstering", null)
-        ));
-
-        String message = service(false, 2).affixMessage("", 123L);
-
-        assertThat(message)
-                .contains("Modifier coverage: 4/4 observed runs")
-                .contains("Bolstering — N=2, average key +9, timed 100.0%")
-                .contains("Fortified + Tyrannical — N=2, average key +11, timed 50.0%")
-                .contains("not hard-coded");
-    }
-
-    @Test
-    void usesSafeFallbackWhenModifierNamesAndSlugsAreMissing() {
-        List<MPlusAdvancedService.AffixRun> runs = MPlusAdvancedService.buildAffixRuns(List.of(
-                modifier(1, 10, true, 123, null, null),
-                modifier(1, 10, true, 123, null, null)
-        ));
-
-        assertThat(runs).singleElement().satisfies(run -> {
-            assertThat(run.combination()).isEqualTo("Modifier 123");
-            assertThat(run.storedRunId()).isEqualTo(1);
-        });
     }
 
     @Test
@@ -123,8 +82,7 @@ class MPlusAdvancedServiceTest {
                 playerResolver,
                 progressRepository,
                 performanceRepository,
-                advancedRepository,
-                new MPlusAdvancedProperties(awardsEnabled, minimumRuns, 5, 70, 40, 60, 8)
+                new MPlusAdvancedProperties(awardsEnabled, minimumRuns, 5, 70, 40, 60)
         );
     }
 
@@ -148,17 +106,4 @@ class MPlusAdvancedServiceTest {
         );
     }
 
-    private static ModifierRunRow modifier(
-            long runId,
-            int level,
-            boolean timed,
-            int modifierId,
-            String name,
-            String slug
-    ) {
-        return new ModifierRunRow(
-                runId, "AD", level, timed ? 1_900_000 : 2_100_000, 2_000_000,
-                timed, modifierId, name, slug
-        );
-    }
 }

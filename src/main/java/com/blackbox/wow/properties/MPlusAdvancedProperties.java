@@ -9,8 +9,7 @@ public record MPlusAdvancedProperties(
         int minimumSharedRuns,
         int comfortCoveragePercent,
         int specialistMinimumPercent,
-        int clutchWindowSeconds,
-        int maximumAffixRows
+        int clutchWindowSeconds
 ) {
     public MPlusAdvancedProperties {
         requireRange(minimumIndividualRuns, 2, 1_000, "minimumIndividualRuns");
@@ -18,7 +17,6 @@ public record MPlusAdvancedProperties(
         requireRange(comfortCoveragePercent, 50, 100, "comfortCoveragePercent");
         requireRange(specialistMinimumPercent, 1, 100, "specialistMinimumPercent");
         requireRange(clutchWindowSeconds, 1, 600, "clutchWindowSeconds");
-        requireRange(maximumAffixRows, 1, 20, "maximumAffixRows");
     }
 
     private static void requireRange(int value, int minimum, int maximum, String property) {

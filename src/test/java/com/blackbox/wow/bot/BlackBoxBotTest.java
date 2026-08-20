@@ -22,6 +22,7 @@ import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
+import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.VaultReminderService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import org.junit.jupiter.api.AfterEach;
@@ -245,6 +246,42 @@ class BlackBoxBotTest {
 
         verify(raceToWorldFirstService).currentStandingsMessage();
         assertThat(sentMessage().getText()).isEqualTo("RWF standings");
+    }
+
+    @Test
+    void reportsUnavailableTitleWatchWhenRaiderIoOmitsTheCutoffScore() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
+        Update update = update(chatId, userId, "/title");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.titleWatchPlayers()).thenReturn(List.of(player));
+        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu")).thenReturn(
+                new RaiderIoClient.MPlusTitleCutoff("eu", "season-mn-2", null, 0, "")
+        );
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).contains("unavailable", "no cutoff score");
+        verify(raiderIoClient, never()).getCurrentMPlusScore("eu", "Stormscale", "Bucothered");
+    }
+
+    @Test
+    void reportsUnavailablePointOneTitleWatchWhenRaiderIoOmitsTheCutoffScore() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
+        Update update = update(chatId, userId, "/title01");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.titleZeroPointOneWatchPlayer()).thenReturn(Optional.of(player));
+        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
+                new RaiderIoClient.MPlusTitleCutoff("eu", "season-mn-2", null, 0, "")
+        );
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).contains("unavailable", "no cutoff score");
+        verify(raiderIoClient, never()).getCurrentMPlusScore("eu", "Stormscale", "Bucothered");
     }
 
     @Test

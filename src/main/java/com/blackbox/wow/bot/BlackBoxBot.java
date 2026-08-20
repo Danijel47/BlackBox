@@ -68,6 +68,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final Duration TITLE_PREDICTION_CACHE_TTL = Duration.ofMinutes(30);
     private static final Duration SEASON_RECAP_CACHE_TTL = Duration.ofHours(24);
     private static final Duration FAILED_SEASON_RECAP_CACHE_TTL = Duration.ofMinutes(10);
+    private static final String TELEGRAM_USER_UNAVAILABLE =
+            "Telegram user information is unavailable for this message.";
+    private static final String PROFILE_PREFIX = "Profile ";
+    private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
+    private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
     private static final List<String> PEON_WORK_MESSAGES = List.of(
             "Work, work... fetching the data. 🛠️",
             "Zug zug! The peon is checking. 🔎",
@@ -259,8 +264,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void addTelegramUser(CommandContext context) {
         String[] parts = context.text().split("\\s+", 3);
         if (parts.length < 2) {
-            send(context.chatId(), "Usage: /useradd <telegramUserId> [display name]\n"
-                    + "Example: /useradd 123456789 Alice");
+            send(context.chatId(), """
+                    Usage: /useradd <telegramUserId> [display name]
+                    Example: /useradd 123456789 Alice
+                    """.strip());
             return;
         }
         Long telegramUserId = parsePositiveTelegramUserId(parts[1], context.chatId());
@@ -339,7 +346,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "consistency" -> mplusAdvancedService.consistencyMessage(
                     request.arguments(), context.senderUserId()
             );
-            case "affixes" -> mplusAdvancedService.affixMessage(request.arguments(), context.senderUserId());
             case "awards" -> mplusAdvancedService.awardsMessage();
             case "coverage" -> mplusRunCorrelationService.coverageMessage(
                     request.arguments(), context.senderUserId()
@@ -355,25 +361,38 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (!isAdmin(context.update())) {
             return adminOnlyMessage();
         }
-        return mplusDataCollectionService.statusMessage() + "\n\n"
-                + mplusRunCorrelationService.statusMessage(warcraftLogsStatisticsService.seasonKey());
+        return """
+                %s
+
+                %s
+                """.formatted(
+                mplusDataCollectionService.statusMessage(),
+                mplusRunCorrelationService.statusMessage(warcraftLogsStatisticsService.seasonKey())
+        ).strip();
     }
 
     private static String mplusHelpMessage() {
-        return "M+ commands:\n"
-                + "/mplus progress [profile]\n/mplus dungeons [profile]\n"
-                + "/mplus vault [profile] — current week only\n"
-                + "/mplus performance [profile]\n/mplus highlights [profile]\n"
-                + "/mplus team [profile]\n/mplus pair <profile-a> <profile-b>\n"
-                + "/mplus consistency [profile]\n/mplus affixes [profile]\n/mplus awards\n"
-                + "/mplus coverage [profile]\n/mplus combat [profile]\n"
-                + "/mplus status — admin only";
+        return """
+                M+ commands:
+                /mplus progress [profile]
+                /mplus dungeons [profile]
+                /mplus vault [profile] — current week only
+                /mplus performance [profile]
+                /mplus highlights [profile]
+                /mplus team [profile]
+                /mplus pair <profile-a> <profile-b>
+                /mplus consistency [profile]
+                /mplus awards
+                /mplus coverage [profile]
+                /mplus combat [profile]
+                /mplus status — admin only
+                """.strip();
     }
 
     private void sendOwnProfile(CommandContext context) {
         Long telegramUserId = context.senderUserId();
         if (telegramUserId == null) {
-            send(context.chatId(), "Telegram user information is unavailable for this message.");
+            send(context.chatId(), TELEGRAM_USER_UNAVAILABLE);
             return;
         }
         send(context.chatId(), trackedPlayerService.profileForTelegramUser(telegramUserId)
@@ -384,13 +403,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void changeOwnMain(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 3) {
-            send(context.chatId(), "Usage: /profilemain <realm> <character>\n"
-                    + "Example: /profilemain stormscale Alicemage");
+            send(context.chatId(), """
+                    Usage: /profilemain <realm> <character>
+                    Example: /profilemain stormscale Alicemage
+                    """.strip());
             return;
         }
         Long telegramUserId = context.senderUserId();
         if (telegramUserId == null) {
-            send(context.chatId(), "Telegram user information is unavailable for this message.");
+            send(context.chatId(), TELEGRAM_USER_UNAVAILABLE);
             return;
         }
 
@@ -433,13 +454,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void addProfile(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 5) {
-            send(context.chatId(), "Usage: /profileadd <profile> <region> <realm> <character>\n"
-                    + "Example: /profileadd Alice eu stormscale Alicechar");
+            send(context.chatId(), """
+                    Usage: /profileadd <profile> <region> <realm> <character>
+                    Example: /profileadd Alice eu stormscale Alicechar
+                    """.strip());
             return;
         }
         try {
             trackedPlayerService.addProfile(parts[1], parts[2], parts[3], parts[4]);
-            send(context.chatId(), "Profile " + parts[1] + " added with selected character " + parts[4] + ".");
+            send(context.chatId(), PROFILE_PREFIX + parts[1] + " added with selected character " + parts[4] + ".");
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not add profile: " + e.getMessage());
         }
@@ -448,8 +471,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void addProfileCharacter(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
-            send(context.chatId(), "Usage: /profilecharadd <profile> <realm> <character>\n"
-                    + "Example: /profilecharadd Alice stormscale Alicemage");
+            send(context.chatId(), """
+                    Usage: /profilecharadd <profile> <realm> <character>
+                    Example: /profilecharadd Alice stormscale Alicemage
+                    """.strip());
             return;
         }
         try {
@@ -463,8 +488,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void deleteProfileCharacter(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
-            send(context.chatId(), "Usage: /profilechardelete <profile> <realm> <character>\n"
-                    + "Example: /profilechardelete Alice stormscale Alicealt");
+            send(context.chatId(), """
+                    Usage: /profilechardelete <profile> <realm> <character>
+                    Example: /profilechardelete Alice stormscale Alicealt
+                    """.strip());
             return;
         }
         try {
@@ -478,8 +505,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void linkProfile(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 3) {
-            send(context.chatId(), "Usage: /profilelink <telegramUserId> <profile>\n"
-                    + "Example: /profilelink 123456789 Alice");
+            send(context.chatId(), """
+                    Usage: /profilelink <telegramUserId> <profile>
+                    Example: /profilelink 123456789 Alice
+                    """.strip());
             return;
         }
         Long telegramUserId = parseLong(parts[1]);
@@ -489,7 +518,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         try {
             trackedPlayerService.linkProfile(telegramUserId, parts[2]);
-            send(context.chatId(), "Profile " + parts[2] + " linked to Telegram user " + telegramUserId + ".");
+            send(context.chatId(), PROFILE_PREFIX + parts[2] + " linked to Telegram user " + telegramUserId + ".");
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not link profile: " + e.getMessage());
         }
@@ -503,7 +532,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         try {
             trackedPlayerService.unlinkProfile(parts[1]);
-            send(context.chatId(), "Profile " + parts[1] + " is no longer linked to a Telegram user.");
+            send(context.chatId(), PROFILE_PREFIX + parts[1] + " is no longer linked to a Telegram user.");
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not unlink profile: " + e.getMessage());
         }
@@ -512,13 +541,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void switchProfileCharacter(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 5) {
-            send(context.chatId(), "Usage: /profileswitch <profile> <region> <realm> <character>\n"
-                    + "Example: /profileswitch Alice eu tarren-mill Alicealt");
+            send(context.chatId(), """
+                    Usage: /profileswitch <profile> <region> <realm> <character>
+                    Example: /profileswitch Alice eu tarren-mill Alicealt
+                    """.strip());
             return;
         }
         try {
             trackedPlayerService.switchCharacter(parts[1], parts[2], parts[3], parts[4]);
-            send(context.chatId(), "Profile " + parts[1] + " now uses " + parts[4]
+            send(context.chatId(), PROFILE_PREFIX + parts[1] + " now uses " + parts[4]
                     + ". The previous character was kept as an alt.");
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not switch character: " + e.getMessage());
@@ -534,7 +565,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         boolean active = context.command().equals("/profileenable");
         try {
             trackedPlayerService.setProfileActive(parts[1], active);
-            send(context.chatId(), "Profile " + parts[1] + (active ? " enabled." : " disabled."));
+            send(context.chatId(), PROFILE_PREFIX + parts[1] + (active ? " enabled." : " disabled."));
         } catch (IllegalArgumentException e) {
             send(context.chatId(), "Could not update profile: " + e.getMessage());
         }
@@ -556,7 +587,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void sendRaceToWorldFirstStandings(long chatId) {
         try {
             send(chatId, raceToWorldFirstService.currentStandingsMessage());
-        } catch (RuntimeException e) {
+        } catch (RuntimeException _) {
             send(chatId, "Could not fetch the Race to World First standings from Raider.IO.");
         }
     }
@@ -571,9 +602,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         String raidKey = selectRaidKey(argument, guild);
         String lastCrawledAt = guild.path("last_crawled_at").asText("n/a");
-        send(context.chatId(), defaultGuildProps.guildName() + "\n"
-                + RaidProgressFormatter.formatRaidLine(guild, raidKey)
-                + "\nLast update: " + formatLastCrawled(lastCrawledAt));
+        send(context.chatId(), """
+                %s
+                %s
+                Last update: %s
+                """.formatted(
+                defaultGuildProps.guildName(),
+                RaidProgressFormatter.formatRaidLine(guild, raidKey),
+                formatLastCrawled(lastCrawledAt)
+        ).strip());
     }
 
     private JsonNode fetchDefaultGuild() {
@@ -634,8 +671,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void handlePrice(CommandContext context) {
         String arguments = commandArguments(context);
         if (arguments.isBlank()) {
-            send(context.chatId(), "Usage: /price <itemId|item name> [realm-if-itemId]\n"
-                    + "Examples:\n/price 72092 Draenor\n/price wow token");
+            send(context.chatId(), """
+                    Usage: /price <itemId|item name> [realm-if-itemId]
+                    Examples:
+                    /price 72092 Draenor
+                    /price wow token
+                    """.strip());
             return;
         }
 
@@ -665,7 +706,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         PriceResult result = auctionService.getRegionAverage(itemId);
         if (!result.available() && isWowToken(itemName)) {
             result = auctionService.getWowTokenPrice();
-            send(chatId, formatPriceMessage("WoW Token (EU)", itemName, result));
+            send(chatId, formatPriceMessage(WOW_TOKEN_EU_SCOPE, itemName, result));
             return;
         }
         send(chatId, formatPriceMessage("Region avg (EU)", itemName, result));
@@ -681,15 +722,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         PriceResult result = isWowToken(item.name())
                 ? auctionService.getWowTokenPrice()
                 : auctionService.getRegionAverage(item.id());
-        String scope = isWowToken(item.name()) ? "WoW Token (EU)" : "Region avg (EU)";
+        String scope = isWowToken(item.name()) ? WOW_TOKEN_EU_SCOPE : "Region avg (EU)";
         send(chatId, formatPriceMessage(scope, item.name(), result));
     }
 
     private void handleAuctionHousePrice(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
-            send(context.chatId(), "Usage: /priceah <connectedRealmId> <auctionHouseId> <itemId>\n"
-                    + "Example: /priceah 1080 2 72092");
+            send(context.chatId(), """
+                    Usage: /priceah <connectedRealmId> <auctionHouseId> <itemId>
+                    Example: /priceah 1080 2 72092
+                    """.strip());
             return;
         }
 
@@ -717,7 +760,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void handleTokenPrice(long chatId) {
         try {
             PriceResult result = auctionService.getWowTokenPrice();
-            send(chatId, formatPriceMessage("WoW Token (EU)", "WoW Token", result));
+            send(chatId, formatPriceMessage(WOW_TOKEN_EU_SCOPE, "WoW Token", result));
         } catch (Exception e) {
             send(chatId, "Blizzard token lookup failed: " + e.getMessage());
         }
@@ -726,8 +769,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void handleMountAchievement(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length < 3) {
-            send(context.chatId(), "Usage: /mount-achiv <realm> <name>\n"
-                    + "Example: /mount-achiv stormscale bucothered");
+            send(context.chatId(), """
+                    Usage: /mount-achiv <realm> <name>
+                    Example: /mount-achiv stormscale bucothered
+                    """.strip());
             return;
         }
 
@@ -845,18 +890,22 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String name = parts.length == 4 ? parts[3] : parts[2];
         try {
             send(context.chatId(), formatWeeklyVault(raiderIoClient.getWeeklyVaultProgress(region, realm, name)));
-        } catch (Exception e) {
-            send(context.chatId(), "Couldn’t fetch weekly Mythic+ vault data for " + name + " on " + realm
-                    + " (" + region + ").\nUse: /vault <realm> <name>\n"
-                    + "Example: /vault stormscale bucothered");
+        } catch (Exception _) {
+            send(context.chatId(), """
+                    Couldn’t fetch weekly Mythic+ vault data for %s on %s (%s).
+                    Use: /vault <realm> <name>
+                    Example: /vault stormscale bucothered
+                    """.formatted(name, realm, region).strip());
         }
     }
 
     private void handleRaiderIoCommand(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length < 4) {
-            send(context.chatId(), "Usage: /rio <region> <realm> <name>\n"
-                    + "Example: /rio eu stormscale bucothered");
+            send(context.chatId(), """
+                    Usage: /rio <region> <realm> <name>
+                    Example: /rio eu stormscale bucothered
+                    """.strip());
             return;
         }
 
@@ -866,41 +915,90 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         try {
             send(context.chatId(), formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(region, realm, name)));
         } catch (Exception e) {
-            send(context.chatId(), "Couldn’t fetch Raider.IO for " + region + "/" + realm + "/" + name
-                    + "\nReason: " + e.getMessage());
+            send(context.chatId(), """
+                    Couldn’t fetch Raider.IO for %s/%s/%s
+                    Reason: %s
+                    """.formatted(region, realm, name, e.getMessage()).strip());
         }
     }
 
     private static String publicHelpMessage() {
         // Public help deliberately omits administration and TomTom commands.
-        return "Commands:\n/myid\n/profile\n/profile-help\n/profilemain <realm> <character>\n"
-                + "/mains\n/mplus — all Mythic+ tracking and combat commands\n"
-                + "/rio <region> <realm> <name>\n"
-                + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
-                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n/mount-achiv <realm> <name>\n"
-                + "/price <itemId|item name> [realm-if-itemId]\n"
-                + "/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs";
+        return """
+                Commands:
+                /myid
+                /profile
+                /profile-help
+                /profilemain <realm> <character>
+                /mains
+                /mplus — all Mythic+ tracking and combat commands
+                /rio <region> <realm> <name>
+                /vault
+                /title
+                /title01
+                /seasonrecap
+                /seasonrecapdepleted
+                /seasonrecapabandoned
+                /affixes
+                /guild
+                /guildlist
+                /rwf
+                /mount-achiv <realm> <name>
+                /price <itemId|item name> [realm-if-itemId]
+                /priceah <connectedRealmId> <auctionHouseId> <itemId>
+                /token
+                /ores
+                /herbs
+                """.strip();
     }
 
     private static String adminHelpMessage() {
-        return "All commands:\n/help\n/myid\n/groupid\n/users\n"
-                + "/useradd <telegramUserId> [display name]\n/userdisable <telegramUserId>\n"
-                + "/userenable <telegramUserId>\n/profile\n/profile-help\n"
-                + "/profilemain <realm> <character>\n/mains\n/profiles\n"
-                + "/mplus — all Mythic+ commands, including admin status\n"
-                + "/profileadd <profile> <region> <realm> <character>\n"
-                + "/profilecharadd <profile> <realm> <character>\n"
-                + "/profilechardelete <profile> <realm> <character>\n"
-                + "/profilelink <telegramUserId> <profile>\n/profileunlink <profile>\n"
-                + "/profileswitch <profile> <region> <realm> <character>\n"
-                + "/profiledisable <profile>\n/profileenable <profile>\n/vaultremindernow\n"
-                + "/rio <region> <realm> <name>\n"
-                + "/vault\n/title\n/title01\n/seasonrecap\n/seasonrecapdepleted\n"
-                + "/seasonrecapabandoned\n/affixes\n/guild\n/guildlist\n/rwf\n"
-                + "/road [zadar zagreb|zagreb zadar]\n/roadbest [zadar zagreb|zagreb zadar]\n"
-                + "/timetogoimport30\n/timetogoimportstatus\n/mount-achiv <realm> <name>\n"
-                + "/price <itemId|item name> [realm-if-itemId]\n"
-                + "/priceah <connectedRealmId> <auctionHouseId> <itemId>\n/token\n/ores\n/herbs";
+        return """
+                All commands:
+                /help
+                /myid
+                /groupid
+                /users
+                /useradd <telegramUserId> [display name]
+                /userdisable <telegramUserId>
+                /userenable <telegramUserId>
+                /profile
+                /profile-help
+                /profilemain <realm> <character>
+                /mains
+                /profiles
+                /mplus — all Mythic+ commands, including admin status
+                /profileadd <profile> <region> <realm> <character>
+                /profilecharadd <profile> <realm> <character>
+                /profilechardelete <profile> <realm> <character>
+                /profilelink <telegramUserId> <profile>
+                /profileunlink <profile>
+                /profileswitch <profile> <region> <realm> <character>
+                /profiledisable <profile>
+                /profileenable <profile>
+                /vaultremindernow
+                /rio <region> <realm> <name>
+                /vault
+                /title
+                /title01
+                /seasonrecap
+                /seasonrecapdepleted
+                /seasonrecapabandoned
+                /affixes
+                /guild
+                /guildlist
+                /rwf
+                /road [zadar zagreb|zagreb zadar]
+                /roadbest [zadar zagreb|zagreb zadar]
+                /timetogoimport30
+                /timetogoimportstatus
+                /mount-achiv <realm> <name>
+                /price <itemId|item name> [realm-if-itemId]
+                /priceah <connectedRealmId> <auctionHouseId> <itemId>
+                /token
+                /ores
+                /herbs
+                """.strip();
     }
 
     private ScheduledFuture<?> scheduleWorkingMessage(long chatId) {
@@ -921,13 +1019,19 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private String formatTelegramIdentity(Update update) {
         var user = update.getMessage().getFrom();
         if (user == null) {
-            return "Telegram user information is unavailable for this message.";
+            return TELEGRAM_USER_UNAVAILABLE;
         }
 
         String username = user.getUserName();
-        return "Your Telegram user ID: " + user.getId() + "\n"
-                + "Username: " + (username == null || username.isBlank() ? "not set" : "@" + username) + "\n"
-                + "Chat ID: " + update.getMessage().getChatId();
+        return """
+                Your Telegram user ID: %s
+                Username: %s
+                Chat ID: %s
+                """.formatted(
+                user.getId(),
+                username == null || username.isBlank() ? "not set" : "@" + username,
+                update.getMessage().getChatId()
+        ).strip();
     }
 
     private String formatTelegramUsers() {
@@ -964,15 +1068,21 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private static String profileHelpMessage() {
-        return "Player profile help\n\n"
-                + "View your registered characters:\n/profile\n\n"
-                + "Select one of your registered EU Retail characters as your main:\n"
-                + "/profilemain <realm> <character>\n"
-                + "Example: /profilemain stormscale Alicemage\n\n"
-                + "View all current group mains:\n/mains\n\n"
-                + "Only the characters registered to your profile can be selected. "
-                + "Ask the bot admin to add another character. /mplus combat follows each "
-                + "profile's selected main.";
+        return """
+                Player profile help
+
+                View your registered characters:
+                /profile
+
+                Select one of your registered EU Retail characters as your main:
+                /profilemain <realm> <character>
+                Example: /profilemain stormscale Alicemage
+
+                View all current group mains:
+                /mains
+
+                Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus combat follows each profile's selected main.
+                """.strip();
     }
 
     private static String formatOwnPlayerProfile(TrackedPlayerService.PlayerProfile profile) {
@@ -1143,7 +1253,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                         player.name(),
                         MIDNIGHT_SEASON_ONE
                 )));
-            } catch (Exception e) {
+            } catch (Exception _) {
                 hadError = true;
                 results.add(new SeasonPlayerRunCounts(player, null));
             }
@@ -1229,7 +1339,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                         .append(": ")
                         .append(formatVaultSlotSummary(progress.runs()))
                         .append("\n");
-            } catch (Exception e) {
+            } catch (Exception _) {
                 sb.append("• ")
                         .append(player.name())
                         .append(": error")
@@ -1313,6 +1423,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(player.region(), "p999");
         BigDecimal cutoffScore = cutoff.score();
+        if (cutoffScore == null) {
+            return "M+ 0.1% title watch is unavailable because Raider.IO returned no cutoff score.";
+        }
         StringBuilder sb = new StringBuilder("M+ 0.1% title watch\n");
         sb.append("Cutoff: ").append(formatScore(cutoffScore))
                 .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
@@ -1322,9 +1435,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         try {
             var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
             BigDecimal all = score.all();
-            BigDecimal remaining = all == null ? null : cutoffScore.subtract(all).max(BigDecimal.ZERO);
-            BigDecimal above = all == null ? null : all.subtract(cutoffScore).max(BigDecimal.ZERO);
-            sb.append("• ").append(score.name()).append(": ").append(formatTitleScoreLine(all, remaining, above));
+            TitleScoreDelta delta = calculateTitleScoreDelta(all, cutoffScore);
+            sb.append("• ").append(score.name()).append(": ").append(formatTitleScoreLine(
+                    all,
+                    delta.remaining(),
+                    delta.above()
+            ));
         } catch (Exception e) {
             sb.append("• ").append(player.name()).append(": error: ").append(e.getMessage());
         }
@@ -1347,6 +1463,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(players.getFirst().region());
         BigDecimal cutoffScore = cutoff.score();
+        if (cutoffScore == null) {
+            return "M+ 1% title watch is unavailable because Raider.IO returned no cutoff score.";
+        }
         List<TitleWatchResult> results = loadTitleWatchResults(players, cutoffScore);
         results.sort(Comparator.comparing(
                 TitleWatchResult::score,
@@ -1376,18 +1495,28 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private TitleWatchResult loadTitleWatchResult(TrackedPlayer player, BigDecimal cutoffScore) {
+        if (cutoffScore == null) {
+            return new TitleWatchResult(
+                    player.name(),
+                    player.realm(),
+                    player.region(),
+                    null,
+                    null,
+                    null,
+                    "cutoff score unavailable"
+            );
+        }
         try {
             var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
             BigDecimal all = score.all();
-            BigDecimal remaining = all == null ? null : cutoffScore.subtract(all).max(BigDecimal.ZERO);
-            BigDecimal above = all == null ? null : all.subtract(cutoffScore).max(BigDecimal.ZERO);
+            TitleScoreDelta delta = calculateTitleScoreDelta(all, cutoffScore);
             return new TitleWatchResult(
                     score.name(),
                     score.realm(),
                     score.region(),
                     all,
-                    remaining,
-                    above,
+                    delta.remaining(),
+                    delta.above(),
                     null
             );
         } catch (Exception e) {
@@ -1456,7 +1585,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 titlePredictionCache = nextCache;
             }
             return prediction;
-        } catch (Exception e) {
+        } catch (Exception _) {
             return cache == null || !cache.region().equalsIgnoreCase(region) ? null : cache.prediction();
         }
     }
@@ -1474,17 +1603,35 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return formatScore(score) + " | remaining " + formatScore(remaining);
     }
 
+    private static TitleScoreDelta calculateTitleScoreDelta(BigDecimal score, BigDecimal cutoffScore) {
+        if (score == null || cutoffScore == null) {
+            return new TitleScoreDelta(null, null);
+        }
+        return new TitleScoreDelta(
+                cutoffScore.subtract(score).max(BigDecimal.ZERO),
+                score.subtract(cutoffScore).max(BigDecimal.ZERO)
+        );
+    }
+
     private static String formatRaiderIoScore(RaiderIoClient.RaiderIoScore score) {
         String profile = score.profileUrl() == null || score.profileUrl().isBlank()
                 ? ""
-                : "\nProfile: " + score.profileUrl();
-        return "Raider.IO (current season)\n"
-                + score.name() + " - " + score.realm() + " (" + score.region() + ")\n"
-                + "Score: " + valueOrUnavailable(score.all()) + "\n"
-                + "DPS: " + valueOrUnavailable(score.dps())
-                + " | Healer: " + valueOrUnavailable(score.healer())
-                + " | Tank: " + valueOrUnavailable(score.tank())
-                + profile;
+                : "%nProfile: %s".formatted(score.profileUrl());
+        return """
+                Raider.IO (current season)
+                %s - %s (%s)
+                Score: %s
+                DPS: %s | Healer: %s | Tank: %s%s
+                """.formatted(
+                score.name(),
+                score.realm(),
+                score.region(),
+                valueOrUnavailable(score.all()),
+                valueOrUnavailable(score.dps()),
+                valueOrUnavailable(score.healer()),
+                valueOrUnavailable(score.tank()),
+                profile
+        ).strip();
     }
 
     private static String valueOrUnavailable(BigDecimal value) {
@@ -1495,20 +1642,25 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         try {
             client.execute(SendMessage.builder().chatId(chatId).text(msg).build());
         } catch (Exception ignored) {
+            // Delivery failures are isolated so Telegram polling can continue processing later updates.
         }
     }
 
     private static String formatMountLookupError(String realm, String name, Exception e) {
         String message = e.getMessage() == null ? "" : e.getMessage();
         if (message.contains("404")) {
-            return "Mount progression not found for " + name + " on " + realm + " (EU).\n" +
-                   "Use: /mount-achiv <realm> <name>\n" +
-                   "Example: /mount-achiv stormscale bucothered\n" +
-                   "Also check that the character exists on EU and has logged out recently.";
+            return """
+                    Mount progression not found for %s on %s (EU).
+                    Use: /mount-achiv <realm> <name>
+                    Example: /mount-achiv stormscale bucothered
+                    Also check that the character exists on EU and has logged out recently.
+                    """.formatted(name, realm).strip();
         }
 
-        return "Couldn’t fetch mount progression for " + name + " on " + realm + " (EU).\n" +
-               "Try again later, or check the realm and character name.";
+        return """
+                Couldn’t fetch mount progression for %s on %s (EU).
+                Try again later, or check the realm and character name.
+                """.formatted(name, realm).strip();
     }
 
     private static String formatMountAchievementProgress(int usableMounts) {
@@ -1523,9 +1675,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (isoUtc == null || isoUtc.isBlank() || isoUtc.equals("n/a")) return "n/a";
         try {
             Instant i = Instant.parse(isoUtc);
-            ZonedDateTime zagreb = i.atZone(ZoneId.of("Europe/Zagreb"));
+            ZonedDateTime zagreb = i.atZone(ZAGREB_ZONE);
             return zagreb.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        } catch (Exception e) {
+        } catch (Exception _) {
             return "n/a";
         }
     }
@@ -1537,9 +1689,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     updatedAt,
                     DateTimeFormatter.ofPattern("EEE MMM dd yyyy HH:mm:ss 'GMT'Z '('zzzz')'", Locale.ENGLISH)
             );
-            return utc.withZoneSameInstant(ZoneId.of("Europe/Zagreb"))
+            return utc.withZoneSameInstant(ZAGREB_ZONE)
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z"));
-        } catch (Exception e) {
+        } catch (Exception _) {
             return updatedAt;
         }
     }
@@ -1547,7 +1699,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static Long parseLong(String value) {
         try {
             return Long.parseLong(value);
-        } catch (Exception e) {
+        } catch (Exception _) {
             return null;
         }
     }
@@ -1579,7 +1731,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private static String formatPredictionFor(Instant predictionFor) {
         if (predictionFor == null) return "n/a";
-        return predictionFor.atZone(ZoneId.of("Europe/Zagreb"))
+        return predictionFor.atZone(ZAGREB_ZONE)
                 .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
     }
 
@@ -1612,7 +1764,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                             .append(" | G: ").append(goldPrice)
                             .append("\n");
                 }
-            } catch (Exception e) {
+            } catch (Exception _) {
                 sb.append("• ").append(baseName).append(": error").append("\n");
             }
         }
@@ -1635,7 +1787,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return ranks.size() >= 3 ? ranks.get(1) : ranks.get(0);
         }
         if (qualityRank == 3) {
-            return ranks.size() >= 3 ? ranks.get(2) : ranks.size() >= 2 ? ranks.get(1) : null;
+            if (ranks.size() >= 3) {
+                return ranks.get(2);
+            }
+            if (ranks.size() >= 2) {
+                return ranks.get(1);
+            }
         }
         return null;
     }
@@ -1652,6 +1809,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         long gold = copper / 10_000;
         long silver = copper % 10_000 / 100;
         return gold + "g " + silver + "s";
+    }
+
+    private record TitleScoreDelta(BigDecimal remaining, BigDecimal above) {
     }
 
     private record TitleWatchResult(
