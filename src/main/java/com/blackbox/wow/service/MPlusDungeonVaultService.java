@@ -110,7 +110,7 @@ public class MPlusDungeonVaultService {
                     .append('\n');
         }
         appendRecommendation(message, dungeons, target);
-        return message.append("\nBased on timed runs observed by BlackBox; depleted runs do not satisfy coverage.")
+        return message.append("\nBased on observed timed runs; depleted runs do not satisfy coverage.")
                 .toString();
     }
 

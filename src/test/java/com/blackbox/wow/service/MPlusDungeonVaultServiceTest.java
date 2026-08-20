@@ -50,7 +50,8 @@ class MPlusDungeonVaultServiceTest {
                 .contains("AD — +12 timed | score 320.4")
                 .contains("GD — no timed run | score unavailable")
                 .contains("Missing timed dungeons: GD")
-                .contains("depleted runs do not satisfy coverage");
+                .contains("depleted runs do not satisfy coverage")
+                .doesNotContain("BlackBox");
     }
 
     @Test

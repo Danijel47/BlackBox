@@ -18,6 +18,7 @@ import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
+import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
@@ -69,6 +70,7 @@ class BlackBoxBotTest {
     @Mock private WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     @Mock private TelegramAccessPolicy accessPolicy;
     @Mock private TelegramBotUserService telegramBotUserService;
+    @Mock private TelegramDailyPromptService telegramDailyPromptService;
 
     private BlackBoxBot bot;
 
@@ -104,6 +106,16 @@ class BlackBoxBotTest {
         bot().consume(update);
 
         verify(telegramClient, never()).execute(org.mockito.ArgumentMatchers.any(SendMessage.class));
+    }
+
+    @Test
+    void forwardsEveryIncomingMessageSenderToTheDailyPrompt() {
+        long chatId = 123L;
+        long userId = 1_699_671_723L;
+
+        bot().consume(update(chatId, userId, "hello"));
+
+        verify(telegramDailyPromptService).onMessage(userId);
     }
 
     @Test
@@ -361,7 +373,8 @@ class BlackBoxBotTest {
                 mplusRunCorrelationService,
                 warcraftLogsStatisticsService,
                 accessPolicy,
-                telegramBotUserService
+                telegramBotUserService,
+                telegramDailyPromptService
         );
         return bot;
     }

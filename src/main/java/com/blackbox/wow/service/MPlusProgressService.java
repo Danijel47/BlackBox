@@ -192,8 +192,7 @@ public class MPlusProgressService {
                 .append("Since first observed: ").append(gainFrom(latest, first)).append('\n')
                 .append("Observed character: ").append(latest.characterName()).append('-').append(latest.realm());
         appendMilestones(message, milestones);
-        return message.append("\nSnapshots show observed progress, not history from before collection started.")
-                .toString();
+        return message.toString();
     }
 
     private void appendMilestones(StringBuilder message, List<Milestone> milestones) {

@@ -78,6 +78,7 @@ class MPlusProgressServiceTest {
         assertThat(message)
                 .contains("Last 24h: unavailable")
                 .contains("This reset: unavailable")
+                .doesNotContain("Snapshots show observed progress")
                 .doesNotContain("-300");
     }
 

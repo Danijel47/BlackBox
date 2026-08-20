@@ -22,6 +22,7 @@ import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
+import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.VaultReminderService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -112,6 +113,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     private final TelegramAccessPolicy telegramAccessPolicy;
     private final TelegramBotUserService telegramBotUserService;
+    private final TelegramDailyPromptService telegramDailyPromptService;
     private final List<CommandHandler> commandHandlers;
     private final ScheduledExecutorService workingMessageScheduler = Executors.newSingleThreadScheduledExecutor(
             runnable -> Thread.ofPlatform()
@@ -149,7 +151,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             MPlusRunCorrelationService mplusRunCorrelationService,
             WarcraftLogsStatisticsService warcraftLogsStatisticsService,
             TelegramAccessPolicy telegramAccessPolicy,
-            TelegramBotUserService telegramBotUserService
+            TelegramBotUserService telegramBotUserService,
+            TelegramDailyPromptService telegramDailyPromptService
     ) {
         this.token = token;
         this.adminUserId = adminUserId;
@@ -175,6 +178,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.warcraftLogsStatisticsService = warcraftLogsStatisticsService;
         this.telegramAccessPolicy = telegramAccessPolicy;
         this.telegramBotUserService = telegramBotUserService;
+        this.telegramDailyPromptService = telegramDailyPromptService;
         this.commandHandlers = List.of(
                 this::handleUserAdministrationCommand,
                 this::handlePlayerProfileCommand,
@@ -199,6 +203,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     @Override
     public void consume(Update update) {
+        telegramDailyPromptService.onMessage(senderUserId(update));
         CommandContext context = CommandContext.from(update);
         if (context == null) {
             return;
@@ -219,6 +224,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         } finally {
             workingMessage.cancel(false);
         }
+    }
+
+    private static Long senderUserId(Update update) {
+        if (update == null || !update.hasMessage() || update.getMessage().getFrom() == null) {
+            return null;
+        }
+        return update.getMessage().getFrom().getId();
     }
 
     private void dispatchCommand(CommandContext context) {
