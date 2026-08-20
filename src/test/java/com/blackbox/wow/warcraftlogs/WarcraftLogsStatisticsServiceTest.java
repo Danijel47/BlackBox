@@ -6,6 +6,7 @@ import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -28,6 +29,7 @@ class WarcraftLogsStatisticsServiceTest {
                 Instant.parse("2026-08-19T10:00:00Z"), 7, "King's Rest", 10,
                 9, 1, new BigDecimal("87"), new BigDecimal("100"), null
         );
+        ReflectionTestUtils.setField(incompleteRun, "metricsVersion", 4);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(incompleteRun));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -47,10 +49,12 @@ class WarcraftLogsStatisticsServiceTest {
 
         assertThat(statistics.averageInterrupts()).isEqualByComparingTo("9");
         assertThat(statistics.averageDeaths()).isEqualByComparingTo("1");
-        assertThat(statistics.rankedDungeonRuns()).isZero();
-        assertThat(statistics.averageParsePercentage()).isNull();
+        assertThat(statistics.keyParsedDungeonRuns()).isZero();
         assertThat(statistics.averageKeyParsePercentage()).isNull();
         assertThat(statistics.averageDamagePerSecond()).isNull();
+        assertThat(service.combatMessage(""))
+                .contains("Key parse unavailable")
+                .doesNotContain(", Parse ", ", Key unavailable");
     }
 
     private static WarcraftLogsProperties properties() {

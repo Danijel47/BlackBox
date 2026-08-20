@@ -111,25 +111,23 @@ public class WarcraftLogsStatisticsService {
             List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of());
             int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
-            List<WarcraftLogPlayerRunEntity> rankedRuns = runs.stream()
-                    .filter(WarcraftLogsStatisticsService::hasRankingMetrics)
+            List<WarcraftLogPlayerRunEntity> currentRuns = runs.stream()
+                    .filter(WarcraftLogsStatisticsService::hasCurrentMetricsVersion)
                     .toList();
-            List<BigDecimal> parses = nonNullMetrics(rankedRuns, WarcraftLogPlayerRunEntity::getParsePercentage);
             List<BigDecimal> keyParses = nonNullMetrics(
-                    rankedRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
+                    currentRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
             );
             List<BigDecimal> damagePerSecond = nonNullMetrics(
-                    rankedRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
+                    currentRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
             );
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
             result.add(new PlayerStatistics(
                     player.profileName(),
                     player.name(),
                     runs.size(),
-                    rankedRuns.size(),
+                    keyParses.size(),
                     average(interrupts, runs.size()),
                     average(deaths, runs.size()),
-                    average(parses),
                     average(keyParses),
                     average(damagePerSecond),
                     snapshot == null ? null : snapshot.getLastError()
@@ -169,11 +167,10 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
                 .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
                 .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
-                .append(", Parse ").append(formatPercentMetric(statistic.averageParsePercentage()))
-                .append(", Key ").append(formatPercentMetric(statistic.averageKeyParsePercentage()))
+                .append(", Key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()))
                 .append(", DPS ").append(formatDamagePerSecond(statistic.averageDamagePerSecond()));
-        if (statistic.rankedDungeonRuns() > 0) {
-            message.append(" (ranked N=").append(statistic.rankedDungeonRuns()).append(')');
+        if (statistic.keyParsedDungeonRuns() > 0) {
+            message.append(" (key-parse N=").append(statistic.keyParsedDungeonRuns()).append(')');
         }
         message.append('\n');
     }
@@ -377,7 +374,7 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
-        return existing != null && existing.getReportRevision() >= revision && hasRankingMetrics(existing);
+        return existing != null && existing.getReportRevision() >= revision && hasCompleteMetrics(existing);
     }
 
     private void correlateFight(
@@ -685,9 +682,12 @@ public class WarcraftLogsStatisticsService {
         return runs.stream().map(metric).filter(value -> value != null).toList();
     }
 
-    private static boolean hasRankingMetrics(WarcraftLogPlayerRunEntity run) {
-        return run.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION
-                && run.getParsePercentage() != null
+    private static boolean hasCurrentMetricsVersion(WarcraftLogPlayerRunEntity run) {
+        return run.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION;
+    }
+
+    private static boolean hasCompleteMetrics(WarcraftLogPlayerRunEntity run) {
+        return hasCurrentMetricsVersion(run)
                 && run.getKeyParsePercentage() != null
                 && run.getDamagePerSecond() != null;
     }
@@ -696,10 +696,9 @@ public class WarcraftLogsStatisticsService {
             String profileName,
             String characterName,
             int dungeonRuns,
-            int rankedDungeonRuns,
+            int keyParsedDungeonRuns,
             BigDecimal averageInterrupts,
             BigDecimal averageDeaths,
-            BigDecimal averageParsePercentage,
             BigDecimal averageKeyParsePercentage,
             BigDecimal averageDamagePerSecond,
             String error
