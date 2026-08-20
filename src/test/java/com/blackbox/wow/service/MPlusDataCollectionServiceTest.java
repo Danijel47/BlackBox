@@ -35,7 +35,7 @@ class MPlusDataCollectionServiceTest {
     @Mock private MPlusDungeonVaultRepository dungeonVaultRepository;
 
     @Test
-    void continuesWithOtherProfilesAfterOneCollectionFails() {
+    void startupCollectionContinuesWithOtherProfilesAfterOneCollectionFails() {
         TrackedPlayer failed = new TrackedPlayer(1, "Buco", "eu", "Stormscale", "Bucothered");
         TrackedPlayer successful = new TrackedPlayer(2, "Linq", "eu", "Stormscale", "Thelinq");
         MPlusObservation observation = observation("Thelinq");
@@ -45,7 +45,7 @@ class MPlusDataCollectionServiceTest {
         when(client.getMPlusObservation("eu", "Stormscale", "Thelinq")).thenReturn(observation);
         when(persistence.saveObservation(successful, observation, NOW)).thenReturn(List.of());
 
-        service().collectScheduledData();
+        service().collectAfterStartup();
 
         verify(persistence).recordFailure(failed, NOW, Category.TIMEOUT);
         verify(persistence).saveObservation(successful, observation, NOW);

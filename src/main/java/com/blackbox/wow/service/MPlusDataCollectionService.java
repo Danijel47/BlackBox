@@ -11,6 +11,8 @@ import com.blackbox.wow.service.MPlusCollectionPersistenceService.CollectionStat
 import com.blackbox.wow.service.MPlusCollectionPersistenceService.PendingRun;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -34,6 +37,7 @@ public class MPlusDataCollectionService {
     private final MPlusDungeonProperties dungeonProperties;
     private final MPlusDungeonVaultRepository dungeonVaultRepository;
     private final Clock clock;
+    private final AtomicBoolean collectionRunning = new AtomicBoolean();
     private Instant staticDataRefreshAfter = Instant.EPOCH;
 
     public MPlusDataCollectionService(
@@ -62,10 +66,27 @@ public class MPlusDataCollectionService {
         if (!properties.enabled()) {
             return;
         }
-        refreshStaticDataIfNeeded();
-        for (TrackedPlayer player : trackedPlayerService.activePlayers()) {
-            collectPlayer(player);
+        if (!collectionRunning.compareAndSet(false, true)) {
+            log.info("Mythic+ collection skipped because another collection is running.");
+            return;
         }
+        try {
+            refreshStaticDataIfNeeded();
+            List<TrackedPlayer> players = trackedPlayerService.activePlayers();
+            for (TrackedPlayer player : players) {
+                collectPlayer(player);
+            }
+            log.info("Mythic+ data collection completed for {} active profiles.", players.size());
+        } catch (RuntimeException e) {
+            log.error("Unexpected Mythic+ collection cycle failure ({})", e.getClass().getSimpleName());
+        } finally {
+            collectionRunning.set(false);
+        }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void collectAfterStartup() {
+        collectScheduledData();
     }
 
     private void refreshStaticDataIfNeeded() {

@@ -127,6 +127,7 @@ public class WarcraftLogPlayerRunEntity {
     }
 
     public Long getProfileId() { return profileId; }
+    public String getCharacterName() { return characterName; }
     public String getReportCode() { return reportCode; }
     public int getReportRevision() { return reportRevision; }
     public int getFightId() { return fightId; }

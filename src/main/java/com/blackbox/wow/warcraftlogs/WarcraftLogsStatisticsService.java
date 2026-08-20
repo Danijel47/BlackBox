@@ -108,7 +108,10 @@ public class WarcraftLogsStatisticsService {
 
         List<PlayerStatistics> result = new ArrayList<>();
         for (TrackedPlayer player : trackedPlayerService.activePlayers()) {
-            List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of());
+            List<WarcraftLogPlayerRunEntity> runs = runsByProfile.getOrDefault(player.profileId(), List.of())
+                    .stream()
+                    .filter(run -> run.getCharacterName().equalsIgnoreCase(player.name()))
+                    .toList();
             int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
             List<WarcraftLogPlayerRunEntity> currentRuns = runs.stream()
