@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.Types;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 
@@ -83,7 +82,7 @@ public class MPlusDungeonVaultRepository {
         }
     }
 
-    public void saveWeeklySnapshots(
+    public void saveCurrentVaultSnapshot(
             TrackedPlayer player,
             MPlusObservation observation,
             Instant capturedAt
@@ -93,35 +92,11 @@ public class MPlusDungeonVaultRepository {
                 player,
                 observation,
                 currentPeriod,
-                resolveRunLevels(
-                        player.profileId(),
-                        observation,
-                        observation.weeklyRuns(),
-                        currentPeriod,
-                        capturedAt
-                ),
+                runLevels(observation.weeklyRuns()),
                 false,
                 "CURRENT",
                 capturedAt
         );
-        if (observation.previousWeekAvailable()) {
-            Instant previousPeriod = resetCalendar.previousPeriodStart(currentPeriod);
-            saveVaultSnapshot(
-                    player,
-                    observation,
-                    previousPeriod,
-                    resolveRunLevels(
-                            player.profileId(),
-                            observation,
-                            observation.previousWeeklyRuns(),
-                            previousPeriod,
-                            currentPeriod
-                    ),
-                    true,
-                    "PREVIOUS",
-                    capturedAt
-            );
-        }
     }
 
     static List<Integer> runLevels(List<MPlusObservation.RunSummary> runs) {
@@ -129,60 +104,6 @@ public class MPlusDungeonVaultRepository {
                 .map(MPlusObservation.RunSummary::mythicLevel)
                 .sorted(Comparator.reverseOrder())
                 .toList();
-    }
-
-    static List<Integer> runLevelsBetween(
-            List<MPlusObservation.RunSummary> runs,
-            Instant periodStart,
-            Instant periodEnd
-    ) {
-        return runs.stream()
-                .filter(run -> !run.completedAt().isBefore(periodStart))
-                .filter(run -> run.completedAt().isBefore(periodEnd))
-                .map(MPlusObservation.RunSummary::mythicLevel)
-                .sorted(Comparator.reverseOrder())
-                .toList();
-    }
-
-    private List<Integer> resolveRunLevels(
-            long profileId,
-            MPlusObservation observation,
-            List<MPlusObservation.RunSummary> weeklyRuns,
-            Instant periodStart,
-            Instant periodEnd
-    ) {
-        List<Integer> levels = runLevels(weeklyRuns);
-        if (!levels.isEmpty()) {
-            return levels;
-        }
-        levels = runLevelsBetween(observation.runs(), periodStart, periodEnd);
-        return levels.isEmpty()
-                ? observedRunLevels(profileId, observation.season(), periodStart, periodEnd)
-                : levels;
-    }
-
-    private List<Integer> observedRunLevels(
-            long profileId,
-            String season,
-            Instant periodStart,
-            Instant periodEnd
-    ) {
-        return jdbc.sql("""
-                        SELECT run.mythic_level
-                        FROM mplus_observed_run run
-                        JOIN mplus_observed_run_profile run_profile ON run_profile.run_id = run.id
-                        WHERE run_profile.profile_id = :profileId
-                          AND run.season_key = :season
-                          AND run.completed_at >= :periodStart
-                          AND run.completed_at < :periodEnd
-                        ORDER BY run.mythic_level DESC, run.completed_at DESC, run.id DESC
-                        """)
-                .param(PARAM_PROFILE_ID, profileId)
-                .param(PARAM_SEASON, season)
-                .param(PARAM_PERIOD_START, toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
-                .param("periodEnd", toUtcOffset(periodEnd), Types.TIMESTAMP_WITH_TIMEZONE)
-                .query(Integer.class)
-                .list();
     }
 
     public List<DungeonCoverage> dungeonCoverage(long profileId, String season) {
@@ -217,34 +138,6 @@ public class MPlusDungeonVaultRepository {
                         resultSet.getString("dungeon_short_name"),
                         nullableInteger(resultSet.getObject("highest_timed_level")),
                         resultSet.getBigDecimal("best_observed_score")
-                ))
-                .list();
-    }
-
-    public List<VaultHistory> vaultHistory(long profileId, int limit) {
-        return jdbc.sql("""
-                        SELECT season_key, reset_period_start, region, realm, character_name,
-                               run_count, slot_one_level, slot_four_level, slot_eight_level,
-                               captured_at, finalized_at
-                        FROM mplus_weekly_vault_snapshot
-                        WHERE profile_id = :profileId AND finalized = TRUE
-                        ORDER BY reset_period_start DESC
-                        LIMIT :historyLimit
-                        """)
-                .param(PARAM_PROFILE_ID, profileId)
-                .param("historyLimit", limit)
-                .query((resultSet, ignoredRowNumber) -> new VaultHistory(
-                        resultSet.getString("season_key"),
-                        toInstant(resultSet.getObject("reset_period_start", OffsetDateTime.class)),
-                        resultSet.getString(REGION),
-                        resultSet.getString(REALM),
-                        resultSet.getString("character_name"),
-                        resultSet.getInt("run_count"),
-                        nullableInteger(resultSet.getObject("slot_one_level")),
-                        nullableInteger(resultSet.getObject("slot_four_level")),
-                        nullableInteger(resultSet.getObject("slot_eight_level")),
-                        toInstant(resultSet.getObject("captured_at", OffsetDateTime.class)),
-                        toInstant(resultSet.getObject("finalized_at", OffsetDateTime.class))
                 ))
                 .list();
     }
@@ -310,10 +203,6 @@ public class MPlusDungeonVaultRepository {
         return value instanceof Number number ? number.intValue() : null;
     }
 
-    private static Instant toInstant(OffsetDateTime value) {
-        return value == null ? null : value.toInstant();
-    }
-
     public record DungeonCoverage(
             int dungeonId,
             int challengeModeId,
@@ -324,18 +213,4 @@ public class MPlusDungeonVaultRepository {
     ) {
     }
 
-    public record VaultHistory(
-            String season,
-            Instant resetPeriodStart,
-            String region,
-            String realm,
-            String characterName,
-            int runCount,
-            Integer slotOne,
-            Integer slotFour,
-            Integer slotEight,
-            Instant capturedAt,
-            Instant finalizedAt
-    ) {
-    }
 }

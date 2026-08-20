@@ -88,7 +88,7 @@ class MPlusDataCollectionServiceTest {
                 trackedPlayerService,
                 persistence,
                 new MPlusCollectionProperties(true, 10, 0),
-                new MPlusDungeonProperties(11, 10, 8),
+                new MPlusDungeonProperties(11, 10),
                 dungeonVaultRepository,
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );

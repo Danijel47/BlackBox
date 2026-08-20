@@ -58,7 +58,7 @@ class MPlusCollectionPersistenceServiceTest {
         order.verify(collectionRepository).linkRunToProfile(1L, player, OBSERVED_AT);
         order.verify(collectionRepository).saveRunSummary(SEASON, loadedRun, OBSERVED_AT);
         order.verify(collectionRepository).linkRunToProfile(2L, player, OBSERVED_AT);
-        order.verify(dungeonVaultRepository).saveWeeklySnapshots(player, observation, OBSERVED_AT);
+        order.verify(dungeonVaultRepository).saveCurrentVaultSnapshot(player, observation, OBSERVED_AT);
         order.verify(collectionRepository).recordSuccess(player, observation, OBSERVED_AT);
     }
 

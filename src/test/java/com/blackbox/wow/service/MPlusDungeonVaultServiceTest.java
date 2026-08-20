@@ -1,10 +1,11 @@
 package com.blackbox.wow.service;
 
+import com.blackbox.wow.client.RaiderIoClient;
+import com.blackbox.wow.client.RaiderIoClient.MPlusRun;
+import com.blackbox.wow.client.RaiderIoClient.WeeklyVaultProgress;
 import com.blackbox.wow.properties.MPlusDungeonProperties;
-import com.blackbox.wow.properties.MPlusProgressProperties;
 import com.blackbox.wow.repository.MPlusDungeonVaultRepository;
 import com.blackbox.wow.repository.MPlusDungeonVaultRepository.DungeonCoverage;
-import com.blackbox.wow.repository.MPlusDungeonVaultRepository.VaultHistory;
 import com.blackbox.wow.repository.MPlusProgressRepository;
 import com.blackbox.wow.repository.MPlusProgressRepository.ScorePoint;
 import com.blackbox.wow.service.MPlusPlayerResolver.Resolution;
@@ -15,10 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.DayOfWeek;
 import java.time.Instant;
-import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +28,7 @@ import static org.mockito.Mockito.when;
 class MPlusDungeonVaultServiceTest {
 
     @Mock private MPlusPlayerResolver playerResolver;
+    @Mock private RaiderIoClient raiderIoClient;
     @Mock private MPlusProgressRepository progressRepository;
     @Mock private MPlusDungeonVaultRepository dungeonVaultRepository;
 
@@ -55,33 +54,40 @@ class MPlusDungeonVaultServiceTest {
     }
 
     @Test
-    void keepsVaultHistoryAttachedToTheProfileAfterAMainChange() {
+    void showsOnlyTheSelectedMainsCurrentVaultProgress() {
         TrackedPlayer currentPlayer = player("Bucomonk");
         when(playerResolver.resolveSelfOrNamed("Buco", 999L)).thenReturn(Resolution.found(currentPlayer));
-        when(dungeonVaultRepository.vaultHistory(1, 8)).thenReturn(List.of(
-                history("2026-08-05T04:00:00Z", "Bucothered", 8, 12),
-                history("2026-08-12T04:00:00Z", "Bucothered", 8, 13)
-        ));
+        when(raiderIoClient.getWeeklyVaultProgress("eu", "Stormscale", "Bucomonk"))
+                .thenReturn(new WeeklyVaultProgress(
+                        "Bucomonk",
+                        "Stormscale",
+                        "eu",
+                        List.of(
+                                new MPlusRun(11, "Kings' Rest", "2026-08-20T10:00:00Z"),
+                                new MPlusRun(9, "Ruby Life Pools", "2026-08-20T09:00:00Z"),
+                                new MPlusRun(8, "Kings' Rest", "2026-08-20T08:00:00Z"),
+                                new MPlusRun(6, "Ruby Life Pools", "2026-08-20T07:00:00Z")
+                        ),
+                        "https://raider.io/characters/eu/stormscale/Bucomonk"
+                ));
 
-        String message = service().vaultHistoryMessage("Buco", 999L);
+        String message = service().currentVaultMessage("Buco", 999L);
 
-        verify(dungeonVaultRepository).vaultHistory(1, 8);
+        verify(raiderIoClient).getWeeklyVaultProgress("eu", "Stormscale", "Bucomonk");
         assertThat(message)
-                .contains("Week of 2026-08-12")
-                .contains("1: +13 | 4: +13 | 8: +13")
-                .contains("Max-vault streak: 2 week(s)");
+                .contains("Great Vault — current week — Mythic+ only — Buco")
+                .contains("4 runs | 1: +11 | 4: +6 | 8: locked")
+                .contains("• +11 Kings' Rest")
+                .doesNotContain("history", "Week of", "streak");
     }
 
     private MPlusDungeonVaultService service() {
-        MPlusProgressProperties progress = new MPlusProgressProperties(
-                ZoneId.of("UTC"), DayOfWeek.WEDNESDAY, LocalTime.of(4, 0), List.of()
-        );
         return new MPlusDungeonVaultService(
                 playerResolver,
+                raiderIoClient,
                 progressRepository,
                 dungeonVaultRepository,
-                new MPlusDungeonProperties(11, 10, 8),
-                progress
+                new MPlusDungeonProperties(11, 10)
         );
     }
 
@@ -101,20 +107,4 @@ class MPlusDungeonVaultServiceTest {
         );
     }
 
-    private static VaultHistory history(String period, String character, int runCount, int slot) {
-        Instant captured = Instant.parse(period).plusSeconds(604_800);
-        return new VaultHistory(
-                "season-mn-2",
-                Instant.parse(period),
-                "eu",
-                "Stormscale",
-                character,
-                runCount,
-                slot,
-                slot,
-                slot,
-                captured,
-                captured
-        );
-    }
 }

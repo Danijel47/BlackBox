@@ -1,10 +1,13 @@
 package com.blackbox.wow.service;
 
+import com.blackbox.wow.client.RaiderIoClient;
+import com.blackbox.wow.client.RaiderIoClient.MPlusRun;
+import com.blackbox.wow.client.RaiderIoClient.WeeklyVaultProgress;
+import com.blackbox.wow.helper.VaultSlotCalculator;
+import com.blackbox.wow.helper.VaultSlotCalculator.VaultSlots;
 import com.blackbox.wow.properties.MPlusDungeonProperties;
-import com.blackbox.wow.properties.MPlusProgressProperties;
 import com.blackbox.wow.repository.MPlusDungeonVaultRepository;
 import com.blackbox.wow.repository.MPlusDungeonVaultRepository.DungeonCoverage;
-import com.blackbox.wow.repository.MPlusDungeonVaultRepository.VaultHistory;
 import com.blackbox.wow.repository.MPlusProgressRepository;
 import com.blackbox.wow.repository.MPlusProgressRepository.ScorePoint;
 import com.blackbox.wow.service.MPlusPlayerResolver.Resolution;
@@ -13,9 +16,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -23,26 +23,24 @@ import java.util.Optional;
 @Service
 public class MPlusDungeonVaultService {
 
-    private static final DateTimeFormatter WEEK_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
     private final MPlusPlayerResolver playerResolver;
+    private final RaiderIoClient raiderIoClient;
     private final MPlusProgressRepository progressRepository;
     private final MPlusDungeonVaultRepository dungeonVaultRepository;
     private final MPlusDungeonProperties dungeonProperties;
-    private final MPlusProgressProperties progressProperties;
 
     public MPlusDungeonVaultService(
             MPlusPlayerResolver playerResolver,
+            RaiderIoClient raiderIoClient,
             MPlusProgressRepository progressRepository,
             MPlusDungeonVaultRepository dungeonVaultRepository,
-            MPlusDungeonProperties dungeonProperties,
-            MPlusProgressProperties progressProperties
+            MPlusDungeonProperties dungeonProperties
     ) {
         this.playerResolver = playerResolver;
+        this.raiderIoClient = raiderIoClient;
         this.progressRepository = progressRepository;
         this.dungeonVaultRepository = dungeonVaultRepository;
         this.dungeonProperties = dungeonProperties;
-        this.progressProperties = progressProperties;
     }
 
     public String dungeonCoverageMessage(String argument, Long telegramUserId) {
@@ -66,19 +64,21 @@ public class MPlusDungeonVaultService {
         return formatDungeonCoverage(player, latestScore.get().season(), dungeons);
     }
 
-    public String vaultHistoryMessage(String argument, Long telegramUserId) {
+    public String currentVaultMessage(String argument, Long telegramUserId) {
         Resolution resolution = playerResolver.resolveSelfOrNamed(argument, telegramUserId);
         if (resolution.error() != null) {
             return resolution.error();
         }
         TrackedPlayer player = resolution.player();
-        List<VaultHistory> history = dungeonVaultRepository.vaultHistory(
-                player.profileId(), dungeonProperties.historyWeeks()
-        );
-        if (history.isEmpty()) {
-            return "No finalized Mythic+ vault history is available for " + player.profileName() + " yet.";
+        try {
+            WeeklyVaultProgress progress = raiderIoClient.getWeeklyVaultProgress(
+                    player.region(), player.realm(), player.name()
+            );
+            return formatCurrentVault(player, progress);
+        } catch (RuntimeException exception) {
+            return "Current Mythic+ vault progress is unavailable for " + player.profileName()
+                    + " (" + player.name() + "-" + player.realm() + ").";
         }
-        return formatVaultHistory(player, history);
     }
 
     private String formatDungeonCoverage(
@@ -143,53 +143,39 @@ public class MPlusDungeonVaultService {
         }
     }
 
-    private String formatVaultHistory(TrackedPlayer player, List<VaultHistory> history) {
-        StringBuilder message = new StringBuilder("Great Vault history — Mythic+ only — ")
+    private static String formatCurrentVault(TrackedPlayer player, WeeklyVaultProgress progress) {
+        List<MPlusRun> runs = progress.runs() == null ? List.of() : progress.runs();
+        VaultSlots slots = VaultSlotCalculator.calculate(runs.stream().map(MPlusRun::level).toList());
+        StringBuilder message = new StringBuilder("Great Vault — current week — Mythic+ only — ")
                 .append(player.profileName())
-                .append('\n');
-        for (VaultHistory week : history) {
-            message.append("• Week of ")
-                    .append(WEEK_DATE.format(toResetDate(week)))
-                    .append(" — ")
-                    .append(week.season())
-                    .append(" — ")
-                    .append(week.runCount())
-                    .append(" runs | 1: ")
-                    .append(formatSlot(week.slotOne()))
-                    .append(" | 4: ")
-                    .append(formatSlot(week.slotFour()))
-                    .append(" | 8: ")
-                    .append(formatSlot(week.slotEight()))
-                    .append('\n');
-        }
-        return message.append("Max-vault streak: ")
-                .append(longestMaxVaultStreak(history))
-                .append(" week(s)\n")
-                .append("Delves and regular Mythic dungeons are not included.")
-                .toString();
+                .append('\n')
+                .append("• ")
+                .append(progress.name())
+                .append('-')
+                .append(progress.realm())
+                .append(" — ")
+                .append(slots.runCount())
+                .append(" runs | 1: ")
+                .append(formatSlot(slots.slotOne()))
+                .append(" | 4: ")
+                .append(formatSlot(slots.slotFour()))
+                .append(" | 8: ")
+                .append(formatSlot(slots.slotEight()));
+        appendTopRuns(message, runs);
+        return message.append("\nDelves and regular Mythic dungeons are not included.").toString();
     }
 
-    private int longestMaxVaultStreak(List<VaultHistory> history) {
-        List<VaultHistory> chronological = new ArrayList<>(history);
-        chronological.sort(Comparator.comparing(VaultHistory::resetPeriodStart));
-        int longest = 0;
-        int current = 0;
-        LocalDate previousDate = null;
-        for (VaultHistory week : chronological) {
-            LocalDate date = toResetDate(week);
-            if (week.slotEight() != null) {
-                current = previousDate != null && previousDate.plusWeeks(1).equals(date) ? current + 1 : 1;
-                longest = Math.max(longest, current);
-            } else {
-                current = 0;
-            }
-            previousDate = date;
+    private static void appendTopRuns(StringBuilder message, List<MPlusRun> runs) {
+        if (runs.isEmpty()) {
+            return;
         }
-        return longest;
-    }
-
-    private LocalDate toResetDate(VaultHistory week) {
-        return week.resetPeriodStart().atZone(progressProperties.resetZone()).toLocalDate();
+        message.append("\nTop runs:");
+        for (MPlusRun run : runs.stream()
+                .sorted(Comparator.comparingInt(MPlusRun::level).reversed())
+                .limit(8)
+                .toList()) {
+            message.append("\n• +").append(run.level()).append(' ').append(run.dungeon());
+        }
     }
 
     private static String formatHighestTimed(Integer level) {

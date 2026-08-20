@@ -313,7 +313,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "dungeons" -> mplusDungeonVaultService.dungeonCoverageMessage(
                     request.arguments(), context.senderUserId()
             );
-            case "vault" -> mplusDungeonVaultService.vaultHistoryMessage(
+            case "vault" -> mplusDungeonVaultService.currentVaultMessage(
                     request.arguments(), context.senderUserId()
             );
             case "performance" -> mplusPerformanceService.performanceMessage(
@@ -349,7 +349,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private static String mplusHelpMessage() {
         return "M+ commands:\n"
-                + "/mplus progress [profile]\n/mplus dungeons [profile]\n/mplus vault [profile]\n"
+                + "/mplus progress [profile]\n/mplus dungeons [profile]\n"
+                + "/mplus vault [profile] — current week only\n"
                 + "/mplus performance [profile]\n/mplus highlights [profile]\n"
                 + "/mplus team [profile]\n/mplus pair <profile-a> <profile-b>\n"
                 + "/mplus consistency [profile]\n/mplus affixes [profile]\n/mplus awards\n"

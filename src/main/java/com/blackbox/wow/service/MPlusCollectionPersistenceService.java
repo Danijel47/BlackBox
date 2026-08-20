@@ -45,7 +45,7 @@ public class MPlusCollectionPersistenceService {
         collectionRepository.saveScoreSnapshot(player, observation, observedAt);
         progressRepository.recordMilestones(player, observation, observedAt);
         List<PendingRun> pendingRuns = saveRuns(player, observation, observedAt);
-        dungeonVaultRepository.saveWeeklySnapshots(player, observation, observedAt);
+        dungeonVaultRepository.saveCurrentVaultSnapshot(player, observation, observedAt);
         collectionRepository.recordSuccess(player, observation, observedAt);
         return List.copyOf(pendingRuns);
     }

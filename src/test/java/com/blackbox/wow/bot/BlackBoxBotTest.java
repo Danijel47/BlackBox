@@ -294,6 +294,21 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void showsAProfilesCurrentWeekVault() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus vault Lazo");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mplusDungeonVaultService.currentVaultMessage("Lazo", userId))
+                .thenReturn("Current vault progress");
+
+        bot().consume(update);
+
+        verify(mplusDungeonVaultService).currentVaultMessage("Lazo", userId);
+        assertThat(sentMessage().getText()).isEqualTo("Current vault progress");
+    }
+
+    @Test
     void showsAProfilesObservedMPlusHighlights() throws Exception {
         long chatId = 123L;
         long userId = 456L;
