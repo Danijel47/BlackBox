@@ -47,10 +47,12 @@ public class WarcraftLogsStatisticsService {
                       code
                       revision
                       startTime
+                      endTime
                       fights {
                         id
                         name
                         keystoneLevel
+                        keystoneTime
                         startTime
                         endTime
                         friendlyPlayers
@@ -112,25 +114,25 @@ public class WarcraftLogsStatisticsService {
                     .stream()
                     .filter(run -> run.getCharacterName().equalsIgnoreCase(player.name()))
                     .toList();
-            int interrupts = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
-            int deaths = runs.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
-            List<WarcraftLogPlayerRunEntity> currentRuns = runs.stream()
-                    .filter(WarcraftLogsStatisticsService::hasCurrentMetricsVersion)
+            List<WarcraftLogPlayerRunEntity> completeRuns = runs.stream()
+                    .filter(WarcraftLogsStatisticsService::hasCompleteCombatMetrics)
                     .toList();
+            int interrupts = completeRuns.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
+            int deaths = completeRuns.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
             List<BigDecimal> keyParses = nonNullMetrics(
-                    currentRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
+                    completeRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
             );
             List<BigDecimal> damagePerSecond = nonNullMetrics(
-                    currentRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
+                    completeRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
             );
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
             result.add(new PlayerStatistics(
                     player.profileName(),
                     player.name(),
-                    runs.size(),
+                    completeRuns.size(),
                     keyParses.size(),
-                    average(interrupts, runs.size()),
-                    average(deaths, runs.size()),
+                    average(interrupts, completeRuns.size()),
+                    average(deaths, completeRuns.size()),
                     average(keyParses),
                     average(damagePerSecond),
                     snapshot == null ? null : snapshot.getLastError()
@@ -236,18 +238,14 @@ public class WarcraftLogsStatisticsService {
 
     private void collectIncrementalRuns() {
         String seasonKey = properties.seasonKey();
-        Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns = runRepository.findBySeasonKey(seasonKey)
-                .stream()
-                .collect(Collectors.toMap(
-                        run -> new RunIdentity(run.getProfileId(), run.getReportCode(), run.getFightId()),
-                        run -> run
-                ));
-        Map<String, ReportWork> reports = new LinkedHashMap<>();
+        ExistingRunIndex existingRuns = ExistingRunIndex.from(runRepository.findBySeasonKey(seasonKey));
+        Map<ReportFingerprint, ReportWork> reports = new LinkedHashMap<>();
+        Map<ReportFingerprint, String> canonicalReportCodes = new LinkedHashMap<>();
         List<TrackedPlayer> players = trackedPlayerService.activePlayers();
 
         for (TrackedPlayer player : players) {
             try {
-                discoverPlayerReports(player, existingRuns, reports);
+                discoverPlayerReports(player, existingRuns, reports, canonicalReportCodes);
                 saveSnapshot(player, null, null);
             } catch (Exception e) {
                 saveSnapshot(player, null, e.getMessage());
@@ -275,8 +273,9 @@ public class WarcraftLogsStatisticsService {
 
     private void discoverPlayerReports(
             TrackedPlayer player,
-            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns,
-            Map<String, ReportWork> reports
+            ExistingRunIndex existingRuns,
+            Map<ReportFingerprint, ReportWork> reports,
+            Map<ReportFingerprint, String> canonicalReportCodes
     ) {
         Map<String, Object> variables = Map.of(
                 "name", player.name(),
@@ -293,15 +292,26 @@ public class WarcraftLogsStatisticsService {
 
         for (JsonNode reportNode : character.path("recentReports").path("data")) {
             DiscoveredReport discoveredReport = discoverReport(reportNode, player);
-            if (discoveredReport != null) {
+            if (discoveredReport != null && isCanonicalReport(discoveredReport, canonicalReportCodes)) {
                 addReportFights(reportNode, player, discoveredReport, existingRuns, reports);
             }
         }
     }
 
+    private static boolean isCanonicalReport(
+            DiscoveredReport report,
+            Map<ReportFingerprint, String> canonicalReportCodes
+    ) {
+        ReportFingerprint fingerprint = new ReportFingerprint(report.startedAt());
+        String canonicalCode = canonicalReportCodes.putIfAbsent(fingerprint, report.code());
+        return canonicalCode == null || canonicalCode.equals(report.code());
+    }
+
     private DiscoveredReport discoverReport(JsonNode reportNode, TrackedPlayer player) {
         Instant startedAt = instantFromMilliseconds(reportNode.path("startTime").asLong(0));
-        if (startedAt == null || startedAt.isBefore(properties.seasonStart())) {
+        Instant endedAt = instantFromMilliseconds(reportNode.path("endTime").asLong(0));
+        if (startedAt == null || endedAt == null || endedAt.isBefore(startedAt)
+                || startedAt.isBefore(properties.seasonStart())) {
             return null;
         }
         String code = reportNode.path("code").asText("");
@@ -321,8 +331,8 @@ public class WarcraftLogsStatisticsService {
             JsonNode reportNode,
             TrackedPlayer player,
             DiscoveredReport discoveredReport,
-            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns,
-            Map<String, ReportWork> reports
+            ExistingRunIndex existingRuns,
+            Map<ReportFingerprint, ReportWork> reports
     ) {
         for (JsonNode fight : reportNode.path("fights")) {
             addReportFight(fight, player, discoveredReport, existingRuns, reports);
@@ -333,32 +343,35 @@ public class WarcraftLogsStatisticsService {
             JsonNode fight,
             TrackedPlayer player,
             DiscoveredReport discoveredReport,
-            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns,
-            Map<String, ReportWork> reports
+            ExistingRunIndex existingRuns,
+            Map<ReportFingerprint, ReportWork> reports
     ) {
         int fightId = fight.path("id").asInt(0);
         int keyLevel = fight.path("keystoneLevel").asInt(0);
+        long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
         if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())) {
             return;
         }
 
         correlateFight(fight, player, discoveredReport, fightId, keyLevel);
 
-        RunIdentity identity = new RunIdentity(player.profileId(), discoveredReport.code(), fightId);
-        WarcraftLogPlayerRunEntity existing = existingRuns.get(identity);
+        WarcraftLogPlayerRunEntity existing = existingRuns.find(player, discoveredReport, fightId);
         if (isCurrentRun(existing, discoveredReport.revision())) {
             return;
         }
 
+        ReportFingerprint fingerprint = new ReportFingerprint(discoveredReport.startedAt());
         ReportWork report = reports.computeIfAbsent(
-                discoveredReport.code(),
+                fingerprint,
                 ignored -> new ReportWork(
                         discoveredReport.code(),
                         discoveredReport.revision(),
                         discoveredReport.startedAt()
                 )
         );
-        report.revision = Math.max(report.revision, discoveredReport.revision());
+        if (report.code.equals(discoveredReport.code())) {
+            report.revision = Math.max(report.revision, discoveredReport.revision());
+        }
         report.fightIds.add(fightId);
         report.participants.add(new Participant(
                 player,
@@ -366,13 +379,15 @@ public class WarcraftLogsStatisticsService {
                 discoveredReport.actorId(),
                 fight.path("name").asText("Unknown dungeon"),
                 keyLevel,
+                keystoneTimeMs,
                 existing
         ));
     }
 
-    private static boolean isEligibleFight(JsonNode fight, int fightId, int keyLevel, int actorId) {
+    static boolean isEligibleFight(JsonNode fight, int fightId, int keyLevel, int actorId) {
         return fightId > 0
                 && keyLevel > 0
+                && fight.path("keystoneTime").asLong(0) > 0
                 && containsInt(fight.path("friendlyPlayers"), actorId);
     }
 
@@ -405,7 +420,7 @@ public class WarcraftLogsStatisticsService {
 
     private int loadAndSaveReportEvents(
             ReportWork report,
-            Map<RunIdentity, WarcraftLogPlayerRunEntity> existingRuns
+            ExistingRunIndex existingRuns
     ) {
         if (report.fightIds.isEmpty()) return 0;
 
@@ -464,11 +479,9 @@ public class WarcraftLogsStatisticsService {
                         rankingMetrics.damagePerSecond()
                 );
             }
+            entity.recordCompletion(participant.keystoneTimeMs);
             entity = runRepository.save(entity);
-            existingRuns.put(
-                    new RunIdentity(participant.player.profileId(), report.code, participant.fightId),
-                    entity
-            );
+            existingRuns.remember(entity);
             saved++;
         }
         return saved;
@@ -695,6 +708,12 @@ public class WarcraftLogsStatisticsService {
                 && run.getDamagePerSecond() != null;
     }
 
+    private static boolean hasCompleteCombatMetrics(WarcraftLogPlayerRunEntity run) {
+        return hasCurrentMetricsVersion(run)
+                && run.getKeystoneTimeMs() != null
+                && run.getKeystoneTimeMs() > 0;
+    }
+
     public record PlayerStatistics(
             String profileName,
             String characterName,
@@ -728,6 +747,14 @@ public class WarcraftLogsStatisticsService {
     private record RunIdentity(long profileId, String reportCode, int fightId) {
     }
 
+    private record UploadedFightIdentity(
+            long profileId,
+            String characterName,
+            Instant reportStartedAt,
+            int fightId
+    ) {
+    }
+
     private record DiscoveredReport(
             String code,
             int revision,
@@ -735,6 +762,9 @@ public class WarcraftLogsStatisticsService {
             int actorId,
             Map<Integer, ReportActor> actors
     ) {
+    }
+
+    private record ReportFingerprint(Instant startedAt) {
     }
 
     private record ReportActor(int id, String name, String server) {
@@ -749,6 +779,7 @@ public class WarcraftLogsStatisticsService {
             int actorId,
             String dungeonName,
             int keystoneLevel,
+            long keystoneTimeMs,
             WarcraftLogPlayerRunEntity existing
     ) {
     }
@@ -764,6 +795,51 @@ public class WarcraftLogsStatisticsService {
             this.code = code;
             this.revision = revision;
             this.reportStartedAt = reportStartedAt;
+        }
+    }
+
+    private static final class ExistingRunIndex {
+        private final Map<RunIdentity, WarcraftLogPlayerRunEntity> byReport = new LinkedHashMap<>();
+        private final Map<UploadedFightIdentity, WarcraftLogPlayerRunEntity> byUploadedFight =
+                new LinkedHashMap<>();
+
+        private static ExistingRunIndex from(List<WarcraftLogPlayerRunEntity> runs) {
+            ExistingRunIndex index = new ExistingRunIndex();
+            runs.forEach(index::remember);
+            return index;
+        }
+
+        private WarcraftLogPlayerRunEntity find(
+                TrackedPlayer player,
+                DiscoveredReport report,
+                int fightId
+        ) {
+            WarcraftLogPlayerRunEntity exact = byReport.get(
+                    new RunIdentity(player.profileId(), report.code(), fightId)
+            );
+            if (exact != null) {
+                return exact;
+            }
+            return byUploadedFight.get(new UploadedFightIdentity(
+                    player.profileId(), normalizeCharacter(player.name()), report.startedAt(), fightId
+            ));
+        }
+
+        private void remember(WarcraftLogPlayerRunEntity run) {
+            byReport.put(
+                    new RunIdentity(run.getProfileId(), run.getReportCode(), run.getFightId()),
+                    run
+            );
+            byUploadedFight.putIfAbsent(new UploadedFightIdentity(
+                    run.getProfileId(),
+                    normalizeCharacter(run.getCharacterName()),
+                    run.getReportStartedAt(),
+                    run.getFightId()
+            ), run);
+        }
+
+        private static String normalizeCharacter(String characterName) {
+            return characterName.toLowerCase(Locale.ROOT);
         }
     }
 }

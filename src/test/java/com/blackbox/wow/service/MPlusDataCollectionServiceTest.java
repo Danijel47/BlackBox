@@ -71,6 +71,17 @@ class MPlusDataCollectionServiceTest {
                 .contains("not a complete historical import");
     }
 
+    @Test
+    void reportsWhenNoCollectionCycleHasStarted() {
+        TrackedPlayer linq = new TrackedPlayer(2, "Linq", "eu", "Stormscale", "Thelinq");
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(linq));
+        when(persistence.statuses()).thenReturn(List.of());
+
+        assertThat(service().statusMessage())
+                .contains("Runtime: no collection cycle has started since this container launched.")
+                .contains("Linq — waiting for first collection");
+    }
+
     private MPlusDataCollectionService service() {
         return new MPlusDataCollectionService(
                 client,

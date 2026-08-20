@@ -13,6 +13,8 @@ import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +41,8 @@ public class MPlusDataCollectionService {
     private final Clock clock;
     private final AtomicBoolean collectionRunning = new AtomicBoolean();
     private Instant staticDataRefreshAfter = Instant.EPOCH;
+    private volatile Instant lastCycleStartedAt;
+    private volatile Instant lastCycleCompletedAt;
 
     public MPlusDataCollectionService(
             RaiderIoClient raiderIoClient,
@@ -70,9 +74,11 @@ public class MPlusDataCollectionService {
             log.info("Mythic+ collection skipped because another collection is running.");
             return;
         }
+        lastCycleStartedAt = clock.instant();
         try {
             refreshStaticDataIfNeeded();
             List<TrackedPlayer> players = trackedPlayerService.activePlayers();
+            log.info("Mythic+ data collection started for {} active profiles.", players.size());
             for (TrackedPlayer player : players) {
                 collectPlayer(player);
             }
@@ -80,11 +86,13 @@ public class MPlusDataCollectionService {
         } catch (RuntimeException e) {
             log.error("Unexpected Mythic+ collection cycle failure ({})", e.getClass().getSimpleName());
         } finally {
+            lastCycleCompletedAt = clock.instant();
             collectionRunning.set(false);
         }
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     public void collectAfterStartup() {
         collectScheduledData();
     }
@@ -119,12 +127,32 @@ public class MPlusDataCollectionService {
             return message.append("No active player profiles have a selected character.").toString();
         }
         Instant now = clock.instant();
+        appendRuntimeStatus(message, statuses, now);
         for (TrackedPlayer player : players) {
             appendPlayerStatus(message, player, statuses.get(player.profileId()), now);
         }
         return message.append("\nSchedule: every 30 minutes. Runs are observed from Raider.IO; ")
                 .append("this is not a complete historical import.")
                 .toString();
+    }
+
+    private void appendRuntimeStatus(
+            StringBuilder message,
+            Map<Long, CollectionStatus> statuses,
+            Instant now
+    ) {
+        if (!statuses.isEmpty()) {
+            return;
+        }
+        if (lastCycleStartedAt == null) {
+            message.append("Runtime: no collection cycle has started since this container launched.\n");
+        } else if (lastCycleCompletedAt == null) {
+            message.append("Runtime: collection cycle is currently running.\n");
+        } else {
+            message.append("Runtime: last cycle completed ")
+                    .append(formatAge(lastCycleCompletedAt, now))
+                    .append(" ago but created no status rows; check application logs.\n");
+        }
     }
 
     private void collectPlayer(TrackedPlayer player) {

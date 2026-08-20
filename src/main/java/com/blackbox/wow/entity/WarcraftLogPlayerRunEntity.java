@@ -47,6 +47,9 @@ public class WarcraftLogPlayerRunEntity {
     @Column(name = "keystone_level", nullable = false)
     private int keystoneLevel;
 
+    @Column(name = "keystone_time_ms")
+    private Long keystoneTimeMs;
+
     @Column(name = "interrupts", nullable = false)
     private int interrupts;
 
@@ -126,11 +129,20 @@ public class WarcraftLogPlayerRunEntity {
         this.capturedAt = Instant.now();
     }
 
+    public void recordCompletion(long completionTimeMs) {
+        if (completionTimeMs <= 0) {
+            throw new IllegalArgumentException("Keystone completion time must be positive.");
+        }
+        this.keystoneTimeMs = completionTimeMs;
+    }
+
     public Long getProfileId() { return profileId; }
     public String getCharacterName() { return characterName; }
     public String getReportCode() { return reportCode; }
     public int getReportRevision() { return reportRevision; }
+    public Instant getReportStartedAt() { return reportStartedAt; }
     public int getFightId() { return fightId; }
+    public Long getKeystoneTimeMs() { return keystoneTimeMs; }
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
     public BigDecimal getParsePercentage() { return parsePercentage; }
