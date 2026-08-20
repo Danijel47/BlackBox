@@ -93,7 +93,13 @@ public class MPlusDungeonVaultRepository {
                 player,
                 observation,
                 currentPeriod,
-                runLevels(observation.weeklyRuns()),
+                resolveRunLevels(
+                        player.profileId(),
+                        observation,
+                        observation.weeklyRuns(),
+                        currentPeriod,
+                        capturedAt
+                ),
                 false,
                 "CURRENT",
                 capturedAt
@@ -104,7 +110,13 @@ public class MPlusDungeonVaultRepository {
                     player,
                     observation,
                     previousPeriod,
-                    runLevels(observation.previousWeeklyRuns()),
+                    resolveRunLevels(
+                            player.profileId(),
+                            observation,
+                            observation.previousWeeklyRuns(),
+                            previousPeriod,
+                            currentPeriod
+                    ),
                     true,
                     "PREVIOUS",
                     capturedAt
@@ -117,6 +129,60 @@ public class MPlusDungeonVaultRepository {
                 .map(MPlusObservation.RunSummary::mythicLevel)
                 .sorted(Comparator.reverseOrder())
                 .toList();
+    }
+
+    static List<Integer> runLevelsBetween(
+            List<MPlusObservation.RunSummary> runs,
+            Instant periodStart,
+            Instant periodEnd
+    ) {
+        return runs.stream()
+                .filter(run -> !run.completedAt().isBefore(periodStart))
+                .filter(run -> run.completedAt().isBefore(periodEnd))
+                .map(MPlusObservation.RunSummary::mythicLevel)
+                .sorted(Comparator.reverseOrder())
+                .toList();
+    }
+
+    private List<Integer> resolveRunLevels(
+            long profileId,
+            MPlusObservation observation,
+            List<MPlusObservation.RunSummary> weeklyRuns,
+            Instant periodStart,
+            Instant periodEnd
+    ) {
+        List<Integer> levels = runLevels(weeklyRuns);
+        if (!levels.isEmpty()) {
+            return levels;
+        }
+        levels = runLevelsBetween(observation.runs(), periodStart, periodEnd);
+        return levels.isEmpty()
+                ? observedRunLevels(profileId, observation.season(), periodStart, periodEnd)
+                : levels;
+    }
+
+    private List<Integer> observedRunLevels(
+            long profileId,
+            String season,
+            Instant periodStart,
+            Instant periodEnd
+    ) {
+        return jdbc.sql("""
+                        SELECT run.mythic_level
+                        FROM mplus_observed_run run
+                        JOIN mplus_observed_run_profile run_profile ON run_profile.run_id = run.id
+                        WHERE run_profile.profile_id = :profileId
+                          AND run.season_key = :season
+                          AND run.completed_at >= :periodStart
+                          AND run.completed_at < :periodEnd
+                        ORDER BY run.mythic_level DESC, run.completed_at DESC, run.id DESC
+                        """)
+                .param(PARAM_PROFILE_ID, profileId)
+                .param(PARAM_SEASON, season)
+                .param(PARAM_PERIOD_START, toUtcOffset(periodStart), Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("periodEnd", toUtcOffset(periodEnd), Types.TIMESTAMP_WITH_TIMEZONE)
+                .query(Integer.class)
+                .list();
     }
 
     public List<DungeonCoverage> dungeonCoverage(long profileId, String season) {
