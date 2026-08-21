@@ -206,7 +206,7 @@ public class TrackedPlayerService {
                 ));
         if (character.isSelected()) {
             throw new IllegalArgumentException(
-                    "The selected main cannot be deleted. Use /profileswitch to select another character first."
+                    "The selected main cannot be deleted. Use /profile_switch to select another character first."
             );
         }
         characterRepository.delete(character);
@@ -215,7 +215,7 @@ public class TrackedPlayerService {
     @Transactional
     public void linkProfile(long telegramUserId, String profileName) {
         if (telegramUserId <= 0 || !telegramUserRepository.existsById(telegramUserId)) {
-            throw new IllegalArgumentException("Register the Telegram user with /useradd first.");
+            throw new IllegalArgumentException("Register the Telegram user with /user_add first.");
         }
         PlayerProfileEntity profile = requireProfile(profileName);
         Optional<PlayerProfileEntity> linkedProfile = profileRepository.findByTelegramUserId(telegramUserId);

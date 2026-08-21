@@ -109,8 +109,8 @@ public class TimeToGoCommandService {
     }
 
     private static String usage() {
-        return "Usage: /road [zadar zagreb|zagreb zadar]\n"
-               + "Best historical slots: /roadbest [zadar zagreb|zagreb zadar]\n"
+        return "Usage: /road_zadar_zagreb or /road_zagreb_zadar\n"
+               + "Best historical slots: /road_best_zadar_zagreb or /road_best_zagreb_zadar\n"
                + "Samples are collected automatically at :00 and :30.";
     }
 

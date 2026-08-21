@@ -61,14 +61,14 @@ public class TimeToGoHistoricalImportService {
                + "Jobs: " + firstJobId + ", " + secondJobId + "\n"
                + "Range: " + from + " to " + to + "\n"
                + "Routes are split via INA Vukova Gorica to stay under the 200 km limit.\n"
-               + "Check later with /timetogoimportstatus";
+               + "Check later with /time_to_go_import_status";
     }
 
     public String refreshLatestImport() {
         TimeToGoImportJobEntity job = importJobs.findFirstByOrderByCreatedAtDesc()
                 .orElse(null);
         if (job == null) {
-            return "No historical import job found. Start one with /timetogoimport30.";
+            return "No historical import job found. Start one with /time_to_go_import_30.";
         }
 
         List<TimeToGoImportJobEntity> batch = importJobs.findByImportKeyOrderByCreatedAtAsc(job.getImportKey());

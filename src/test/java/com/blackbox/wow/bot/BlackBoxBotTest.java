@@ -131,7 +131,7 @@ class BlackBoxBotTest {
     void allowsAUserToSelectACharacterFromTheirOwnProfile() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/profilemain stormscale Alicemage");
+        Update update = update(chatId, userId, "/profile_main stormscale Alicemage");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
 
         bot().consume(update);
@@ -144,7 +144,7 @@ class BlackBoxBotTest {
     void allowsTheAdminToLinkAProfileToATelegramUser() throws Exception {
         long chatId = 123L;
         long adminId = 999L;
-        Update update = update(chatId, adminId, "/profilelink 456 Alice");
+        Update update = update(chatId, adminId, "/profile_link 456 Alice");
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
 
         bot().consume(update);
@@ -157,7 +157,7 @@ class BlackBoxBotTest {
     void rejectsAnAdminProfileCommandFromARegularUser() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/profileswitch Alice eu stormscale Alicemage");
+        Update update = update(chatId, userId, "/profile_switch Alice eu stormscale Alicemage");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
 
         bot().consume(update);
@@ -170,15 +170,15 @@ class BlackBoxBotTest {
     void explainsHowAUserCanViewAndChangeTheirProfile() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/profile-help");
+        Update update = update(chatId, userId, "/profile_help");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
 
         bot().consume(update);
 
         assertThat(sentMessage().getText())
-                .contains("/profilemain <realm> <character>")
+                .contains("/profile_main <realm> <character>")
                 .contains("Only the characters registered to your profile can be selected")
-                .contains("/mplus combat");
+                .contains("/mplus_combat");
     }
 
     @Test
@@ -207,7 +207,7 @@ class BlackBoxBotTest {
     void letsTheAdminChangeAnyProfilesMain() throws Exception {
         long chatId = 123L;
         long adminId = 999L;
-        Update update = update(chatId, adminId, "/profileswitch Alice eu stormscale Alicemage");
+        Update update = update(chatId, adminId, "/profile_switch Alice eu stormscale Alicemage");
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
 
         bot().consume(update);
@@ -220,7 +220,7 @@ class BlackBoxBotTest {
     void letsTheAdminDeleteACharacterFromAProfile() throws Exception {
         long chatId = 123L;
         long adminId = 999L;
-        Update update = update(chatId, adminId, "/profilechardelete Buco stormscale Bucomonk");
+        Update update = update(chatId, adminId, "/profile_char_delete Buco stormscale Bucomonk");
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
 
         bot().consume(update);
@@ -233,7 +233,7 @@ class BlackBoxBotTest {
     void preventsARegularUserFromDeletingAProfileCharacter() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/profilechardelete Buco stormscale Bucomonk");
+        Update update = update(chatId, userId, "/profile_char_delete Buco stormscale Bucomonk");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
 
         bot().consume(update);
@@ -257,10 +257,24 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void routesAnUnderscoreTravelCommandWithoutSeparateCityArguments() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/road_zadar_zagreb");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(timeToGoCommandService.formatCurrent("/road zadar zagreb")).thenReturn("Travel time");
+
+        bot().consume(update);
+
+        verify(timeToGoCommandService).formatCurrent("/road zadar zagreb");
+        assertThat(sentMessage().getText()).isEqualTo("Travel time");
+    }
+
+    @Test
     void showsTheLowestTokenPriceFromTheLastWeek() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/tokenlowest week");
+        Update update = update(chatId, userId, "/token_lowest_week");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(tokenPriceHistoryService.lowestPriceSince(any(Instant.class))).thenReturn(Optional.of(
                 new TokenPricePoint(3_456_789_000L, Instant.parse("2026-08-21T08:00:00Z"))
@@ -283,7 +297,8 @@ class BlackBoxBotTest {
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).isEqualTo("Usage: /tokenlowest <week|month>");
+        assertThat(sentMessage().getText())
+                .isEqualTo("Usage: /token_lowest_week or /token_lowest_month");
         verify(tokenPriceHistoryService, never()).lowestPriceSince(any());
     }
 
@@ -291,7 +306,7 @@ class BlackBoxBotTest {
     void showsTheHighestTokenPriceFromTheLastMonth() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/tokenhighest month");
+        Update update = update(chatId, userId, "/token_highest_month");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(tokenPriceHistoryService.highestPriceSince(any(Instant.class))).thenReturn(Optional.of(
                 new TokenPricePoint(4_100_000_000L, Instant.parse("2026-08-20T18:00:00Z"))
@@ -309,7 +324,7 @@ class BlackBoxBotTest {
     void showsTheBestRecurringHoursForBuyingAndSellingTokens() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/tokenbest");
+        Update update = update(chatId, userId, "/token_best");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(tokenPriceHistoryService.bestTradingHoursSince(any(Instant.class), any(ZoneId.class)))
                 .thenReturn(Optional.of(new TokenTradingHours(
@@ -350,7 +365,7 @@ class BlackBoxBotTest {
         long chatId = 123L;
         long userId = 456L;
         TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
-        Update update = update(chatId, userId, "/title01");
+        Update update = update(chatId, userId, "/title_01");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(trackedPlayerService.titleZeroPointOneWatchPlayer()).thenReturn(Optional.of(player));
         when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
@@ -367,7 +382,7 @@ class BlackBoxBotTest {
     void letsTheAdminViewMPlusCollectionStatus() throws Exception {
         long chatId = 123L;
         long adminId = 999L;
-        Update update = update(chatId, adminId, "/mplus status");
+        Update update = update(chatId, adminId, "/mplus_status");
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
         when(mplusDataCollectionService.statusMessage()).thenReturn("M+ collection status");
         when(warcraftLogsStatisticsService.seasonKey()).thenReturn("season-mn-2");
@@ -383,7 +398,7 @@ class BlackBoxBotTest {
     void preventsARegularUserFromViewingMPlusCollectionStatus() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus status");
+        Update update = update(chatId, userId, "/mplus_status");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
 
         bot().consume(update);
@@ -396,7 +411,7 @@ class BlackBoxBotTest {
     void showsTheRequestingUsersMPlusProgress() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus@BlackBoxBot progress me");
+        Update update = update(chatId, userId, "/mplus_progress@BlackBoxBot me");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(mplusProgressService.progressMessage("me", userId)).thenReturn("Personal M+ progress");
 
@@ -410,7 +425,7 @@ class BlackBoxBotTest {
     void showsTheRequestingUsersDungeonCoverage() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus dungeons");
+        Update update = update(chatId, userId, "/mplus_dungeons");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(mplusDungeonVaultService.dungeonCoverageMessage("", userId))
                 .thenReturn("Dungeon coverage");
@@ -425,7 +440,7 @@ class BlackBoxBotTest {
     void showsAProfilesCurrentWeekVault() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus vault Lazo");
+        Update update = update(chatId, userId, "/mplus_vault Lazo");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(mplusDungeonVaultService.currentVaultMessage("Lazo", userId))
                 .thenReturn("Current vault progress");
@@ -440,7 +455,7 @@ class BlackBoxBotTest {
     void showsAProfilesObservedMPlusHighlights() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus highlights Buco");
+        Update update = update(chatId, userId, "/mplus_highlights Buco");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(mplusPerformanceService.highlightsMessage("Buco", userId)).thenReturn("M+ highlights");
 
@@ -454,7 +469,7 @@ class BlackBoxBotTest {
     void routesTheUnifiedMPlusCommandToItsRequestedView() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        Update update = update(chatId, userId, "/mplus consistency Buco");
+        Update update = update(chatId, userId, "/mplus_consistency Buco");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(mplusAdvancedService.consistencyMessage("Buco", userId)).thenReturn("Consistency result");
 

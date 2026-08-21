@@ -96,7 +96,7 @@ public class MPlusPerformanceService {
         appendDurationAverage(message, "Average time remaining", timedRuns, true);
         appendDurationAverage(message, "Average overtime", depletedRuns, false);
         return message.append("Deaths and clean-run coverage: unavailable until a run is matched to Warcraft Logs.\n")
-                .append("Use /mplus combat for the existing log-only aggregates.")
+                .append("Use /mplus_combat for the existing log-only aggregates.")
                 .toString();
     }
 

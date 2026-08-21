@@ -78,6 +78,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             "Telegram user information is unavailable for this message.";
     private static final String PROFILE_PREFIX = "Profile ";
     private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
+    private static final String TOKEN_LOWEST_WEEK_COMMAND = "/token_lowest_week";
+    private static final String TOKEN_LOWEST_MONTH_COMMAND = "/token_lowest_month";
+    private static final String TOKEN_HIGHEST_WEEK_COMMAND = "/token_highest_week";
+    private static final String TOKEN_HIGHEST_MONTH_COMMAND = "/token_highest_month";
+    private static final String TOKEN_BEST_COMMAND = "/token_best";
     private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
     private static final DateTimeFormatter TOKEN_HISTORY_TIME_FORMATTER = DateTimeFormatter.ofPattern(
             "d MMM uuuu, HH:mm z",
@@ -278,8 +283,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+", 3);
         if (parts.length < 2) {
             send(context.chatId(), """
-                    Usage: /useradd <telegramUserId> [display name]
-                    Example: /useradd 123456789 Alice
+                    Usage: /user_add <telegramUserId> [display name]
+                    Example: /user_add 123456789 Alice
                     """.strip());
             return;
         }
@@ -299,15 +304,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void changeTelegramUserStatus(CommandContext context) {
         String[] parts = context.text().split("\\s+");
+        boolean active = context.command().equals("/userenable");
         if (parts.length != 2) {
-            send(context.chatId(), "Usage: " + context.command() + " <telegramUserId>");
+            send(context.chatId(), "Usage: " + (active ? "/user_enable" : "/user_disable")
+                    + " <telegramUserId>");
             return;
         }
         Long telegramUserId = parsePositiveTelegramUserId(parts[1], context.chatId());
         if (telegramUserId == null) {
             return;
         }
-        boolean active = context.command().equals("/userenable");
         try {
             telegramBotUserService.setActive(telegramUserId, active);
             telegramAccessPolicy.userAccessChanged(telegramUserId);
@@ -387,18 +393,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static String mplusHelpMessage() {
         return """
                 M+ commands:
-                /mplus progress [profile]
-                /mplus dungeons [profile]
-                /mplus vault [profile] — current week only
-                /mplus performance [profile]
-                /mplus highlights [profile]
-                /mplus team [profile]
-                /mplus pair <profile-a> <profile-b>
-                /mplus consistency [profile]
-                /mplus awards
-                /mplus coverage [profile]
-                /mplus combat [profile]
-                /mplus status — admin only
+                /mplus_progress [profile]
+                /mplus_dungeons [profile]
+                /mplus_vault [profile] — current week only
+                /mplus_performance [profile]
+                /mplus_highlights [profile]
+                /mplus_team [profile]
+                /mplus_pair <profile-a> <profile-b>
+                /mplus_consistency [profile]
+                /mplus_awards
+                /mplus_coverage [profile]
+                /mplus_combat [profile]
+                /mplus_status — admin only
                 """.strip();
     }
 
@@ -417,8 +423,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 3) {
             send(context.chatId(), """
-                    Usage: /profilemain <realm> <character>
-                    Example: /profilemain stormscale Alicemage
+                    Usage: /profile_main <realm> <character>
+                    Example: /profile_main stormscale Alicemage
                     """.strip());
             return;
         }
@@ -468,8 +474,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 5) {
             send(context.chatId(), """
-                    Usage: /profileadd <profile> <region> <realm> <character>
-                    Example: /profileadd Alice eu stormscale Alicechar
+                    Usage: /profile_add <profile> <region> <realm> <character>
+                    Example: /profile_add Alice eu stormscale Alicechar
                     """.strip());
             return;
         }
@@ -485,8 +491,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
             send(context.chatId(), """
-                    Usage: /profilecharadd <profile> <realm> <character>
-                    Example: /profilecharadd Alice stormscale Alicemage
+                    Usage: /profile_char_add <profile> <realm> <character>
+                    Example: /profile_char_add Alice stormscale Alicemage
                     """.strip());
             return;
         }
@@ -502,8 +508,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
             send(context.chatId(), """
-                    Usage: /profilechardelete <profile> <realm> <character>
-                    Example: /profilechardelete Alice stormscale Alicealt
+                    Usage: /profile_char_delete <profile> <realm> <character>
+                    Example: /profile_char_delete Alice stormscale Alicealt
                     """.strip());
             return;
         }
@@ -519,8 +525,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 3) {
             send(context.chatId(), """
-                    Usage: /profilelink <telegramUserId> <profile>
-                    Example: /profilelink 123456789 Alice
+                    Usage: /profile_link <telegramUserId> <profile>
+                    Example: /profile_link 123456789 Alice
                     """.strip());
             return;
         }
@@ -540,7 +546,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void unlinkProfile(CommandContext context) {
         String[] parts = context.text().split("\\s+");
         if (parts.length != 2) {
-            send(context.chatId(), "Usage: /profileunlink <profile>");
+            send(context.chatId(), "Usage: /profile_unlink <profile>");
             return;
         }
         try {
@@ -555,8 +561,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 5) {
             send(context.chatId(), """
-                    Usage: /profileswitch <profile> <region> <realm> <character>
-                    Example: /profileswitch Alice eu tarren-mill Alicealt
+                    Usage: /profile_switch <profile> <region> <realm> <character>
+                    Example: /profile_switch Alice eu tarren-mill Alicealt
                     """.strip());
             return;
         }
@@ -571,11 +577,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void changeProfileStatus(CommandContext context) {
         String[] parts = context.text().split("\\s+");
+        boolean active = context.command().equals("/profileenable");
         if (parts.length != 2) {
-            send(context.chatId(), "Usage: " + context.command() + " <profile>");
+            send(context.chatId(), "Usage: " + (active ? "/profile_enable" : "/profile_disable")
+                    + " <profile>");
             return;
         }
-        boolean active = context.command().equals("/profileenable");
         try {
             trackedPlayerService.setProfileActive(parts[1], active);
             send(context.chatId(), PROFILE_PREFIX + parts[1] + (active ? " enabled." : " disabled."));
@@ -668,6 +675,28 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/price" -> handled(() -> handlePrice(context));
             case "/priceah" -> handled(() -> handleAuctionHousePrice(context));
             case "/token" -> handled(() -> handleTokenPrice(context.chatId()));
+            case TOKEN_LOWEST_WEEK_COMMAND -> handled(() -> handleTokenPriceExtreme(
+                    context,
+                    TokenPriceExtreme.LOWEST,
+                    TokenHistoryPeriod.WEEK
+            ));
+            case TOKEN_LOWEST_MONTH_COMMAND -> handled(() -> handleTokenPriceExtreme(
+                    context,
+                    TokenPriceExtreme.LOWEST,
+                    TokenHistoryPeriod.MONTH
+            ));
+            case TOKEN_HIGHEST_WEEK_COMMAND -> handled(() -> handleTokenPriceExtreme(
+                    context,
+                    TokenPriceExtreme.HIGHEST,
+                    TokenHistoryPeriod.WEEK
+            ));
+            case TOKEN_HIGHEST_MONTH_COMMAND -> handled(() -> handleTokenPriceExtreme(
+                    context,
+                    TokenPriceExtreme.HIGHEST,
+                    TokenHistoryPeriod.MONTH
+            ));
+            case TOKEN_BEST_COMMAND -> handled(() -> handleBestTokenTradingHours(context));
+            // Compatibility aliases for previously published commands.
             case "/tokenlowest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.LOWEST));
             case "/tokenhighest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.HIGHEST));
             case "/tokenbest" -> handled(() -> handleBestTokenTradingHours(context));
@@ -746,8 +775,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length != 4) {
             send(context.chatId(), """
-                    Usage: /priceah <connectedRealmId> <auctionHouseId> <itemId>
-                    Example: /priceah 1080 2 72092
+                    Usage: /price_ah <connectedRealmId> <auctionHouseId> <itemId>
+                    Example: /price_ah 1080 2 72092
                     """.strip());
             return;
         }
@@ -756,7 +785,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         Long auctionHouseId = parseLong(parts[2]);
         Long itemId = parseLong(parts[3]);
         if (connectedRealmId == null || auctionHouseId == null || itemId == null) {
-            send(context.chatId(), "Invalid numbers. Example: /priceah 1080 2 72092");
+            send(context.chatId(), "Invalid numbers. Example: /price_ah 1080 2 72092");
             return;
         }
 
@@ -784,33 +813,35 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void handleTokenPriceExtreme(CommandContext context, TokenPriceExtreme extreme) {
         String requestedPeriod = commandArguments(context).toLowerCase(Locale.ROOT);
-        Duration lookback;
-        String periodLabel;
         switch (requestedPeriod) {
-            case "week" -> {
-                lookback = Duration.ofDays(7);
-                periodLabel = "last week";
-            }
-            case "month" -> {
-                lookback = TOKEN_MONTH_LOOKBACK;
-                periodLabel = TOKEN_MONTH_LABEL;
-            }
+            case "week" -> handleTokenPriceExtreme(context, extreme, TokenHistoryPeriod.WEEK);
+            case "month" -> handleTokenPriceExtreme(context, extreme, TokenHistoryPeriod.MONTH);
             default -> {
-                send(context.chatId(), "Usage: /token" + extreme.commandSuffix() + " <week|month>");
-                return;
+                send(context.chatId(), extreme.usageMessage());
             }
+        }
+    }
+
+    private void handleTokenPriceExtreme(
+            CommandContext context,
+            TokenPriceExtreme extreme,
+            TokenHistoryPeriod period
+    ) {
+        if (!commandArguments(context).isBlank() && context.command().contains("_")) {
+            send(context.chatId(), "Usage: " + extreme.commandFor(period));
+            return;
         }
 
         try {
-            Instant capturedAt = Instant.now().minus(lookback);
+            Instant capturedAt = Instant.now().minus(period.lookback());
             var price = extreme == TokenPriceExtreme.LOWEST
                     ? tokenPriceHistoryService.lowestPriceSince(capturedAt)
                     : tokenPriceHistoryService.highestPriceSince(capturedAt);
             if (price.isEmpty()) {
-                send(context.chatId(), "No saved WoW Token prices for the " + periodLabel + " yet.");
+                send(context.chatId(), "No saved WoW Token prices for the " + period.label() + " yet.");
                 return;
             }
-            send(context.chatId(), formatTokenPriceExtreme(price.get(), periodLabel, extreme));
+            send(context.chatId(), formatTokenPriceExtreme(price.get(), period.label(), extreme));
         } catch (RuntimeException _) {
             send(context.chatId(), "Could not read the WoW Token price history.");
         }
@@ -831,7 +862,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void handleBestTokenTradingHours(CommandContext context) {
         if (!commandArguments(context).isBlank()) {
-            send(context.chatId(), "Usage: /tokenbest");
+            send(context.chatId(), "Usage: " + TOKEN_BEST_COMMAND);
             return;
         }
         try {
@@ -870,8 +901,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String[] parts = context.text().split("\\s+");
         if (parts.length < 3) {
             send(context.chatId(), """
-                    Usage: /mount-achiv <realm> <name>
-                    Example: /mount-achiv stormscale bucothered
+                    Usage: /mount_achievement <realm> <name>
+                    Example: /mount_achievement stormscale bucothered
                     """.strip());
             return;
         }
@@ -1026,30 +1057,32 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         // Public help deliberately omits administration and TomTom commands.
         return """
                 Commands:
-                /myid
+                /my_id
                 /profile
-                /profile-help
-                /profilemain <realm> <character>
+                /profile_help
+                /profile_main <realm> <character>
                 /mains
-                /mplus — all Mythic+ tracking and combat commands
+                /mplus — list all Mythic+ commands
                 /rio <region> <realm> <name>
                 /vault
                 /title
-                /title01
-                /seasonrecap
-                /seasonrecapdepleted
-                /seasonrecapabandoned
+                /title_01
+                /season_recap
+                /season_recap_depleted
+                /season_recap_abandoned
                 /affixes
                 /guild
-                /guildlist
+                /guild_list
                 /rwf
-                /mount-achiv <realm> <name>
+                /mount_achievement <realm> <name>
                 /price <itemId|item name> [realm-if-itemId]
-                /priceah <connectedRealmId> <auctionHouseId> <itemId>
+                /price_ah <connectedRealmId> <auctionHouseId> <itemId>
                 /token
-                /tokenlowest <week|month>
-                /tokenhighest <week|month>
-                /tokenbest
+                /token_lowest_week
+                /token_lowest_month
+                /token_highest_week
+                /token_highest_month
+                /token_best
                 /ores
                 /herbs
                 """.strip();
@@ -1059,49 +1092,54 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return """
                 All commands:
                 /help
-                /myid
-                /groupid
+                /help_admin
+                /my_id
+                /group_id
                 /users
-                /useradd <telegramUserId> [display name]
-                /userdisable <telegramUserId>
-                /userenable <telegramUserId>
+                /user_add <telegramUserId> [display name]
+                /user_disable <telegramUserId>
+                /user_enable <telegramUserId>
                 /profile
-                /profile-help
-                /profilemain <realm> <character>
+                /profile_help
+                /profile_main <realm> <character>
                 /mains
                 /profiles
-                /mplus — all Mythic+ commands, including admin status
-                /profileadd <profile> <region> <realm> <character>
-                /profilecharadd <profile> <realm> <character>
-                /profilechardelete <profile> <realm> <character>
-                /profilelink <telegramUserId> <profile>
-                /profileunlink <profile>
-                /profileswitch <profile> <region> <realm> <character>
-                /profiledisable <profile>
-                /profileenable <profile>
-                /vaultremindernow
+                /mplus — list all Mythic+ commands, including admin status
+                /profile_add <profile> <region> <realm> <character>
+                /profile_char_add <profile> <realm> <character>
+                /profile_char_delete <profile> <realm> <character>
+                /profile_link <telegramUserId> <profile>
+                /profile_unlink <profile>
+                /profile_switch <profile> <region> <realm> <character>
+                /profile_disable <profile>
+                /profile_enable <profile>
+                /vault_reminder_now
                 /rio <region> <realm> <name>
                 /vault
                 /title
-                /title01
-                /seasonrecap
-                /seasonrecapdepleted
-                /seasonrecapabandoned
+                /title_01
+                /season_recap
+                /season_recap_depleted
+                /season_recap_abandoned
                 /affixes
                 /guild
-                /guildlist
+                /guild_list
                 /rwf
-                /road [zadar zagreb|zagreb zadar]
-                /roadbest [zadar zagreb|zagreb zadar]
-                /timetogoimport30
-                /timetogoimportstatus
-                /mount-achiv <realm> <name>
+                /road_zadar_zagreb
+                /road_zagreb_zadar
+                /road_best_zadar_zagreb
+                /road_best_zagreb_zadar
+                /time_to_go_import_30
+                /time_to_go_import_status
+                /mount_achievement <realm> <name>
                 /price <itemId|item name> [realm-if-itemId]
-                /priceah <connectedRealmId> <auctionHouseId> <itemId>
+                /price_ah <connectedRealmId> <auctionHouseId> <itemId>
                 /token
-                /tokenlowest <week|month>
-                /tokenhighest <week|month>
-                /tokenbest
+                /token_lowest_week
+                /token_lowest_month
+                /token_highest_week
+                /token_highest_month
+                /token_best
                 /ores
                 /herbs
                 """.strip();
@@ -1143,7 +1181,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private String formatTelegramUsers() {
         var users = telegramBotUserService.users();
         if (users.isEmpty()) {
-            return "No Telegram users are registered. Use /useradd <telegramUserId> [display name].";
+            return "No Telegram users are registered. Use /user_add <telegramUserId> [display name].";
         }
 
         StringBuilder sb = new StringBuilder("Telegram bot users\n");
@@ -1168,7 +1206,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private String adminOnlyMessage() {
         if (adminUserId <= 0) {
             return "Profile management is disabled because TELEGRAM_ADMIN_USER_ID is not configured. "
-                    + "Send /myid, then add that numeric user ID to the server .env.";
+                    + "Send /my_id, then add that numeric user ID to the server .env.";
         }
         return "This command can only be used by the configured bot administrator.";
     }
@@ -1181,13 +1219,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /profile
 
                 Select one of your registered EU Retail characters as your main:
-                /profilemain <realm> <character>
-                Example: /profilemain stormscale Alicemage
+                /profile_main <realm> <character>
+                Example: /profile_main stormscale Alicemage
 
                 View all current group mains:
                 /mains
 
-                Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus combat follows each profile's selected main.
+                Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus_combat follows each profile's selected main.
                 """.strip();
     }
 
@@ -1757,8 +1795,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (message.contains("404")) {
             return """
                     Mount progression not found for %s on %s (EU).
-                    Use: /mount-achiv <realm> <name>
-                    Example: /mount-achiv stormscale bucothered
+                    Use: /mount_achievement <realm> <name>
+                    Example: /mount_achievement stormscale bucothered
                     Also check that the character exists on EU and has logged out recently.
                     """.formatted(name, realm).strip();
         }
@@ -1918,23 +1956,50 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private enum TokenPriceExtreme {
-        LOWEST("lowest", "Lowest"),
-        HIGHEST("highest", "Highest");
+        LOWEST("Lowest", TOKEN_LOWEST_WEEK_COMMAND, TOKEN_LOWEST_MONTH_COMMAND),
+        HIGHEST("Highest", TOKEN_HIGHEST_WEEK_COMMAND, TOKEN_HIGHEST_MONTH_COMMAND);
 
-        private final String commandSuffix;
         private final String displayName;
+        private final String weekCommand;
+        private final String monthCommand;
 
-        TokenPriceExtreme(String commandSuffix, String displayName) {
-            this.commandSuffix = commandSuffix;
+        TokenPriceExtreme(String displayName, String weekCommand, String monthCommand) {
             this.displayName = displayName;
+            this.weekCommand = weekCommand;
+            this.monthCommand = monthCommand;
         }
 
-        String commandSuffix() {
-            return commandSuffix;
+        String commandFor(TokenHistoryPeriod period) {
+            return period == TokenHistoryPeriod.WEEK ? weekCommand : monthCommand;
+        }
+
+        String usageMessage() {
+            return "Usage: " + weekCommand + " or " + monthCommand;
         }
 
         String displayName() {
             return displayName;
+        }
+    }
+
+    private enum TokenHistoryPeriod {
+        WEEK(Duration.ofDays(7), "last week"),
+        MONTH(TOKEN_MONTH_LOOKBACK, TOKEN_MONTH_LABEL);
+
+        private final Duration lookback;
+        private final String label;
+
+        TokenHistoryPeriod(Duration lookback, String label) {
+            this.lookback = lookback;
+            this.label = label;
+        }
+
+        Duration lookback() {
+            return lookback;
+        }
+
+        String label() {
+            return label;
         }
     }
 
@@ -2002,16 +2067,56 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             }
 
             String text = update.getMessage().getText().trim();
-            String command = text.split("\\s+")[0];
+            String[] commandAndArguments = text.split("\\s+", 2);
+            String command = commandAndArguments[0];
             int mentionSeparator = command.indexOf('@');
             if (mentionSeparator >= 0) {
                 command = command.substring(0, mentionSeparator);
+            }
+            String arguments = commandAndArguments.length == 2 ? commandAndArguments[1] : "";
+            NormalizedCommand normalized = normalizeSnakeCaseCommand(command);
+            if (normalized != null) {
+                command = normalized.routedCommand();
+                text = normalized.rewrittenPrefix() + (arguments.isBlank() ? "" : " " + arguments);
             }
 
             Long senderUserId = update.getMessage().getFrom() == null
                     ? null
                     : update.getMessage().getFrom().getId();
             return new CommandContext(update, update.getMessage().getChatId(), senderUserId, text, command);
+        }
+
+        private static NormalizedCommand normalizeSnakeCaseCommand(String command) {
+            if (!command.contains("_") || command.startsWith("/token_")) {
+                return null;
+            }
+            if (command.startsWith("/mplus_")) {
+                String section = command.substring("/mplus_".length());
+                return new NormalizedCommand("/mplus", "/mplus " + section);
+            }
+            return switch (command) {
+                case "/profile_help" -> NormalizedCommand.direct("/profile-help");
+                case "/help_admin" -> NormalizedCommand.direct("/help-admin");
+                case "/mount_achievement" -> NormalizedCommand.direct("/mount-achiv");
+                case "/road_zadar_zagreb" -> new NormalizedCommand("/road", "/road zadar zagreb");
+                case "/road_zagreb_zadar" -> new NormalizedCommand("/road", "/road zagreb zadar");
+                case "/road_best_zadar_zagreb" -> new NormalizedCommand(
+                        "/roadbest",
+                        "/roadbest zadar zagreb"
+                );
+                case "/road_best_zagreb_zadar" -> new NormalizedCommand(
+                        "/roadbest",
+                        "/roadbest zagreb zadar"
+                );
+                default -> NormalizedCommand.direct(command.replace("_", ""));
+            };
+        }
+    }
+
+    private record NormalizedCommand(String routedCommand, String rewrittenPrefix) {
+
+        private static NormalizedCommand direct(String command) {
+            return new NormalizedCommand(command, command);
         }
     }
 

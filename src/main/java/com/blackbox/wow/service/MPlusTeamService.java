@@ -72,7 +72,7 @@ public class MPlusTeamService {
     public String pairMessage(String arguments) {
         String[] profileNames = arguments == null ? new String[0] : arguments.trim().split("\\s+");
         if (profileNames.length != 2) {
-            return "Usage: /mplus pair <profile-a> <profile-b>";
+            return "Usage: /mplus_pair <profile-a> <profile-b>";
         }
         Map<String, TrackedPlayer> activePlayers = trackedPlayerService.activePlayers().stream()
                 .collect(Collectors.toMap(
