@@ -24,6 +24,10 @@ import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.VaultReminderService;
+import com.blackbox.wow.service.WowTokenPriceHistoryService;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenHourAverage;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenPricePoint;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenTradingHours;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -37,10 +41,13 @@ import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,6 +61,7 @@ class BlackBoxBotTest {
     @Mock private RaiderIoDefaultGuildProperties defaultGuildProperties;
     @Mock private WowWatchlistProperties watchlistProperties;
     @Mock private BlizzardAuctionService auctionService;
+    @Mock private WowTokenPriceHistoryService tokenPriceHistoryService;
     @Mock private BlizzardItemService itemService;
     @Mock private BlizzardMountService mountService;
     @Mock private TimeToGoCommandService timeToGoCommandService;
@@ -249,6 +257,77 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void showsTheLowestTokenPriceFromTheLastWeek() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/tokenlowest week");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(tokenPriceHistoryService.lowestPriceSince(any(Instant.class))).thenReturn(Optional.of(
+                new TokenPricePoint(3_456_789_000L, Instant.parse("2026-08-21T08:00:00Z"))
+        ));
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).isEqualTo("""
+                Lowest WoW Token price (EU) in the last week: 345678g 90s
+                Date: 21 Aug 2026, 10:00 CEST
+                """.strip());
+    }
+
+    @Test
+    void explainsTheSupportedTokenHistoryPeriods() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/tokenlowest year");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).isEqualTo("Usage: /tokenlowest <week|month>");
+        verify(tokenPriceHistoryService, never()).lowestPriceSince(any());
+    }
+
+    @Test
+    void showsTheHighestTokenPriceFromTheLastMonth() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/tokenhighest month");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(tokenPriceHistoryService.highestPriceSince(any(Instant.class))).thenReturn(Optional.of(
+                new TokenPricePoint(4_100_000_000L, Instant.parse("2026-08-20T18:00:00Z"))
+        ));
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).isEqualTo("""
+                Highest WoW Token price (EU) in the last 30 days: 410000g 0s
+                Date: 20 Aug 2026, 20:00 CEST
+                """.strip());
+    }
+
+    @Test
+    void showsTheBestRecurringHoursForBuyingAndSellingTokens() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/tokenbest");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(tokenPriceHistoryService.bestTradingHoursSince(any(Instant.class), any(ZoneId.class)))
+                .thenReturn(Optional.of(new TokenTradingHours(
+                        new TokenHourAverage(4, 3_200_000_000L, 28),
+                        new TokenHourAverage(20, 3_600_000_000L, 29)
+                )));
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText()).isEqualTo("""
+                Best recurring WoW Token times (EU, last 30 days; Europe/Zagreb):
+                Buy with gold: 04:00–04:59 — avg 320000g 0s (28 samples)
+                Sell for gold: 20:00–20:59 — avg 360000g 0s (29 samples)
+                Based on hourly averages; historical patterns do not guarantee future prices.
+                """.strip());
+    }
+
+    @Test
     void reportsUnavailableTitleWatchWhenRaiderIoOmitsTheCutoffScore() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -394,6 +473,7 @@ class BlackBoxBotTest {
                 defaultGuildProperties,
                 watchlistProperties,
                 auctionService,
+                tokenPriceHistoryService,
                 itemService,
                 mountService,
                 timeToGoCommandService,

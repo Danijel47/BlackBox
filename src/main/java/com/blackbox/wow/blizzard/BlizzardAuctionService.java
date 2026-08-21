@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -118,12 +119,20 @@ public class BlizzardAuctionService {
     }
 
     public PriceResult getWowTokenPrice() {
+        return getWowTokenPriceSnapshot().price();
+    }
+
+    public WowTokenPriceSnapshot getWowTokenPriceSnapshot() {
         JsonNode data = api.get("/data/wow/token/index", null, api.defaultQuery());
+        return parseWowTokenPriceSnapshot(data);
+    }
+
+    static WowTokenPriceSnapshot parseWowTokenPriceSnapshot(JsonNode data) {
         long price = data.path("price").asLong(0);
-        if (price <= 0) {
-            return PriceResult.notAvailable();
-        }
-        return PriceResult.fromCopper(price);
+        PriceResult priceResult = price > 0 ? PriceResult.fromCopper(price) : PriceResult.notAvailable();
+        long sourceTimestamp = data.path("last_updated_timestamp").asLong(0);
+        Instant sourceUpdatedAt = sourceTimestamp > 0 ? Instant.ofEpochMilli(sourceTimestamp) : null;
+        return new WowTokenPriceSnapshot(priceResult, sourceUpdatedAt);
     }
 
     private Long resolveConnectedRealmId(String realmSlug) {
@@ -169,9 +178,12 @@ public class BlizzardAuctionService {
 
         static PriceResult fromCopper(long avgCopper) {
             long gold = avgCopper / 10_000;
-            long silver = (avgCopper % 10_000) / 100;
+            long silver = avgCopper % 10_000 / 100;
             long copper = avgCopper % 100;
             return new PriceResult(true, avgCopper, gold, silver, copper);
         }
+    }
+
+    public record WowTokenPriceSnapshot(PriceResult price, Instant sourceUpdatedAt) {
     }
 }

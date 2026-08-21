@@ -24,6 +24,10 @@ import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.VaultReminderService;
+import com.blackbox.wow.service.WowTokenPriceHistoryService;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenHourAverage;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenPricePoint;
+import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenTradingHours;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
@@ -68,11 +72,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final Duration TITLE_PREDICTION_CACHE_TTL = Duration.ofMinutes(30);
     private static final Duration SEASON_RECAP_CACHE_TTL = Duration.ofHours(24);
     private static final Duration FAILED_SEASON_RECAP_CACHE_TTL = Duration.ofMinutes(10);
+    private static final Duration TOKEN_MONTH_LOOKBACK = Duration.ofDays(30);
+    private static final String TOKEN_MONTH_LABEL = "last 30 days";
     private static final String TELEGRAM_USER_UNAVAILABLE =
             "Telegram user information is unavailable for this message.";
     private static final String PROFILE_PREFIX = "Profile ";
     private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
     private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
+    private static final DateTimeFormatter TOKEN_HISTORY_TIME_FORMATTER = DateTimeFormatter.ofPattern(
+            "d MMM uuuu, HH:mm z",
+            Locale.ENGLISH
+    );
     private static final List<String> PEON_WORK_MESSAGES = List.of(
             "Work, work... fetching the data. 🛠️",
             "Zug zug! The peon is checking. 🔎",
@@ -101,6 +111,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final RaiderIoDefaultGuildProperties defaultGuildProps;
     private final WowWatchlistProperties watchlistProps;
     private final BlizzardAuctionService auctionService;
+    private final WowTokenPriceHistoryService tokenPriceHistoryService;
     private final BlizzardItemService itemService;
     private final BlizzardMountService mountService;
     private final TimeToGoCommandService timeToGoCommands;
@@ -140,6 +151,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             RaiderIoDefaultGuildProperties defaultGuildProps,
             WowWatchlistProperties watchlistProps,
             BlizzardAuctionService auctionService,
+            WowTokenPriceHistoryService tokenPriceHistoryService,
             BlizzardItemService itemService,
             BlizzardMountService mountService,
             TimeToGoCommandService timeToGoCommands,
@@ -166,6 +178,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.defaultGuildProps = defaultGuildProps;
         this.watchlistProps = watchlistProps;
         this.auctionService = auctionService;
+        this.tokenPriceHistoryService = tokenPriceHistoryService;
         this.itemService = itemService;
         this.mountService = mountService;
         this.timeToGoCommands = timeToGoCommands;
@@ -655,6 +668,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/price" -> handled(() -> handlePrice(context));
             case "/priceah" -> handled(() -> handleAuctionHousePrice(context));
             case "/token" -> handled(() -> handleTokenPrice(context.chatId()));
+            case "/tokenlowest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.LOWEST));
+            case "/tokenhighest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.HIGHEST));
+            case "/tokenbest" -> handled(() -> handleBestTokenTradingHours(context));
             case "/mount-achiv" -> handled(() -> handleMountAchievement(context));
             case "/ores", "/ore" -> handled(() -> send(
                     context.chatId(),
@@ -764,6 +780,90 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         } catch (Exception e) {
             send(chatId, "Blizzard token lookup failed: " + e.getMessage());
         }
+    }
+
+    private void handleTokenPriceExtreme(CommandContext context, TokenPriceExtreme extreme) {
+        String requestedPeriod = commandArguments(context).toLowerCase(Locale.ROOT);
+        Duration lookback;
+        String periodLabel;
+        switch (requestedPeriod) {
+            case "week" -> {
+                lookback = Duration.ofDays(7);
+                periodLabel = "last week";
+            }
+            case "month" -> {
+                lookback = TOKEN_MONTH_LOOKBACK;
+                periodLabel = TOKEN_MONTH_LABEL;
+            }
+            default -> {
+                send(context.chatId(), "Usage: /token" + extreme.commandSuffix() + " <week|month>");
+                return;
+            }
+        }
+
+        try {
+            Instant capturedAt = Instant.now().minus(lookback);
+            var price = extreme == TokenPriceExtreme.LOWEST
+                    ? tokenPriceHistoryService.lowestPriceSince(capturedAt)
+                    : tokenPriceHistoryService.highestPriceSince(capturedAt);
+            if (price.isEmpty()) {
+                send(context.chatId(), "No saved WoW Token prices for the " + periodLabel + " yet.");
+                return;
+            }
+            send(context.chatId(), formatTokenPriceExtreme(price.get(), periodLabel, extreme));
+        } catch (RuntimeException _) {
+            send(context.chatId(), "Could not read the WoW Token price history.");
+        }
+    }
+
+    private static String formatTokenPriceExtreme(
+            TokenPricePoint price,
+            String periodLabel,
+            TokenPriceExtreme extreme
+    ) {
+        String priceTime = price.priceAt()
+                .atZone(ZAGREB_ZONE)
+                .format(TOKEN_HISTORY_TIME_FORMATTER);
+        return extreme.displayName() + " WoW Token price (EU) in the " + periodLabel + ": "
+                + formatCopper(price.priceCopper())
+                + "\nDate: " + priceTime;
+    }
+
+    private void handleBestTokenTradingHours(CommandContext context) {
+        if (!commandArguments(context).isBlank()) {
+            send(context.chatId(), "Usage: /tokenbest");
+            return;
+        }
+        try {
+            var tradingHours = tokenPriceHistoryService.bestTradingHoursSince(
+                    Instant.now().minus(TOKEN_MONTH_LOOKBACK),
+                    ZAGREB_ZONE
+            );
+            if (tradingHours.isEmpty()) {
+                send(context.chatId(), "Not enough WoW Token history yet. Each hour needs at least "
+                        + WowTokenPriceHistoryService.MINIMUM_SAMPLES_PER_HOUR + " samples.");
+                return;
+            }
+            send(context.chatId(), formatBestTokenTradingHours(tradingHours.get()));
+        } catch (RuntimeException _) {
+            send(context.chatId(), "Could not analyze the WoW Token price history.");
+        }
+    }
+
+    private static String formatBestTokenTradingHours(TokenTradingHours tradingHours) {
+        return "Best recurring WoW Token times (EU, " + TOKEN_MONTH_LABEL + "; Europe/Zagreb):\n"
+                + "Buy with gold: " + formatTokenHour(tradingHours.buy()) + "\n"
+                + "Sell for gold: " + formatTokenHour(tradingHours.sell())
+                + "\nBased on hourly averages; historical patterns do not guarantee future prices.";
+    }
+
+    private static String formatTokenHour(TokenHourAverage hour) {
+        return "%02d:00–%02d:59 — avg %s (%d samples)".formatted(
+                hour.hour(),
+                hour.hour(),
+                formatCopper(hour.averageCopper()),
+                hour.sampleCount()
+        );
     }
 
     private void handleMountAchievement(CommandContext context) {
@@ -947,6 +1047,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /price <itemId|item name> [realm-if-itemId]
                 /priceah <connectedRealmId> <auctionHouseId> <itemId>
                 /token
+                /tokenlowest <week|month>
+                /tokenhighest <week|month>
+                /tokenbest
                 /ores
                 /herbs
                 """.strip();
@@ -996,6 +1099,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /price <itemId|item name> [realm-if-itemId]
                 /priceah <connectedRealmId> <auctionHouseId> <itemId>
                 /token
+                /tokenlowest <week|month>
+                /tokenhighest <week|month>
+                /tokenbest
                 /ores
                 /herbs
                 """.strip();
@@ -1809,6 +1915,27 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         long gold = copper / 10_000;
         long silver = copper % 10_000 / 100;
         return gold + "g " + silver + "s";
+    }
+
+    private enum TokenPriceExtreme {
+        LOWEST("lowest", "Lowest"),
+        HIGHEST("highest", "Highest");
+
+        private final String commandSuffix;
+        private final String displayName;
+
+        TokenPriceExtreme(String commandSuffix, String displayName) {
+            this.commandSuffix = commandSuffix;
+            this.displayName = displayName;
+        }
+
+        String commandSuffix() {
+            return commandSuffix;
+        }
+
+        String displayName() {
+            return displayName;
+        }
     }
 
     private record TitleScoreDelta(BigDecimal remaining, BigDecimal above) {
