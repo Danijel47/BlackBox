@@ -403,6 +403,7 @@ public class RaiderIoClient {
                     guild.path("realm").path("name").asText("Unknown realm"),
                     guild.path("region").path("short_name").asText("World"),
                     parseBossDefeats(rankingNode.path("encountersDefeated")),
+                    parseBossProgress(rankingNode.path("encountersPulled")),
                     guild.path("path").asText("")
             ));
         }
@@ -422,6 +423,33 @@ public class RaiderIoClient {
             }
         }
         return List.copyOf(defeats);
+    }
+
+    private static List<RaidBossProgress> parseBossProgress(JsonNode progressNodes) {
+        if (!progressNodes.isArray()) {
+            return List.of();
+        }
+        List<RaidBossProgress> progress = new ArrayList<>();
+        for (JsonNode progressNode : progressNodes) {
+            String slug = progressNode.path("slug").asText("");
+            JsonNode bestPercentNode = progressNode.path("bestPercent");
+            int pullCount = Math.max(0, progressNode.path("numPulls").asInt(0));
+            if (slug.isBlank() || !bestPercentNode.isNumber() || pullCount == 0) {
+                continue;
+            }
+            BigDecimal bestPercent = bestPercentNode.decimalValue();
+            if (bestPercent.compareTo(BigDecimal.ZERO) < 0
+                    || bestPercent.compareTo(BigDecimal.valueOf(100)) > 0) {
+                continue;
+            }
+            progress.add(new RaidBossProgress(
+                    slug,
+                    progressNode.path("isDefeated").asBoolean(false),
+                    pullCount,
+                    bestPercent
+            ));
+        }
+        return List.copyOf(progress);
     }
 
     private static Instant parseInstant(String value) {
@@ -823,11 +851,15 @@ public class RaiderIoClient {
             String realm,
             String region,
             List<RaidBossDefeat> defeatedBosses,
+            List<RaidBossProgress> bossProgress,
             String guildPath
     ) {
     }
 
     public record RaidBossDefeat(String slug, Instant firstDefeatedAt) {
+    }
+
+    public record RaidBossProgress(String slug, boolean defeated, int pullCount, BigDecimal bestPercent) {
     }
 
     public record MPlusSeasonRunCounts(

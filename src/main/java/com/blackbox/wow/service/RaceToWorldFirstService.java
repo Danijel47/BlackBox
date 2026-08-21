@@ -2,6 +2,7 @@ package com.blackbox.wow.service;
 
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossDefeat;
+import com.blackbox.wow.client.RaiderIoClient.RaidBossProgress;
 import com.blackbox.wow.client.RaiderIoClient.RaidRanking;
 import com.blackbox.wow.entity.RaceToWorldFirstNotificationEntity;
 import com.blackbox.wow.properties.RaceToWorldFirstProperties;
@@ -99,9 +100,25 @@ public class RaceToWorldFirstService {
                 .append(defeatedBosses)
                 .append("/")
                 .append(properties.bossCount())
-                .append(" Mythic (")
+                .append(" Mythic");
+        appendBestPull(message, ranking.bossProgress());
+        message.append(" (")
                 .append(ranking.region())
                 .append(")\n");
+    }
+
+    private static void appendBestPull(StringBuilder message, List<RaidBossProgress> bossProgress) {
+        for (int index = bossProgress.size() - 1; index >= 0; index--) {
+            RaidBossProgress progress = bossProgress.get(index);
+            if (!progress.defeated()) {
+                message.append(" — best pull: ")
+                        .append(progress.bestPercent().stripTrailingZeros().toPlainString())
+                        .append("% (")
+                        .append(progress.pullCount())
+                        .append(progress.pullCount() == 1 ? " pull)" : " pulls)");
+                return;
+            }
+        }
     }
 
     private FirstBossKill findFirstBossKill(List<RaidRanking> rankings) {

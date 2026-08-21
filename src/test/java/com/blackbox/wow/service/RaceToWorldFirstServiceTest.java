@@ -2,6 +2,7 @@ package com.blackbox.wow.service;
 
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossDefeat;
+import com.blackbox.wow.client.RaiderIoClient.RaidBossProgress;
 import com.blackbox.wow.client.RaiderIoClient.RaidRanking;
 import com.blackbox.wow.entity.RaceToWorldFirstNotificationEntity;
 import com.blackbox.wow.properties.RaceToWorldFirstProperties;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -44,6 +46,27 @@ class RaceToWorldFirstServiceTest {
                 .contains("1. Liquid — 2/8 Mythic (US)")
                 .contains("2. Echo — 1/8 Mythic (EU)")
                 .contains("https://raider.io/raid-rankings/the-venomous-abyss/world/mythic");
+    }
+
+    @Test
+    void includesBestPullPercentageAndPullCountForTheActiveBoss() {
+        RaidRanking ranking = new RaidRanking(
+                1,
+                "Liquid",
+                "Illidan",
+                "US",
+                List.of(new RaidBossDefeat("boss-one", Instant.EPOCH)),
+                List.of(
+                        new RaidBossProgress("boss-one", true, 5, BigDecimal.ZERO),
+                        new RaidBossProgress("boss-two", false, 37, new BigDecimal("18.42"))
+                ),
+                "/guilds/path"
+        );
+        when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 5)).thenReturn(List.of(ranking));
+
+        String message = service().currentStandingsMessage();
+
+        assertThat(message).contains("1. Liquid — 1/8 Mythic — best pull: 18.42% (37 pulls) (US)");
     }
 
     @Test
@@ -134,7 +157,7 @@ class RaceToWorldFirstServiceTest {
         List<RaidBossDefeat> defeats = java.util.stream.IntStream.range(0, defeatedBosses)
                 .mapToObj(index -> new RaidBossDefeat("boss-" + index, Instant.EPOCH.plusSeconds(index)))
                 .toList();
-        return new RaidRanking(rank, guild, "Realm", region, defeats, "/guilds/path");
+        return new RaidRanking(rank, guild, "Realm", region, defeats, List.of(), "/guilds/path");
     }
 
     private static RaidRanking rankingWithFirstBossKill(
@@ -149,6 +172,7 @@ class RaceToWorldFirstServiceTest {
                 "Realm",
                 region,
                 List.of(new RaidBossDefeat("nekzali-the-soulcoiler", defeatedAt)),
+                List.of(),
                 "/guilds/path"
         );
     }

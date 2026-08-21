@@ -25,6 +25,12 @@ class RaiderIoRaidRankingParserTest {
                     "encountersDefeated": [{
                       "slug": "nekzali-the-soulcoiler",
                       "firstDefeated": "2026-08-19T15:00:00Z"
+                    }],
+                    "encountersPulled": [{
+                      "slug": "vordraka-the-deepdark",
+                      "isDefeated": false,
+                      "numPulls": 37,
+                      "bestPercent": 18.42
                     }]
                   }]
                 }
@@ -40,6 +46,12 @@ class RaiderIoRaidRankingParserTest {
             assertThat(ranking.defeatedBosses()).singleElement().satisfies(defeat -> {
                 assertThat(defeat.slug()).isEqualTo("nekzali-the-soulcoiler");
                 assertThat(defeat.firstDefeatedAt()).isEqualTo(Instant.parse("2026-08-19T15:00:00Z"));
+            });
+            assertThat(ranking.bossProgress()).singleElement().satisfies(progress -> {
+                assertThat(progress.slug()).isEqualTo("vordraka-the-deepdark");
+                assertThat(progress.defeated()).isFalse();
+                assertThat(progress.pullCount()).isEqualTo(37);
+                assertThat(progress.bestPercent()).isEqualByComparingTo("18.42");
             });
         });
     }
