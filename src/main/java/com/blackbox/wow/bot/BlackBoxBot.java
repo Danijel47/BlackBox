@@ -858,7 +858,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private static String formatTokenHour(TokenHourAverage hour) {
-        return "%02d:00–%02d:59 — avg %s (%d samples)".formatted(
+        return "%02d:00–%02d:59 — avg %s (%d daily samples)".formatted(
                 hour.hour(),
                 hour.hour(),
                 formatCopper(hour.averageCopper()),

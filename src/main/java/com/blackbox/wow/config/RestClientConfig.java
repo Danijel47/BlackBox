@@ -13,6 +13,9 @@ import java.time.Duration;
 @Configuration
 public class RestClientConfig {
 
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(15);
+
     @Bean
     @Primary
     public RestClient defaultRestClient() {
@@ -21,15 +24,7 @@ public class RestClientConfig {
 
     @Bean("raiderIoRestClient")
     public RestClient raiderIoRestClient() {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(15));
-        return RestClient.builder()
-                .baseUrl("https://raider.io")
-                .requestFactory(requestFactory)
-                .build();
+        return restClientWithTimeouts("https://raider.io");
     }
 
     @Bean("mplusTitleRestClient")
@@ -50,6 +45,25 @@ public class RestClientConfig {
     public RestClient blizzardApiRestClient(@Value("${blizzard.api-base-url}") String baseUrl) {
         return RestClient.builder()
                 .baseUrl(baseUrl)
+                .build();
+    }
+
+    @Bean("wowTokenHistoryRestClient")
+    public RestClient wowTokenHistoryRestClient(
+            @Value("${wow.token-history.backfill-base-url:https://data.wowtoken.app}") String baseUrl
+    ) {
+        return restClientWithTimeouts(baseUrl);
+    }
+
+    private static RestClient restClientWithTimeouts(String baseUrl) {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(READ_TIMEOUT);
+        return RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
                 .build();
     }
 }

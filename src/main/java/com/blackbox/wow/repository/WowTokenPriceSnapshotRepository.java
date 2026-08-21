@@ -27,4 +27,6 @@ public interface WowTokenPriceSnapshotRepository extends JpaRepository<WowTokenP
             String region,
             Instant capturedAt
     );
+
+    long countByRegionAndCapturedAtGreaterThanEqual(String region, Instant capturedAt);
 }

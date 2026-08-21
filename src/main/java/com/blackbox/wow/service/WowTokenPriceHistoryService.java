@@ -13,11 +13,14 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -73,12 +76,26 @@ public class WowTokenPriceHistoryService {
                         TOKEN_REGION,
                         capturedAt
                 );
+        Map<DailyHour, PriceTotal> dailyHours = new HashMap<>();
+        for (WowTokenPriceSnapshotEntity snapshot : snapshots) {
+            var localTimestamp = snapshot.getCapturedAt().atZone(zone);
+            DailyHour dailyHour = new DailyHour(localTimestamp.toLocalDate(), localTimestamp.getHour());
+            dailyHours.merge(
+                    dailyHour,
+                    new PriceTotal(BigInteger.valueOf(snapshot.getPriceCopper()), 1),
+                    PriceTotal::add
+            );
+        }
+
         BigInteger[] totals = new BigInteger[24];
         Arrays.fill(totals, BigInteger.ZERO);
         int[] sampleCounts = new int[24];
-        for (WowTokenPriceSnapshotEntity snapshot : snapshots) {
-            int hour = snapshot.getCapturedAt().atZone(zone).getHour();
-            totals[hour] = totals[hour].add(BigInteger.valueOf(snapshot.getPriceCopper()));
+        for (Map.Entry<DailyHour, PriceTotal> entry : dailyHours.entrySet()) {
+            int hour = entry.getKey().hour();
+            PriceTotal dailyTotal = entry.getValue();
+            totals[hour] = totals[hour].add(BigInteger.valueOf(
+                    averagePrice(dailyTotal.total(), dailyTotal.samples())
+            ));
             sampleCounts[hour]++;
         }
 
@@ -151,5 +168,15 @@ public class WowTokenPriceHistoryService {
     }
 
     public record TokenTradingHours(TokenHourAverage buy, TokenHourAverage sell) {
+    }
+
+    private record DailyHour(LocalDate date, int hour) {
+    }
+
+    private record PriceTotal(BigInteger total, int samples) {
+
+        PriceTotal add(PriceTotal other) {
+            return new PriceTotal(total.add(other.total), samples + other.samples);
+        }
     }
 }

@@ -165,7 +165,7 @@ class WowTokenPriceHistoryServiceTest {
         return new WowTokenPriceHistoryService(
                 auctionService,
                 repository,
-                new WowTokenHistoryProperties(enabled)
+                new WowTokenHistoryProperties(enabled, true)
         );
     }
 }

@@ -321,8 +321,8 @@ class BlackBoxBotTest {
 
         assertThat(sentMessage().getText()).isEqualTo("""
                 Best recurring WoW Token times (EU, last 30 days; Europe/Zagreb):
-                Buy with gold: 04:00–04:59 — avg 320000g 0s (28 samples)
-                Sell for gold: 20:00–20:59 — avg 360000g 0s (29 samples)
+                Buy with gold: 04:00–04:59 — avg 320000g 0s (28 daily samples)
+                Sell for gold: 20:00–20:59 — avg 360000g 0s (29 daily samples)
                 Based on hourly averages; historical patterns do not guarantee future prices.
                 """.strip());
     }
