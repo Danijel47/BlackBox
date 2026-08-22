@@ -36,9 +36,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
+import org.telegram.telegrambots.meta.api.objects.message.MaybeInaccessibleMessage;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.Instant;
@@ -395,6 +398,62 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void showsMPlusReportsAsInlineButtons() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update);
+
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo("Choose a Mythic+ report:");
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .contains("Progress", "Dungeons", "Vault", "Performance", "Pair", "Awards", "Combat")
+                .doesNotContain("Status");
+    }
+
+    @Test
+    void showsActiveDatabaseProfilesAfterChoosingAnMPlusReport() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered"),
+                new TrackedPlayer(12L, "Lazo", "eu", "draenor", "Lazochar")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:action:progress"));
+
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo("Choose a profile for Progress:");
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("mplus:profile:progress:11", "mplus:profile:progress:12", "mplus:menu");
+    }
+
+    @Test
+    void runsTheSelectedMPlusReportForTheChosenActiveProfile() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+        when(mplusProgressService.progressMessage("Buco", userId)).thenReturn("Buco progress");
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:profile:progress:11"));
+
+        verify(mplusProgressService).progressMessage("Buco", userId);
+        assertThat(sentMessage().getText()).isEqualTo("Buco progress");
+    }
+
+    @Test
     void preventsARegularUserFromViewingMPlusCollectionStatus() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -527,6 +586,22 @@ class BlackBoxBotTest {
         when(message.getText()).thenReturn(text);
         when(message.getChatId()).thenReturn(chatId);
         when(message.getFrom()).thenReturn(user);
+        when(user.getId()).thenReturn(userId);
+        return update;
+    }
+
+    private static Update callbackUpdate(long chatId, long userId, String data) {
+        Update update = mock(Update.class);
+        CallbackQuery callback = mock(CallbackQuery.class);
+        MaybeInaccessibleMessage message = mock(MaybeInaccessibleMessage.class);
+        User user = mock(User.class);
+        when(update.hasCallbackQuery()).thenReturn(true);
+        when(update.getCallbackQuery()).thenReturn(callback);
+        when(callback.getId()).thenReturn("callback-id");
+        when(callback.getData()).thenReturn(data);
+        when(callback.getMessage()).thenReturn(message);
+        when(callback.getFrom()).thenReturn(user);
+        when(message.getChatId()).thenReturn(chatId);
         when(user.getId()).thenReturn(userId);
         return update;
     }

@@ -42,8 +42,13 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
 import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.math.BigDecimal;
@@ -83,6 +88,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String TOKEN_HIGHEST_WEEK_COMMAND = "/token_highest_week";
     private static final String TOKEN_HIGHEST_MONTH_COMMAND = "/token_highest_month";
     private static final String TOKEN_BEST_COMMAND = "/token_best";
+    private static final String MPLUS_CALLBACK_PREFIX = "mplus:";
+    private static final String MPLUS_ACTION_CALLBACK = "action";
+    private static final String MPLUS_PROFILE_CALLBACK = "profile";
+    private static final String MPLUS_PAIR_FIRST_CALLBACK = "pair_first";
+    private static final String MPLUS_PAIR_CALLBACK = "pair";
+    private static final String MPLUS_MENU_CALLBACK = "menu";
+    private static final String MPLUS_REFRESH_MESSAGE = " Use /mplus to refresh the menu.";
+    private static final String MPLUS_INACTIVE_PROFILE_MESSAGE =
+            "That profile is no longer active." + MPLUS_REFRESH_MESSAGE;
+    private static final int INLINE_BUTTONS_PER_ROW = 2;
+    private static final int MAX_PROFILE_BUTTONS = 90;
     private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
     private static final DateTimeFormatter TOKEN_HISTORY_TIME_FORMATTER = DateTimeFormatter.ofPattern(
             "d MMM uuuu, HH:mm z",
@@ -226,7 +242,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     @Override
     public void consume(Update update) {
-        telegramDailyPromptService.onMessage(senderUserId(update));
+        if (update != null && update.hasMessage()) {
+            telegramDailyPromptService.onMessage(senderUserId(update));
+        }
+        if (update != null && update.hasCallbackQuery()) {
+            handleMPlusCallback(update.getCallbackQuery());
+            return;
+        }
         CommandContext context = CommandContext.from(update);
         if (context == null) {
             return;
@@ -250,10 +272,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private static Long senderUserId(Update update) {
-        if (update == null || !update.hasMessage() || update.getMessage().getFrom() == null) {
+        if (update == null) {
             return null;
         }
-        return update.getMessage().getFrom().getId();
+        if (update.hasMessage() && update.getMessage().getFrom() != null) {
+            return update.getMessage().getFrom().getId();
+        }
+        if (update.hasCallbackQuery() && update.getCallbackQuery().getFrom() != null) {
+            return update.getCallbackQuery().getFrom().getId();
+        }
+        return null;
     }
 
     private void dispatchCommand(CommandContext context) {
@@ -345,39 +373,46 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private void handleUnifiedMPlusCommand(CommandContext context) {
+        if (commandArguments(context).isBlank()) {
+            sendMPlusMenu(context.chatId(), context.senderUserId());
+            return;
+        }
         MPlusRequest request = MPlusRequest.from(context.text());
-        String response = switch (request.section()) {
-            case "progress" -> mplusProgressService.progressMessage(request.arguments(), context.senderUserId());
+        send(context.chatId(), mPlusResponse(request.section(), request.arguments(), context.senderUserId()));
+    }
+
+    private String mPlusResponse(String section, String arguments, Long senderUserId) {
+        return switch (section) {
+            case "progress" -> mplusProgressService.progressMessage(arguments, senderUserId);
             case "dungeons" -> mplusDungeonVaultService.dungeonCoverageMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
             case "vault" -> mplusDungeonVaultService.currentVaultMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
             case "performance" -> mplusPerformanceService.performanceMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
             case "highlights" -> mplusPerformanceService.highlightsMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
-            case "team" -> mplusTeamService.teamMessage(request.arguments(), context.senderUserId());
-            case "pair" -> mplusTeamService.pairMessage(request.arguments());
+            case "team" -> mplusTeamService.teamMessage(arguments, senderUserId);
+            case "pair" -> mplusTeamService.pairMessage(arguments);
             case "consistency" -> mplusAdvancedService.consistencyMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
             case "awards" -> mplusAdvancedService.awardsMessage();
             case "coverage" -> mplusRunCorrelationService.coverageMessage(
-                    request.arguments(), context.senderUserId()
+                    arguments, senderUserId
             );
-            case "combat" -> warcraftLogsStatisticsService.combatMessage(request.arguments());
-            case "status" -> adminMPlusStatus(context);
+            case "combat" -> warcraftLogsStatisticsService.combatMessage(arguments);
+            case "status" -> adminMPlusStatus(senderUserId);
             default -> mplusHelpMessage();
         };
-        send(context.chatId(), response);
     }
 
-    private String adminMPlusStatus(CommandContext context) {
-        if (!isAdmin(context.update())) {
+    private String adminMPlusStatus(Long senderUserId) {
+        if (!isAdmin(senderUserId)) {
             return adminOnlyMessage();
         }
         return """
@@ -406,6 +441,193 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /mplus_combat [profile]
                 /mplus_status — admin only
                 """.strip();
+    }
+
+    private void sendMPlusMenu(long chatId, Long senderUserId) {
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (MPlusMenuAction action : MPlusMenuAction.values()) {
+            if (action == MPlusMenuAction.STATUS && !isAdmin(senderUserId)) {
+                continue;
+            }
+            buttons.add(inlineButton(
+                    action.label(),
+                    MPLUS_CALLBACK_PREFIX + MPLUS_ACTION_CALLBACK + ":" + action.key()
+            ));
+        }
+        send(chatId, "Choose a Mythic+ report:", inlineKeyboard(buttons));
+    }
+
+    private void handleMPlusCallback(CallbackQuery callback) {
+        if (callback == null || callback.getData() == null
+                || !callback.getData().startsWith(MPLUS_CALLBACK_PREFIX)) {
+            return;
+        }
+        answerCallback(callback.getId());
+        if (callback.getMessage() == null || callback.getFrom() == null) {
+            return;
+        }
+        Long chatId = callback.getMessage().getChatId();
+        Long senderUserId = callback.getFrom().getId();
+        if (chatId == null || senderUserId == null) {
+            return;
+        }
+        if (!telegramAccessPolicy.isAllowed(chatId, senderUserId)) {
+            return;
+        }
+
+        ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
+        try {
+            routeMPlusCallback(chatId, senderUserId, callback.getData());
+        } catch (RuntimeException _) {
+            send(chatId, "Could not load the Mythic+ selection. Please try again.");
+        } finally {
+            workingMessage.cancel(false);
+        }
+    }
+
+    private void routeMPlusCallback(long chatId, long senderUserId, String callbackData) {
+        String[] parts = callbackData.split(":");
+        if (parts.length == 2 && parts[1].equals(MPLUS_MENU_CALLBACK)) {
+            sendMPlusMenu(chatId, senderUserId);
+            return;
+        }
+        if (parts.length == 3 && parts[1].equals(MPLUS_ACTION_CALLBACK)) {
+            selectMPlusAction(chatId, senderUserId, MPlusMenuAction.fromKey(parts[2]));
+            return;
+        }
+        if (parts.length == 4 && parts[1].equals(MPLUS_PROFILE_CALLBACK)) {
+            runMPlusProfileAction(chatId, senderUserId, MPlusMenuAction.fromKey(parts[2]), parts[3]);
+            return;
+        }
+        if (parts.length == 3 && parts[1].equals(MPLUS_PAIR_FIRST_CALLBACK)) {
+            selectSecondPairProfile(chatId, parts[2]);
+            return;
+        }
+        if (parts.length == 4 && parts[1].equals(MPLUS_PAIR_CALLBACK)) {
+            runMPlusPairAction(chatId, parts[2], parts[3]);
+            return;
+        }
+        send(chatId, "That Mythic+ menu selection is no longer valid." + MPLUS_REFRESH_MESSAGE);
+    }
+
+    private void selectMPlusAction(long chatId, long senderUserId, MPlusMenuAction action) {
+        if (action == null) {
+            send(chatId, "That Mythic+ report is unavailable." + MPLUS_REFRESH_MESSAGE);
+            return;
+        }
+        if (action == MPlusMenuAction.PAIR) {
+            sendProfileMenu(chatId, "Choose the first profile:", MPLUS_PAIR_FIRST_CALLBACK, null);
+            return;
+        }
+        if (action.requiresProfile()) {
+            sendProfileMenu(
+                    chatId,
+                    "Choose a profile for " + action.label() + ":",
+                    MPLUS_PROFILE_CALLBACK + ":" + action.key(),
+                    null
+            );
+            return;
+        }
+        send(chatId, mPlusResponse(action.key(), "", senderUserId));
+    }
+
+    private void runMPlusProfileAction(
+            long chatId,
+            long senderUserId,
+            MPlusMenuAction action,
+            String profileIdValue
+    ) {
+        if (action == null || !action.requiresProfile()) {
+            send(chatId, "That Mythic+ report is unavailable." + MPLUS_REFRESH_MESSAGE);
+            return;
+        }
+        TrackedPlayer profile = findActiveProfile(profileIdValue);
+        if (profile == null) {
+            send(chatId, MPLUS_INACTIVE_PROFILE_MESSAGE);
+            return;
+        }
+        send(chatId, mPlusResponse(action.key(), profile.profileName(), senderUserId));
+    }
+
+    private void selectSecondPairProfile(long chatId, String firstProfileIdValue) {
+        TrackedPlayer firstProfile = findActiveProfile(firstProfileIdValue);
+        if (firstProfile == null) {
+            send(chatId, MPLUS_INACTIVE_PROFILE_MESSAGE);
+            return;
+        }
+        sendProfileMenu(
+                chatId,
+                "Pair " + firstProfile.profileName() + " with:",
+                MPLUS_PAIR_CALLBACK + ":" + firstProfile.profileId(),
+                firstProfile.profileId()
+        );
+    }
+
+    private void runMPlusPairAction(long chatId, String firstProfileIdValue, String secondProfileIdValue) {
+        TrackedPlayer firstProfile = findActiveProfile(firstProfileIdValue);
+        TrackedPlayer secondProfile = findActiveProfile(secondProfileIdValue);
+        if (firstProfile == null || secondProfile == null || firstProfile.profileId() == secondProfile.profileId()) {
+            send(chatId, "That profile pair is no longer valid." + MPLUS_REFRESH_MESSAGE);
+            return;
+        }
+        send(chatId, mPlusResponse(
+                MPlusMenuAction.PAIR.key(),
+                firstProfile.profileName() + " " + secondProfile.profileName(),
+                null
+        ));
+    }
+
+    private void sendProfileMenu(long chatId, String prompt, String callbackAction, Long excludedProfileId) {
+        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (TrackedPlayer profile : profiles) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            if (excludedProfileId == null || profile.profileId() != excludedProfileId) {
+                buttons.add(inlineButton(
+                        profile.profileName(),
+                        MPLUS_CALLBACK_PREFIX + callbackAction + ":" + profile.profileId()
+                ));
+            }
+        }
+        if (buttons.isEmpty()) {
+            send(chatId, "No active profiles are available for that Mythic+ report.");
+            return;
+        }
+        buttons.add(inlineButton("Back", MPLUS_CALLBACK_PREFIX + MPLUS_MENU_CALLBACK));
+        send(chatId, prompt, inlineKeyboard(buttons));
+    }
+
+    private TrackedPlayer findActiveProfile(String profileIdValue) {
+        Long profileId = parseLong(profileIdValue);
+        if (profileId == null || profileId <= 0) {
+            return null;
+        }
+        return trackedPlayerService.activePlayers().stream()
+                .filter(profile -> profile.profileId() == profileId)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static InlineKeyboardButton inlineButton(String label, String callbackData) {
+        return InlineKeyboardButton.builder()
+                .text(label)
+                .callbackData(callbackData)
+                .build();
+    }
+
+    private static InlineKeyboardMarkup inlineKeyboard(List<InlineKeyboardButton> buttons) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (int index = 0; index < buttons.size(); index += INLINE_BUTTONS_PER_ROW) {
+            InlineKeyboardRow row = new InlineKeyboardRow();
+            row.add(buttons.get(index));
+            if (index + 1 < buttons.size()) {
+                row.add(buttons.get(index + 1));
+            }
+            rows.add(row);
+        }
+        return new InlineKeyboardMarkup(rows);
     }
 
     private void sendOwnProfile(CommandContext context) {
@@ -463,7 +685,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private void runAdminCommand(CommandContext context, Runnable action) {
-        if (isAdmin(context.update())) {
+        if (isAdmin(context.senderUserId())) {
             action.run();
         } else {
             send(context.chatId(), adminOnlyMessage());
@@ -1062,7 +1284,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /profile_help
                 /profile_main <realm> <character>
                 /mains
-                /mplus — list all Mythic+ commands
+                /mplus — interactive Mythic+ menu
                 /rio <region> <realm> <name>
                 /vault
                 /title
@@ -1104,7 +1326,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /profile_main <realm> <character>
                 /mains
                 /profiles
-                /mplus — list all Mythic+ commands, including admin status
+                /mplus — interactive Mythic+ menu, including admin status
                 /profile_add <profile> <region> <realm> <character>
                 /profile_char_add <profile> <realm> <character>
                 /profile_char_delete <profile> <realm> <character>
@@ -1197,10 +1419,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return sb.toString();
     }
 
-    private boolean isAdmin(Update update) {
+    private boolean isAdmin(Long senderUserId) {
         return adminUserId > 0
-                && update.getMessage().getFrom() != null
-                && update.getMessage().getFrom().getId().longValue() == adminUserId;
+                && senderUserId != null
+                && senderUserId == adminUserId;
     }
 
     private String adminOnlyMessage() {
@@ -1783,10 +2005,27 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private void send(long chatId, String msg) {
+        send(chatId, msg, null);
+    }
+
+    private void send(long chatId, String msg, InlineKeyboardMarkup keyboard) {
         try {
-            client.execute(SendMessage.builder().chatId(chatId).text(msg).build());
+            SendMessage message = SendMessage.builder().chatId(chatId).text(msg).build();
+            message.setReplyMarkup(keyboard);
+            client.execute(message);
         } catch (Exception ignored) {
             // Delivery failures are isolated so Telegram polling can continue processing later updates.
+        }
+    }
+
+    private void answerCallback(String callbackQueryId) {
+        if (callbackQueryId == null || callbackQueryId.isBlank()) {
+            return;
+        }
+        try {
+            client.execute(AnswerCallbackQuery.builder().callbackQueryId(callbackQueryId).build());
+        } catch (Exception ignored) {
+            // A failed acknowledgement must not prevent the selected report from running.
         }
     }
 
@@ -2040,6 +2279,52 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     ) {
     }
 
+    private enum MPlusMenuAction {
+        PROGRESS("progress", "Progress", true),
+        DUNGEONS("dungeons", "Dungeons", true),
+        VAULT("vault", "Vault", true),
+        PERFORMANCE("performance", "Performance", true),
+        HIGHLIGHTS("highlights", "Highlights", true),
+        TEAM("team", "Team", true),
+        PAIR("pair", "Pair", false),
+        CONSISTENCY("consistency", "Consistency", true),
+        AWARDS("awards", "Awards", false),
+        COVERAGE("coverage", "Coverage", true),
+        COMBAT("combat", "Combat", true),
+        STATUS("status", "Status", false);
+
+        private final String key;
+        private final String label;
+        private final boolean requiresProfile;
+
+        MPlusMenuAction(String key, String label, boolean requiresProfile) {
+            this.key = key;
+            this.label = label;
+            this.requiresProfile = requiresProfile;
+        }
+
+        String key() {
+            return key;
+        }
+
+        String label() {
+            return label;
+        }
+
+        boolean requiresProfile() {
+            return requiresProfile;
+        }
+
+        static MPlusMenuAction fromKey(String key) {
+            for (MPlusMenuAction action : values()) {
+                if (action.key.equals(key)) {
+                    return action;
+                }
+            }
+            return null;
+        }
+    }
+
     @FunctionalInterface
     private interface CommandHandler {
         boolean handle(CommandContext context);
@@ -2059,7 +2344,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
     }
 
-    private record CommandContext(Update update, long chatId, Long senderUserId, String text, String command) {
+    private record CommandContext(long chatId, Long senderUserId, String text, String command) {
 
         private static CommandContext from(Update update) {
             if (update == null || !update.hasMessage() || !update.getMessage().hasText()) {
@@ -2083,7 +2368,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             Long senderUserId = update.getMessage().getFrom() == null
                     ? null
                     : update.getMessage().getFrom().getId();
-            return new CommandContext(update, update.getMessage().getChatId(), senderUserId, text, command);
+            return new CommandContext(update.getMessage().getChatId(), senderUserId, text, command);
         }
 
         private static NormalizedCommand normalizeSnakeCaseCommand(String command) {
