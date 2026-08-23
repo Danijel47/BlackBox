@@ -660,8 +660,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 wowMenuButton("Raids", "raids"),
                 wowMenuButton("Season", "season"),
                 wowMenuButton("Tokens", "tokens"),
-                wowMenuButton("Materials", "materials"),
-                wowMenuButton("Travel", "travel")
+                wowMenuButton("Materials", "materials")
         )));
     }
 

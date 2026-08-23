@@ -433,7 +433,7 @@ class BlackBoxBotTest {
                 .map(button -> button.getText()))
                 .containsExactly(
                         "Mythic+", "Profiles", "Character", "Raids",
-                        "Season", "Tokens", "Materials", "Travel"
+                        "Season", "Tokens", "Materials"
                 );
     }
 
