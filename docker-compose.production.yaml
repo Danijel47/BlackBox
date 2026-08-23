@@ -39,8 +39,7 @@ services:
       WOW_RWF_RAID_SLUG: ${WOW_RWF_RAID_SLUG:-the-venomous-abyss}
       WOW_RWF_RAID_NAME: ${WOW_RWF_RAID_NAME:-The Venomous Abyss}
       WOW_RWF_BOSS_COUNT: ${WOW_RWF_BOSS_COUNT:-8}
-      WOW_RWF_FIRST_BOSS_SLUG: ${WOW_RWF_FIRST_BOSS_SLUG:-nekzali-the-soulcoiler}
-      WOW_RWF_FIRST_BOSS_NAME: ${WOW_RWF_FIRST_BOSS_NAME:-Nek'zali the Soulcoiler}
+      WOW_RWF_EXPANSION_ID: ${WOW_RWF_EXPANSION_ID:-11}
       WOW_RWF_CRON: "${WOW_RWF_CRON:-0 */2 * * * *}"
       WOW_RWF_ZONE: ${WOW_RWF_ZONE:-Europe/Zagreb}
       WOW_TUNING_NEWS_ENABLED: ${WOW_TUNING_NEWS_ENABLED:-true}

@@ -3,6 +3,7 @@ package com.blackbox.wow.service;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossDefeat;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossProgress;
+import com.blackbox.wow.client.RaiderIoClient.RaidEncounter;
 import com.blackbox.wow.client.RaiderIoClient.RaidRanking;
 import com.blackbox.wow.entity.RaceToWorldFirstNotificationEntity;
 import com.blackbox.wow.properties.RaceToWorldFirstProperties;
@@ -12,7 +13,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -51,26 +57,19 @@ public class RaceToWorldFirstService {
             cron = "${wow.rwf.cron:0 */2 * * * *}",
             zone = "${wow.rwf.zone:Europe/Zagreb}"
     )
-    public void checkForFirstBossKill() {
+    public void checkForWorldFirstBossKills() {
         if (!properties.enabled() || properties.chatId() == 0) {
             return;
         }
         try {
             validateConfiguration();
-            String eventKey = eventKey();
-            if (notificationRepository.existsById(eventKey)) {
-                return;
-            }
             List<RaidRanking> rankings = raiderIoClient.getMythicRaidRankings(
                     properties.raidSlug(),
                     MONITOR_RANKING_LIMIT
             );
-            FirstBossKill firstKill = findFirstBossKill(rankings);
-            if (firstKill != null && notifier.send(properties.chatId(), formatFirstKillMessage(firstKill))) {
-                saveNotification(eventKey, firstKill);
-            }
+            notifyPendingWorldFirstKills(findWorldFirstBossKills(rankings));
         } catch (RuntimeException e) {
-            log.warn("Could not check the Race to World First first-boss kill: {}", e.getMessage());
+            log.warn("Could not check Race to World First boss kills ({})", e.getClass().getSimpleName());
         }
     }
 
@@ -121,42 +120,92 @@ public class RaceToWorldFirstService {
         }
     }
 
-    private FirstBossKill findFirstBossKill(List<RaidRanking> rankings) {
-        FirstBossKill earliestKill = null;
+    private List<WorldFirstBossKill> findWorldFirstBossKills(List<RaidRanking> rankings) {
+        Map<String, WorldFirstBossKill> earliestKills = new LinkedHashMap<>();
         for (RaidRanking ranking : rankings) {
             for (RaidBossDefeat defeat : ranking.defeatedBosses()) {
-                if (defeat.slug().equals(properties.firstBossSlug())) {
-                    FirstBossKill candidate = new FirstBossKill(ranking, defeat.firstDefeatedAt());
-                    if (earliestKill == null || candidate.defeatedAt().isBefore(earliestKill.defeatedAt())) {
-                        earliestKill = candidate;
-                    }
+                if (!isSlug(defeat.slug())) {
+                    continue;
                 }
+                WorldFirstBossKill candidate = new WorldFirstBossKill(ranking, defeat);
+                earliestKills.merge(
+                        defeat.slug(),
+                        candidate,
+                        (current, replacement) -> replacement.defeatedAt().isBefore(current.defeatedAt())
+                                ? replacement
+                                : current
+                );
             }
         }
-        return earliestKill;
+        return earliestKills.values().stream()
+                .sorted(Comparator.comparing(WorldFirstBossKill::defeatedAt))
+                .toList();
     }
 
-    private String formatFirstKillMessage(FirstBossKill firstKill) {
-        return "🏆 WORLD FIRST — MYTHIC BOSS ONE\n"
-                + firstKill.ranking().guildName() + " (" + firstKill.ranking().region() + ") defeated "
-                + properties.firstBossName() + ".\n"
-                + properties.raidName() + ": 1/" + properties.bossCount() + " Mythic\n\n"
+    private void notifyPendingWorldFirstKills(List<WorldFirstBossKill> worldFirstKills) {
+        List<PendingWorldFirstBossKill> pendingKills = new ArrayList<>();
+        for (int index = 0; index < worldFirstKills.size(); index++) {
+            WorldFirstBossKill worldFirstKill = worldFirstKills.get(index);
+            if (!notificationRepository.existsById(eventKey(worldFirstKill.bossSlug()))) {
+                pendingKills.add(new PendingWorldFirstBossKill(worldFirstKill, index + 1));
+            }
+        }
+        if (pendingKills.isEmpty()) {
+            return;
+        }
+
+        Map<String, RaidEncounter> encounters = loadEncounterMetadata();
+        for (PendingWorldFirstBossKill pendingKill : pendingKills) {
+            WorldFirstBossKill worldFirstKill = pendingKill.worldFirstKill();
+            RaidEncounter encounter = encounters.get(worldFirstKill.bossSlug());
+            String message = formatWorldFirstKillMessage(worldFirstKill, pendingKill.killNumber(), encounter);
+            if (notifier.send(properties.chatId(), message)) {
+                saveNotification(eventKey(worldFirstKill.bossSlug()), worldFirstKill);
+            }
+        }
+    }
+
+    private Map<String, RaidEncounter> loadEncounterMetadata() {
+        Map<String, RaidEncounter> encounters = new LinkedHashMap<>();
+        try {
+            for (RaidEncounter encounter : raiderIoClient.getRaidEncounters(
+                    properties.expansionId(),
+                    properties.raidSlug()
+            )) {
+                encounters.put(encounter.slug(), encounter);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not load RWF encounter metadata ({})", e.getClass().getSimpleName());
+        }
+        return encounters;
+    }
+
+    private String formatWorldFirstKillMessage(
+            WorldFirstBossKill worldFirstKill,
+            int killNumber,
+            RaidEncounter encounter
+    ) {
+        String bossName = encounter == null ? displayNameFromSlug(worldFirstKill.bossSlug()) : encounter.name();
+        return "🏆 WORLD FIRST — MYTHIC BOSS " + killNumber + "\n"
+                + worldFirstKill.ranking().guildName() + " (" + worldFirstKill.ranking().region()
+                + ") defeated " + bossName + ".\n"
+                + properties.raidName() + ": " + killNumber + "/" + properties.bossCount() + " Mythic\n\n"
                 + "Raider.IO: " + rankingUrl();
     }
 
-    private void saveNotification(String eventKey, FirstBossKill firstKill) {
+    private void saveNotification(String eventKey, WorldFirstBossKill worldFirstKill) {
         notificationRepository.saveAndFlush(new RaceToWorldFirstNotificationEntity(
                 eventKey,
                 properties.raidSlug(),
-                properties.firstBossSlug(),
-                firstKill.ranking().guildName(),
-                firstKill.defeatedAt(),
+                worldFirstKill.bossSlug(),
+                worldFirstKill.ranking().guildName(),
+                worldFirstKill.defeatedAt(),
                 Instant.now()
         ));
     }
 
-    private String eventKey() {
-        return properties.raidSlug() + ":mythic:" + properties.firstBossSlug();
+    private String eventKey(String bossSlug) {
+        return properties.raidSlug() + ":mythic:" + bossSlug;
     }
 
     private String rankingUrl() {
@@ -165,12 +214,10 @@ public class RaceToWorldFirstService {
 
     private void validateConfiguration() {
         if (!isSlug(properties.raidSlug())
-                || !isSlug(properties.firstBossSlug())
                 || properties.raidName() == null
                 || properties.raidName().isBlank()
-                || properties.firstBossName() == null
-                || properties.firstBossName().isBlank()
-                || properties.bossCount() <= 0) {
+                || properties.bossCount() <= 0
+                || properties.expansionId() <= 0) {
             throw new IllegalStateException("Race to World First configuration is invalid.");
         }
     }
@@ -179,6 +226,29 @@ public class RaceToWorldFirstService {
         return value != null && value.matches("[a-z0-9]+(?:-[a-z0-9]+)*");
     }
 
-    private record FirstBossKill(RaidRanking ranking, Instant defeatedAt) {
+    private static String displayNameFromSlug(String slug) {
+        StringBuilder name = new StringBuilder();
+        for (String word : slug.split("-")) {
+            if (!name.isEmpty()) {
+                name.append(' ');
+            }
+            name.append(word.substring(0, 1).toUpperCase(Locale.ENGLISH))
+                    .append(word.substring(1));
+        }
+        return name.toString();
+    }
+
+    private record WorldFirstBossKill(RaidRanking ranking, RaidBossDefeat defeat) {
+
+        String bossSlug() {
+            return defeat.slug();
+        }
+
+        Instant defeatedAt() {
+            return defeat.firstDefeatedAt();
+        }
+    }
+
+    private record PendingWorldFirstBossKill(WorldFirstBossKill worldFirstKill, int killNumber) {
     }
 }

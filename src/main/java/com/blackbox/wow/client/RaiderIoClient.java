@@ -60,6 +60,9 @@ public class RaiderIoClient {
                 .retrieve()
                 .body(String.class);
 
+        if (body == null || body.isBlank()) {
+            throw new IllegalStateException("Empty Raider.IO raid metadata response");
+        }
         try {
             return json.readTree(body);
         } catch (JsonProcessingException e) {
@@ -382,6 +385,53 @@ public class RaiderIoClient {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to parse Raider.IO raid rankings JSON", e);
         }
+    }
+
+    public List<RaidEncounter> getRaidEncounters(int expansionId, String raidSlug) {
+        String body = rio.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/v1/raiding/static-data")
+                        .queryParam("expansion_id", expansionId)
+                        .build())
+                .retrieve()
+                .body(String.class);
+
+        try {
+            return parseRaidEncounters(json.readTree(body), raidSlug);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to parse Raider.IO raid metadata JSON", e);
+        }
+    }
+
+    static List<RaidEncounter> parseRaidEncounters(JsonNode response, String raidSlug) {
+        if (response == null) {
+            return List.of();
+        }
+        JsonNode raidNodes = response.path("raids");
+        if (!raidNodes.isArray()) {
+            return List.of();
+        }
+        for (JsonNode raidNode : raidNodes) {
+            if (raidNode.path("slug").asText("").equals(raidSlug)) {
+                return parseRaidEncounterList(raidNode.path("encounters"));
+            }
+        }
+        return List.of();
+    }
+
+    private static List<RaidEncounter> parseRaidEncounterList(JsonNode encounterNodes) {
+        if (!encounterNodes.isArray()) {
+            return List.of();
+        }
+        List<RaidEncounter> encounters = new ArrayList<>();
+        for (JsonNode encounterNode : encounterNodes) {
+            String slug = encounterNode.path("slug").asText("");
+            String name = encounterNode.path("name").asText("");
+            if (!slug.isBlank() && !name.isBlank()) {
+                encounters.add(new RaidEncounter(slug, name));
+            }
+        }
+        return List.copyOf(encounters);
     }
 
     static List<RaidRanking> parseRaidRankings(JsonNode response) {
@@ -857,6 +907,9 @@ public class RaiderIoClient {
     }
 
     public record RaidBossDefeat(String slug, Instant firstDefeatedAt) {
+    }
+
+    public record RaidEncounter(String slug, String name) {
     }
 
     public record RaidBossProgress(String slug, boolean defeated, int pullCount, BigDecimal bestPercent) {

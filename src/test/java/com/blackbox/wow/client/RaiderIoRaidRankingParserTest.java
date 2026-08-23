@@ -10,6 +10,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RaiderIoRaidRankingParserTest {
 
     @Test
+    void parsesRaidEncounterNamesAndOrderFromStaticData() throws Exception {
+        var response = JsonMapper.builder().build().readTree("""
+                {
+                  "raids": [{
+                    "slug": "the-venomous-abyss",
+                    "encounters": [
+                      {"slug": "nekzali-the-soulcoiler", "name": "Nek'zali the Soulcoiler"},
+                      {"slug": "entombed-sentinels", "name": "Entombed Sentinels"}
+                    ]
+                  }]
+                }
+                """);
+
+        var encounters = RaiderIoClient.parseRaidEncounters(response, "the-venomous-abyss");
+
+        assertThat(encounters)
+                .extracting(RaiderIoClient.RaidEncounter::slug, RaiderIoClient.RaidEncounter::name)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("nekzali-the-soulcoiler", "Nek'zali the Soulcoiler"),
+                        org.assertj.core.groups.Tuple.tuple("entombed-sentinels", "Entombed Sentinels")
+                );
+    }
+
+    @Test
     void parsesARealisticRaidRankingResponse() throws Exception {
         var response = JsonMapper.builder().build().readTree("""
                 {

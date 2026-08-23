@@ -3,6 +3,7 @@ package com.blackbox.wow.service;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossDefeat;
 import com.blackbox.wow.client.RaiderIoClient.RaidBossProgress;
+import com.blackbox.wow.client.RaiderIoClient.RaidEncounter;
 import com.blackbox.wow.client.RaiderIoClient.RaidRanking;
 import com.blackbox.wow.entity.RaceToWorldFirstNotificationEntity;
 import com.blackbox.wow.properties.RaceToWorldFirstProperties;
@@ -18,15 +19,21 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class RaceToWorldFirstServiceTest {
 
-    private static final String EVENT_KEY = "the-venomous-abyss:mythic:nekzali-the-soulcoiler";
+    private static final String FIRST_BOSS_EVENT_KEY =
+            "the-venomous-abyss:mythic:nekzali-the-soulcoiler";
+    private static final String SECOND_BOSS_EVENT_KEY =
+            "the-venomous-abyss:mythic:the-lost-explorers";
 
     @Mock private RaiderIoClient raiderIoClient;
     @Mock private RaceToWorldFirstNotificationRepository notificationRepository;
@@ -70,7 +77,7 @@ class RaceToWorldFirstServiceTest {
     }
 
     @Test
-    void sendsAndPersistsOnlyTheEarliestFirstBossKill() {
+    void sendsAndPersistsTheEarliestWorldFirstForEveryDefeatedBoss() {
         RaidRanking laterKill = rankingWithFirstBossKill(
                 1,
                 "Echo",
@@ -83,36 +90,79 @@ class RaceToWorldFirstServiceTest {
                 "US",
                 Instant.parse("2026-08-19T15:00:00Z")
         );
-        when(notificationRepository.existsById(EVENT_KEY)).thenReturn(false);
         when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 200))
                 .thenReturn(List.of(laterKill, earliestKill));
-        when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS ONE\n"
+        when(raiderIoClient.getRaidEncounters(11, "the-venomous-abyss")).thenReturn(List.of(
+                new RaidEncounter("nekzali-the-soulcoiler", "Nek'zali the Soulcoiler")
+        ));
+        when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 1\n"
                 + "Liquid (US) defeated Nek'zali the Soulcoiler.\n"
                 + "The Venomous Abyss: 1/8 Mythic\n\n"
                 + "Raider.IO: https://raider.io/raid-rankings/the-venomous-abyss/world/mythic"))
                 .thenReturn(true);
 
-        service().checkForFirstBossKill();
+        service().checkForWorldFirstBossKills();
 
         verify(notificationRepository).saveAndFlush(any(RaceToWorldFirstNotificationEntity.class));
     }
 
     @Test
-    void stopsPollingAfterTheNotificationWasPersisted() {
-        when(notificationRepository.existsById(EVENT_KEY)).thenReturn(true);
+    void catchesUpEveryBossThatHasNotAlreadyBeenNotified() {
+        RaidRanking ranking = rankingWithBossKills(
+                1,
+                "xD",
+                "EU",
+                new RaidBossDefeat("nekzali-the-soulcoiler", Instant.parse("2026-08-22T00:26:55Z")),
+                new RaidBossDefeat("the-lost-explorers", Instant.parse("2026-08-22T03:24:12Z"))
+        );
+        when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 200)).thenReturn(List.of(ranking));
+        when(raiderIoClient.getRaidEncounters(11, "the-venomous-abyss")).thenReturn(List.of(
+                new RaidEncounter("nekzali-the-soulcoiler", "Nek'zali the Soulcoiler"),
+                new RaidEncounter("the-lost-explorers", "The Lost Explorers")
+        ));
+        when(notifier.send(eq(123L), anyString())).thenReturn(true);
 
-        service().checkForFirstBossKill();
+        service().checkForWorldFirstBossKills();
 
-        verify(raiderIoClient, never()).getMythicRaidRankings(any(), any(Integer.class));
-        verify(notifier, never()).send(any(), contains("WORLD FIRST"));
+        verify(notifier).send(eq(123L), contains("Nek'zali the Soulcoiler"));
+        verify(notifier).send(eq(123L), contains("The Lost Explorers"));
+        verify(notificationRepository, times(2)).saveAndFlush(any(RaceToWorldFirstNotificationEntity.class));
+    }
+
+    @Test
+    void skipsThePersistedFirstBossAndNotifiesForTheNextBoss() {
+        RaidRanking ranking = rankingWithBossKills(
+                1,
+                "xD",
+                "EU",
+                new RaidBossDefeat("nekzali-the-soulcoiler", Instant.parse("2026-08-22T00:26:55Z")),
+                new RaidBossDefeat("the-lost-explorers", Instant.parse("2026-08-22T03:24:12Z"))
+        );
+        when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 200)).thenReturn(List.of(ranking));
+        when(notificationRepository.existsById(FIRST_BOSS_EVENT_KEY)).thenReturn(true);
+        when(notificationRepository.existsById(SECOND_BOSS_EVENT_KEY)).thenReturn(false);
+        when(raiderIoClient.getRaidEncounters(11, "the-venomous-abyss")).thenReturn(List.of(
+                new RaidEncounter("nekzali-the-soulcoiler", "Nek'zali the Soulcoiler"),
+                new RaidEncounter("the-lost-explorers", "The Lost Explorers")
+        ));
+        when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 2\n"
+                + "xD (EU) defeated The Lost Explorers.\n"
+                + "The Venomous Abyss: 2/8 Mythic\n\n"
+                + "Raider.IO: https://raider.io/raid-rankings/the-venomous-abyss/world/mythic"))
+                .thenReturn(true);
+
+        service().checkForWorldFirstBossKills();
+
+        verify(notifier, never()).send(any(), contains("Nek'zali"));
+        verify(notifier).send(any(), contains("The Lost Explorers"));
+        verify(notificationRepository).saveAndFlush(any(RaceToWorldFirstNotificationEntity.class));
     }
 
     @Test
     void doesNotNotifyBeforeTheFirstBossIsKilled() {
-        when(notificationRepository.existsById(EVENT_KEY)).thenReturn(false);
         when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 200)).thenReturn(List.of());
 
-        service().checkForFirstBossKill();
+        service().checkForWorldFirstBossKills();
 
         verify(notifier, never()).send(any(), any());
         verify(notificationRepository, never()).saveAndFlush(any());
@@ -126,12 +176,14 @@ class RaceToWorldFirstServiceTest {
                 "US",
                 Instant.parse("2026-08-19T15:00:00Z")
         );
-        when(notificationRepository.existsById(EVENT_KEY)).thenReturn(false);
         when(raiderIoClient.getMythicRaidRankings("the-venomous-abyss", 200))
                 .thenReturn(List.of(firstKill));
+        when(raiderIoClient.getRaidEncounters(11, "the-venomous-abyss")).thenReturn(List.of(
+                new RaidEncounter("nekzali-the-soulcoiler", "Nek'zali the Soulcoiler")
+        ));
         when(notifier.send(any(), contains("WORLD FIRST"))).thenReturn(false);
 
-        service().checkForFirstBossKill();
+        service().checkForWorldFirstBossKills();
 
         verify(notificationRepository, never()).saveAndFlush(any());
     }
@@ -147,8 +199,7 @@ class RaceToWorldFirstServiceTest {
                         "the-venomous-abyss",
                         "The Venomous Abyss",
                         8,
-                        "nekzali-the-soulcoiler",
-                        "Nek'zali the Soulcoiler"
+                        11
                 )
         );
     }
@@ -172,6 +223,23 @@ class RaceToWorldFirstServiceTest {
                 "Realm",
                 region,
                 List.of(new RaidBossDefeat("nekzali-the-soulcoiler", defeatedAt)),
+                List.of(),
+                "/guilds/path"
+        );
+    }
+
+    private static RaidRanking rankingWithBossKills(
+            int rank,
+            String guild,
+            String region,
+            RaidBossDefeat... defeats
+    ) {
+        return new RaidRanking(
+                rank,
+                guild,
+                "Realm",
+                region,
+                List.of(defeats),
                 List.of(),
                 "/guilds/path"
         );

@@ -9,7 +9,6 @@ public record RaceToWorldFirstProperties(
         String raidSlug,
         String raidName,
         int bossCount,
-        String firstBossSlug,
-        String firstBossName
+        int expansionId
 ) {
 }
