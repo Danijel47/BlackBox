@@ -44,6 +44,7 @@ import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -481,6 +482,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return;
         }
 
+        removeInlineKeyboard(chatId, callback.getMessage().getMessageId());
         ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
         try {
             routeCallback(chatId, senderUserId, callback.getData());
@@ -2332,6 +2334,20 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             client.execute(AnswerCallbackQuery.builder().callbackQueryId(callbackQueryId).build());
         } catch (Exception ignored) {
             // A failed acknowledgement must not prevent the selected report from running.
+        }
+    }
+
+    private void removeInlineKeyboard(long chatId, Integer messageId) {
+        if (messageId == null) {
+            return;
+        }
+        try {
+            client.execute(EditMessageReplyMarkup.builder()
+                    .chatId(chatId)
+                    .messageId(messageId)
+                    .build());
+        } catch (Exception ignored) {
+            // A stale menu must not prevent the selected action from running.
         }
     }
 

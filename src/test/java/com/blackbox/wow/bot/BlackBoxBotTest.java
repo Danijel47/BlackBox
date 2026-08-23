@@ -36,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
@@ -454,6 +455,22 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void removesInlineButtonsAfterAnAuthorizedSelection() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        int messageId = 789;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:menu", messageId));
+
+        ArgumentCaptor<EditMessageReplyMarkup> edit = ArgumentCaptor.forClass(EditMessageReplyMarkup.class);
+        verify(telegramClient).execute(edit.capture());
+        assertThat(edit.getValue().getChatId()).isEqualTo(Long.toString(chatId));
+        assertThat(edit.getValue().getMessageId()).isEqualTo(messageId);
+        assertThat(edit.getValue().getReplyMarkup()).isNull();
+    }
+
+    @Test
     void letsAUserSelectTheirMainThroughProfileButtons() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -678,6 +695,10 @@ class BlackBoxBotTest {
     }
 
     private static Update callbackUpdate(long chatId, long userId, String data) {
+        return callbackUpdate(chatId, userId, data, null);
+    }
+
+    private static Update callbackUpdate(long chatId, long userId, String data, Integer messageId) {
         Update update = mock(Update.class);
         CallbackQuery callback = mock(CallbackQuery.class);
         MaybeInaccessibleMessage message = mock(MaybeInaccessibleMessage.class);
@@ -689,6 +710,7 @@ class BlackBoxBotTest {
         when(callback.getMessage()).thenReturn(message);
         when(callback.getFrom()).thenReturn(user);
         when(message.getChatId()).thenReturn(chatId);
+        when(message.getMessageId()).thenReturn(messageId);
         when(user.getId()).thenReturn(userId);
         return update;
     }
