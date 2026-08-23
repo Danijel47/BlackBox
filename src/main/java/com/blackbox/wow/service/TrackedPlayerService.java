@@ -16,6 +16,8 @@ import java.util.Optional;
 @Service
 public class TrackedPlayerService {
 
+    private static final String PROFILE_NOT_FOUND_MESSAGE = "Profile not found.";
+
     private final PlayerProfileRepository profileRepository;
     private final TrackedCharacterRepository characterRepository;
     private final TelegramBotUserRepository telegramUserRepository;
@@ -138,8 +140,16 @@ public class TrackedPlayerService {
 
     @Transactional
     public void addCharacter(String profileName, String realm, String characterName) {
+        addCharacter(requireProfile(profileName), realm, characterName);
+    }
+
+    @Transactional
+    public void addCharacter(long profileId, String realm, String characterName) {
+        addCharacter(requireProfile(profileId), realm, characterName);
+    }
+
+    private void addCharacter(PlayerProfileEntity profile, String realm, String characterName) {
         validateCharacter("eu", realm, characterName);
-        PlayerProfileEntity profile = requireProfile(profileName);
         String normalizedRealm = normalizeRealm(realm);
         String normalizedCharacterName = capitalizeFirst(characterName);
         boolean alreadyRegistered = characterRepository
@@ -243,14 +253,29 @@ public class TrackedPlayerService {
 
     @Transactional
     public void setProfileActive(long profileId, boolean active) {
-        PlayerProfileEntity profile = profileRepository.findById(profileId)
-                .orElseThrow(() -> new IllegalArgumentException("Profile not found."));
+        PlayerProfileEntity profile = requireProfile(profileId);
         profile.setActive(active);
+    }
+
+    @Transactional
+    public void setCharacterActive(long profileId, long characterId, boolean active) {
+        TrackedCharacterEntity character = characterRepository.findById(characterId)
+                .filter(candidate -> candidate.getProfile().getId().equals(profileId))
+                .orElseThrow(() -> new IllegalArgumentException("Character not found in that profile."));
+        if (!active && character.isSelected()) {
+            throw new IllegalArgumentException("The selected main cannot be disabled.");
+        }
+        character.setActive(active);
     }
 
     private PlayerProfileEntity requireProfile(String profileName) {
         return profileRepository.findByProfileNameIgnoreCase(profileName)
                 .orElseThrow(() -> new IllegalArgumentException("Profile not found: " + profileName));
+    }
+
+    private PlayerProfileEntity requireProfile(long profileId) {
+        return profileRepository.findById(profileId)
+                .orElseThrow(() -> new IllegalArgumentException(PROFILE_NOT_FOUND_MESSAGE));
     }
 
     private List<TrackedPlayer> selectedPlayers(List<PlayerProfileEntity> profiles) {
@@ -276,6 +301,7 @@ public class TrackedPlayerService {
                 .findByProfileIdOrderBySelectedDescIdAsc(profile.getId())
                 .stream()
                 .map(character -> new ProfileCharacter(
+                        character.getId(),
                         character.getRegion(),
                         character.getRealm(),
                         character.getCharacterName(),
@@ -341,6 +367,7 @@ public class TrackedPlayerService {
     }
 
     public record ProfileCharacter(
+            long id,
             String region,
             String realm,
             String name,

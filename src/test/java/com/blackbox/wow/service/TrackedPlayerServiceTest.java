@@ -152,6 +152,35 @@ class TrackedPlayerServiceTest {
         verify(characterRepository, never()).delete(character);
     }
 
+    @Test
+    void disablesAnAltWithoutChangingTheSelectedMain() {
+        PlayerProfileEntity profile = profile(7L);
+        TrackedCharacterEntity alt = mock(TrackedCharacterEntity.class);
+        when(characterRepository.findById(22L)).thenReturn(Optional.of(alt));
+        when(alt.getProfile()).thenReturn(profile);
+        when(alt.isSelected()).thenReturn(false);
+
+        service().setCharacterActive(7L, 22L, false);
+
+        verify(alt).setActive(false);
+        verify(characterRepository, never()).clearSelectedCharacter(7L);
+    }
+
+    @Test
+    void refusesToDisableTheSelectedMain() {
+        PlayerProfileEntity profile = profile(7L);
+        TrackedCharacterEntity main = mock(TrackedCharacterEntity.class);
+        when(characterRepository.findById(21L)).thenReturn(Optional.of(main));
+        when(main.getProfile()).thenReturn(profile);
+        when(main.isSelected()).thenReturn(true);
+
+        assertThatThrownBy(() -> service().setCharacterActive(7L, 21L, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The selected main cannot be disabled.");
+
+        verify(main, never()).setActive(false);
+    }
+
     private TrackedPlayerService service() {
         return new TrackedPlayerService(profileRepository, characterRepository, telegramUserRepository);
     }

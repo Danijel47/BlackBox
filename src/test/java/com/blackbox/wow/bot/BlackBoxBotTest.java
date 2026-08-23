@@ -54,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -197,15 +198,17 @@ class BlackBoxBotTest {
                 userId,
                 true,
                 List.of(
-                        new ProfileCharacter("eu", "stormscale", "Alicemage", true, true),
-                        new ProfileCharacter("eu", "draenor", "Alicepriest", false, true)
+                        new ProfileCharacter(10L, "eu", "stormscale", "Alicemage", true, true),
+                        new ProfileCharacter(11L, "eu", "draenor", "Alicepriest", false, true),
+                        new ProfileCharacter(12L, "eu", "silvermoon", "Hiddenalt", false, false)
                 )
         )));
 
         bot().consume(update);
 
         assertThat(sentMessage().getText())
-                .contains("Your player profile", "Alice", "→ Alicemage-stormscale", "Alicepriest-draenor");
+                .contains("Your player profile", "Alice", "→ Alicemage-stormscale", "Alicepriest-draenor")
+                .doesNotContain("Hiddenalt");
     }
 
     @Test
@@ -481,15 +484,33 @@ class BlackBoxBotTest {
                 userId,
                 true,
                 List.of(
-                        new ProfileCharacter("eu", "stormscale", "Alicemage", true, true),
-                        new ProfileCharacter("eu", "draenor", "Alicepriest", false, true)
+                        new ProfileCharacter(10L, "eu", "stormscale", "Alicemage", true, true),
+                        new ProfileCharacter(11L, "eu", "draenor", "Alicepriest", false, true)
                 )
         )));
 
-        bot().consume(callbackUpdate(chatId, userId, "wow:profiles:select:1"));
+        bot().consume(callbackUpdate(chatId, userId, "wow:profiles:select:456:1"));
 
         verify(trackedPlayerService).switchOwnedCharacter(userId, "draenor", "Alicepriest");
         assertThat(sentMessage().getText()).contains("Alicepriest-draenor");
+    }
+
+    @Test
+    void preventsAnotherUserFromChangingAProfileMain() throws Exception {
+        long chatId = 123L;
+        long profileOwnerId = 456L;
+        long otherUserId = 654L;
+        when(accessPolicy.isAllowed(chatId, otherUserId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(
+                chatId,
+                otherUserId,
+                "wow:profiles:select:" + profileOwnerId + ":1"
+        ));
+
+        verify(trackedPlayerService, never()).switchOwnedCharacter(any(Long.class), any(), any());
+        assertThat(sentMessage().getText())
+                .isEqualTo("You can’t change another player’s main character. Open /profiles to choose your own.");
     }
 
     @Test
@@ -505,8 +526,56 @@ class BlackBoxBotTest {
         assertThat(keyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .contains("Users", "User Access", "Profiles", "Profile Access", "M+ Status", "Vault Reminder")
+                .contains("Users", "User Access", "Profiles", "Profile Access", "Manage Alts",
+                        "M+ Status", "Vault Reminder")
                 .doesNotContain("Mythic+", "Tokens");
+    }
+
+    @Test
+    void letsTheAdminDisableAnAltWithoutChangingTheMain() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(trackedPlayerService.profiles()).thenReturn(List.of(new PlayerProfile(
+                7L,
+                "Linq",
+                456L,
+                true,
+                List.of(
+                        new ProfileCharacter(21L, "eu", "stormscale", "Linq", true, true),
+                        new ProfileCharacter(22L, "eu", "stormscale", "Thelinqq", false, true)
+                )
+        )));
+
+        bot().consume(callbackUpdate(chatId, adminId, "admin:alt:7:22:false"));
+
+        verify(trackedPlayerService).setCharacterActive(7L, 22L, false);
+        verify(trackedPlayerService, never()).switchCharacter(any(), any(), any(), any());
+        assertThat(sentMessage().getText()).contains("Thelinqq disabled and hidden from the owner’s alt list.");
+    }
+
+    @Test
+    void letsTheAdminAddAnAltThroughTheButtonPrompt() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(trackedPlayerService.profiles()).thenReturn(List.of(new PlayerProfile(
+                7L,
+                "Linq",
+                456L,
+                true,
+                List.of(new ProfileCharacter(21L, "eu", "stormscale", "Linq", true, true))
+        )));
+        BlackBoxBot subject = bot();
+
+        subject.consume(callbackUpdate(chatId, adminId, "admin:alt_add:7"));
+        subject.consume(update(chatId, adminId, "draenor Linqalt"));
+
+        verify(trackedPlayerService).addCharacter(7L, "draenor", "Linqalt");
+        ArgumentCaptor<SendMessage> messages = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(2)).execute(messages.capture());
+        assertThat(messages.getAllValues().getFirst().getText()).contains("Enter the EU realm and character name");
+        assertThat(messages.getAllValues().getLast().getText()).contains("Linqalt-draenor added to profile Linq");
     }
 
     @Test
@@ -710,7 +779,9 @@ class BlackBoxBotTest {
         when(callback.getMessage()).thenReturn(message);
         when(callback.getFrom()).thenReturn(user);
         when(message.getChatId()).thenReturn(chatId);
-        when(message.getMessageId()).thenReturn(messageId);
+        if (messageId != null) {
+            when(message.getMessageId()).thenReturn(messageId);
+        }
         when(user.getId()).thenReturn(userId);
         return update;
     }

@@ -34,4 +34,23 @@ class BlizzardAuctionServiceTest {
         assertThat(snapshot.price().available()).isFalse();
         assertThat(snapshot.sourceUpdatedAt()).isNull();
     }
+
+    @Test
+    void usesTheLowestAvailableCommodityPriceForBuying() throws Exception {
+        var response = JsonMapper.builder().build().readTree("""
+                {
+                  "auctions": [
+                    {"item": {"id": 237365}, "quantity": 50, "unit_price": 10148400},
+                    {"item": {"id": 237365}, "quantity": 2, "unit_price": 250000},
+                    {"item": {"id": 237364}, "quantity": 10, "unit_price": 204500}
+                  ]
+                }
+                """);
+
+        var price = BlizzardAuctionService.lowestUnitPrice(response, 237365L);
+
+        assertThat(price.available()).isTrue();
+        assertThat(price.avgCopper()).isEqualTo(250_000L);
+        assertThat(price.gold()).isEqualTo(25L);
+    }
 }

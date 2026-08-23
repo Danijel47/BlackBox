@@ -47,6 +47,7 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ForceReplyKeyboard;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
@@ -65,6 +66,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
@@ -104,6 +106,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String WOW_COMMAND_CALLBACK = "command";
     private static final String WOW_PROFILES_CALLBACK = "profiles";
     private static final String WOW_CHARACTER_CALLBACK = "character";
+    private static final String ADMIN_ALTS_CALLBACK = "alts";
+    private static final String ADMIN_ALT_CALLBACK = "alt";
+    private static final String ADMIN_ALT_ADD_CALLBACK = "alt_add";
+    private static final String FOREIGN_MAIN_SELECTION_MESSAGE =
+            "You can’t change another player’s main character. Open /profiles to choose your own.";
+    private static final Duration ALT_ADDITION_TTL = Duration.ofMinutes(10);
     private static final int INLINE_BUTTONS_PER_ROW = 2;
     private static final int MAX_PROFILE_BUTTONS = 90;
     private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
@@ -159,6 +167,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TelegramBotUserService telegramBotUserService;
     private final TelegramDailyPromptService telegramDailyPromptService;
     private final List<CommandHandler> commandHandlers;
+    private final Map<PendingAltKey, PendingAltAddition> pendingAltAdditions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService workingMessageScheduler = Executors.newSingleThreadScheduledExecutor(
             runnable -> Thread.ofPlatform()
                     .daemon(true)
@@ -251,6 +260,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     public void consume(Update update) {
         if (update != null && update.hasMessage()) {
             telegramDailyPromptService.onMessage(senderUserId(update));
+            if (handlePendingAltAddition(update)) {
+                return;
+            }
         }
         if (update != null && update.hasCallbackQuery()) {
             handleCallback(update.getCallbackQuery());
@@ -481,6 +493,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (!telegramAccessPolicy.isAllowed(chatId, senderUserId)) {
             return;
         }
+        if (isForeignMainSelection(callback.getData(), senderUserId)) {
+            send(chatId, FOREIGN_MAIN_SELECTION_MESSAGE);
+            return;
+        }
 
         removeInlineKeyboard(chatId, callback.getMessage().getMessageId());
         ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
@@ -497,6 +513,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return callbackData != null && (callbackData.startsWith(MPLUS_CALLBACK_PREFIX)
                 || callbackData.startsWith(WOW_CALLBACK_PREFIX)
                 || callbackData.startsWith(WOW_ADMIN_CALLBACK_PREFIX));
+    }
+
+    private static boolean isForeignMainSelection(String callbackData, long senderUserId) {
+        String selectionPrefix = WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":select:";
+        if (!callbackData.startsWith(selectionPrefix)) {
+            return false;
+        }
+        String[] parts = callbackData.split(":");
+        Long ownerUserId = parts.length == 5 ? parseLong(parts[3]) : null;
+        return ownerUserId != null && ownerUserId != senderUserId;
     }
 
     private void routeCallback(long chatId, long senderUserId, String callbackData) {
@@ -748,8 +774,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/mains"));
         } else if (parts.length == 3 && parts[2].equals("main")) {
             sendOwnedCharacterMenu(chatId, senderUserId);
-        } else if (parts.length == 4 && parts[2].equals("select")) {
-            selectOwnedCharacter(chatId, senderUserId, parts[3]);
+        } else if (parts.length == 5 && parts[2].equals("select")) {
+            selectOwnedCharacter(chatId, senderUserId, parts[3], parts[4]);
         } else {
             send(chatId, "That profile selection is no longer valid. Use /profiles to start again.");
         }
@@ -772,14 +798,24 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             String selectedMarker = character.selected() ? " ✓" : "";
             buttons.add(inlineButton(
                     character.name() + "-" + character.realm() + selectedMarker,
-                    WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":select:" + index
+                    WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":select:" + senderUserId + ":" + index
             ));
         }
         buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_PROFILES_CALLBACK));
         send(chatId, "Choose your main character:", inlineKeyboard(buttons));
     }
 
-    private void selectOwnedCharacter(long chatId, long senderUserId, String characterIndexValue) {
+    private void selectOwnedCharacter(
+            long chatId,
+            long senderUserId,
+            String ownerUserIdValue,
+            String characterIndexValue
+    ) {
+        Long ownerUserId = parseLong(ownerUserIdValue);
+        if (ownerUserId == null || ownerUserId != senderUserId) {
+            send(chatId, FOREIGN_MAIN_SELECTION_MESSAGE);
+            return;
+        }
         Long characterIndex = parseLong(characterIndexValue);
         var profile = trackedPlayerService.profileForTelegramUser(senderUserId);
         if (characterIndex == null || characterIndex < 0 || profile.isEmpty()) {
@@ -884,6 +920,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 adminButton("User Access", "user_access"),
                 adminButton("Profiles", WOW_PROFILES_CALLBACK),
                 adminButton("Profile Access", "profile_access"),
+                adminButton("Manage Alts", ADMIN_ALTS_CALLBACK),
                 adminCommandButton("M+ Status", "mplus_status"),
                 adminCommandButton("Vault Reminder", "vault_reminder"),
                 adminCommandButton("Travel Import", "travel_import"),
@@ -919,6 +956,14 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, formatPlayerProfiles(), adminBackKeyboard());
         } else if (parts.length == 2 && parts[1].equals("profile_access")) {
             sendAdminProfileAccessMenu(chatId);
+        } else if (parts.length == 2 && parts[1].equals(ADMIN_ALTS_CALLBACK)) {
+            sendAdminAltProfileMenu(chatId);
+        } else if (parts.length == 3 && parts[1].equals(ADMIN_ALTS_CALLBACK)) {
+            sendAdminAltManagementMenu(chatId, parts[2], null);
+        } else if (parts.length == 3 && parts[1].equals(ADMIN_ALT_ADD_CALLBACK)) {
+            startAltAddition(chatId, senderUserId, parts[2]);
+        } else if (parts.length == 5 && parts[1].equals(ADMIN_ALT_CALLBACK)) {
+            changeAltAccessFromButton(chatId, parts[2], parts[3], parts[4]);
         } else if (parts.length == 3 && parts[1].equals(WOW_COMMAND_CALLBACK)) {
             runWowAdminAction(chatId, senderUserId, parts[2]);
         } else if (parts.length == 4 && parts[1].equals("user")) {
@@ -1018,6 +1063,175 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         trackedPlayerService.setProfileActive(profile.id(), active);
         send(chatId, PROFILE_PREFIX + profile.name() + (active ? " enabled." : " disabled."), adminBackKeyboard());
+    }
+
+    private void sendAdminAltProfileMenu(long chatId) {
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (var profile : trackedPlayerService.profiles()) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            buttons.add(inlineButton(
+                    profile.name(),
+                    WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALTS_CALLBACK + ":" + profile.id()
+            ));
+        }
+        if (buttons.isEmpty()) {
+            send(chatId, "No player profiles are configured.", adminBackKeyboard());
+            return;
+        }
+        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        send(chatId, "Choose a profile to manage its alts:", inlineKeyboard(buttons));
+    }
+
+    private void sendAdminAltManagementMenu(long chatId, String profileIdValue, String statusMessage) {
+        Long profileId = parseLong(profileIdValue);
+        var profile = findProfile(profileId);
+        if (profile == null) {
+            send(chatId, "That profile no longer exists. Use /wow_admin to refresh the menu.");
+            return;
+        }
+
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        buttons.add(inlineButton(
+                "Add Alt",
+                WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALT_ADD_CALLBACK + ":" + profile.id()
+        ));
+        for (var character : profile.characters()) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS || character.selected()) {
+                continue;
+            }
+            boolean enable = !character.active();
+            buttons.add(inlineButton(
+                    (enable ? "Enable " : "Disable ") + character.name() + "-" + character.realm(),
+                    WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALT_CALLBACK + ":" + profile.id() + ":"
+                            + character.id() + ":" + enable
+            ));
+        }
+        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALTS_CALLBACK));
+        String prompt = statusMessage == null
+                ? "Manage alts for " + profile.name() + ":"
+                : statusMessage + "\n\nManage alts for " + profile.name() + ":";
+        send(chatId, prompt, inlineKeyboard(buttons));
+    }
+
+    private void changeAltAccessFromButton(
+            long chatId,
+            String profileIdValue,
+            String characterIdValue,
+            String activeValue
+    ) {
+        Long profileId = parseLong(profileIdValue);
+        Long characterId = parseLong(characterIdValue);
+        Boolean active = parseBoolean(activeValue);
+        var profile = findProfile(profileId);
+        var character = profile == null || characterId == null
+                ? null
+                : profile.characters().stream()
+                        .filter(candidate -> candidate.id() == characterId)
+                        .findFirst()
+                        .orElse(null);
+        if (profile == null || character == null || character.selected() || active == null) {
+            send(chatId, "That alt selection is invalid. Use /wow_admin to refresh the menu.");
+            return;
+        }
+        try {
+            trackedPlayerService.setCharacterActive(profile.id(), character.id(), active);
+            sendAdminAltManagementMenu(
+                    chatId,
+                    profileIdValue,
+                    character.name() + (active ? " enabled." : " disabled and hidden from the owner’s alt list.")
+            );
+        } catch (IllegalArgumentException e) {
+            send(chatId, "Could not update alt: " + e.getMessage(), adminBackKeyboard());
+        }
+    }
+
+    private void startAltAddition(long chatId, long senderUserId, String profileIdValue) {
+        Long profileId = parseLong(profileIdValue);
+        var profile = findProfile(profileId);
+        if (profile == null) {
+            send(chatId, "That profile no longer exists. Use /wow_admin to refresh the menu.");
+            return;
+        }
+        pendingAltAdditions.put(
+                new PendingAltKey(chatId, senderUserId),
+                new PendingAltAddition(profile.id(), profile.name(), Instant.now().plus(ALT_ADDITION_TTL))
+        );
+        sendAltAdditionPrompt(chatId, profile.name(), "Enter the EU realm and character name.");
+    }
+
+    private boolean handlePendingAltAddition(Update update) {
+        if (!update.getMessage().hasText() || update.getMessage().getFrom() == null) {
+            return false;
+        }
+        long chatId = update.getMessage().getChatId();
+        long senderUserId = update.getMessage().getFrom().getId();
+        PendingAltKey key = new PendingAltKey(chatId, senderUserId);
+        PendingAltAddition pending = pendingAltAdditions.get(key);
+        if (pending == null) {
+            return false;
+        }
+
+        String text = update.getMessage().getText().trim();
+        if (text.startsWith("/")) {
+            pendingAltAdditions.remove(key);
+            return false;
+        }
+        if (!isAdmin(senderUserId) || !telegramAccessPolicy.isAllowed(chatId, senderUserId)) {
+            pendingAltAdditions.remove(key);
+            return true;
+        }
+        if (Instant.now().isAfter(pending.expiresAt())) {
+            pendingAltAdditions.remove(key);
+            send(chatId, "Alt addition expired. Open /wow_admin and try again.");
+            return true;
+        }
+
+        String[] parts = text.split("\\s+");
+        if (parts.length != 2) {
+            sendAltAdditionPrompt(chatId, pending.profileName(), "Use exactly: realm character-name");
+            return true;
+        }
+        try {
+            trackedPlayerService.addCharacter(pending.profileId(), parts[0], parts[1]);
+            pendingAltAdditions.remove(key);
+            send(chatId, parts[1] + "-" + parts[0] + " added to profile " + pending.profileName() + ".",
+                    inlineKeyboard(List.of(inlineButton(
+                            "Manage Alts",
+                            WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALTS_CALLBACK + ":" + pending.profileId()
+                    ))));
+        } catch (IllegalArgumentException e) {
+            sendAltAdditionPrompt(chatId, pending.profileName(), "Could not add alt: " + e.getMessage());
+        }
+        return true;
+    }
+
+    private void sendAltAdditionPrompt(long chatId, String profileName, String instruction) {
+        try {
+            SendMessage message = SendMessage.builder()
+                    .chatId(chatId)
+                    .text(instruction + "\nExample: stormscale Thelinqq\nProfile: " + profileName)
+                    .build();
+            message.setReplyMarkup(ForceReplyKeyboard.builder()
+                    .forceReply(true)
+                    .selective(true)
+                    .inputFieldPlaceholder("realm character-name")
+                    .build());
+            client.execute(message);
+        } catch (Exception ignored) {
+            // Delivery failures are isolated so Telegram polling can continue processing later updates.
+        }
+    }
+
+    private TrackedPlayerService.PlayerProfile findProfile(Long profileId) {
+        if (profileId == null || profileId <= 0) {
+            return null;
+        }
+        return trackedPlayerService.profiles().stream()
+                .filter(candidate -> candidate.id() == profileId)
+                .findFirst()
+                .orElse(null);
     }
 
     private static Boolean parseBoolean(String value) {
@@ -1810,6 +2024,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         message.append("\n");
         for (var character : profile.characters()) {
+            if (!showTelegramLink && !character.active()) {
+                continue;
+            }
             message.append(character.selected() ? "  → " : "    ")
                     .append(character.name())
                     .append("-").append(character.realm())
@@ -2506,7 +2723,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (item == null) return emptyLabel;
         PriceResult result = isWowToken(item.name())
                 ? auctionService.getWowTokenPrice()
-                : auctionService.getRegionAverage(item.id());
+                : auctionService.getRegionBuyPrice(item.id());
         return result.available() ? formatCopper(result.avgCopper()) : emptyLabel;
     }
 
@@ -2848,6 +3065,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         private static NormalizedCommand direct(String command) {
             return new NormalizedCommand(command, command);
         }
+    }
+
+    private record PendingAltKey(long chatId, long telegramUserId) {
+    }
+
+    private record PendingAltAddition(long profileId, String profileName, Instant expiresAt) {
     }
 
 }

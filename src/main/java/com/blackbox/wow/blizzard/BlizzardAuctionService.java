@@ -29,9 +29,7 @@ public class BlizzardAuctionService {
     }
 
     public PriceResult getRegionAverage(long itemId) {
-        Duration ttl = Duration.ofSeconds(props.cache().commoditiesTtlSeconds());
-        JsonNode data = commoditiesCache.getOrCompute("commodities", ttl,
-                () -> api.get("/data/wow/auctions/commodities", null, api.defaultQuery()));
+        JsonNode data = getRegionCommodities();
 
         long totalQty = 0;
         long totalValue = 0;
@@ -40,17 +38,8 @@ public class BlizzardAuctionService {
             if (auction.path("item").path("id").asLong() != itemId) continue;
 
             long qty = auction.path("quantity").asLong(1);
-            long unitPrice = auction.path("unit_price").asLong(0);
-            long buyout = auction.path("buyout").asLong(0);
-
-            long unit;
-            if (unitPrice > 0) {
-                unit = unitPrice;
-            } else if (buyout > 0 && qty > 0) {
-                unit = buyout / qty;
-            } else {
-                continue;
-            }
+            long unit = unitPrice(auction, qty);
+            if (unit <= 0) continue;
 
             totalQty += qty;
             totalValue += unit * qty;
@@ -62,6 +51,39 @@ public class BlizzardAuctionService {
 
         long avgUnit = totalValue / totalQty;
         return PriceResult.fromCopper(avgUnit);
+    }
+
+    public PriceResult getRegionBuyPrice(long itemId) {
+        return lowestUnitPrice(getRegionCommodities(), itemId);
+    }
+
+    private JsonNode getRegionCommodities() {
+        Duration ttl = Duration.ofSeconds(props.cache().commoditiesTtlSeconds());
+        return commoditiesCache.getOrCompute("commodities", ttl,
+                () -> api.get("/data/wow/auctions/commodities", null, api.defaultQuery()));
+    }
+
+    static PriceResult lowestUnitPrice(JsonNode data, long itemId) {
+        long lowest = Long.MAX_VALUE;
+        for (JsonNode auction : data.path("auctions")) {
+            if (auction.path("item").path("id").asLong() != itemId) continue;
+
+            long quantity = auction.path("quantity").asLong(1);
+            long unit = unitPrice(auction, quantity);
+            if (unit > 0 && unit < lowest) {
+                lowest = unit;
+            }
+        }
+        return lowest == Long.MAX_VALUE ? PriceResult.notAvailable() : PriceResult.fromCopper(lowest);
+    }
+
+    private static long unitPrice(JsonNode auction, long quantity) {
+        long unitPrice = auction.path("unit_price").asLong(0);
+        if (unitPrice > 0) {
+            return unitPrice;
+        }
+        long buyout = auction.path("buyout").asLong(0);
+        return buyout > 0 && quantity > 0 ? buyout / quantity : 0;
     }
 
     public PriceResult getRealmAverage(String realmSlug, long itemId) {
@@ -94,17 +116,8 @@ public class BlizzardAuctionService {
             if (auction.path("item").path("id").asLong() != itemId) continue;
 
             long qty = auction.path("quantity").asLong(1);
-            long buyout = auction.path("buyout").asLong(0);
-            long unitPrice = auction.path("unit_price").asLong(0);
-
-            long unit;
-            if (unitPrice > 0) {
-                unit = unitPrice;
-            } else if (buyout > 0 && qty > 0) {
-                unit = buyout / qty;
-            } else {
-                continue;
-            }
+            long unit = unitPrice(auction, qty);
+            if (unit <= 0) continue;
 
             totalQty += qty;
             totalValue += unit * qty;

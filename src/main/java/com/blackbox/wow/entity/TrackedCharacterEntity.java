@@ -87,4 +87,8 @@ public class TrackedCharacterEntity {
         this.selected = true;
         this.active = true;
     }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
 }
