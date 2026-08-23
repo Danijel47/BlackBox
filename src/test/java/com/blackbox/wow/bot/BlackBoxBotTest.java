@@ -191,6 +191,7 @@ class BlackBoxBotTest {
         Update update = update(chatId, userId, "/profile");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(trackedPlayerService.profileForTelegramUser(userId)).thenReturn(Optional.of(new PlayerProfile(
+                1L,
                 "Alice",
                 userId,
                 true,
@@ -414,6 +415,92 @@ class BlackBoxBotTest {
                 .map(button -> button.getText()))
                 .contains("Progress", "Dungeons", "Vault", "Performance", "Pair", "Awards", "Combat")
                 .doesNotContain("Status");
+    }
+
+    @Test
+    void showsThePublicWowSectionsAsInlineButtons() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, "/wow"));
+
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo("Choose a WoW section:");
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly(
+                        "Mythic+", "Profiles", "Character", "Raids",
+                        "Season", "Tokens", "Materials", "Travel"
+                );
+    }
+
+    @Test
+    void showsOnlyNonAdminProfileActionsToARegularUser() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, "/profiles"));
+
+        SendMessage message = sentMessage();
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly("My Profile", "Select Main", "Group Mains", "Back");
+    }
+
+    @Test
+    void letsAUserSelectTheirMainThroughProfileButtons() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.profileForTelegramUser(userId)).thenReturn(Optional.of(new PlayerProfile(
+                1L,
+                "Alice",
+                userId,
+                true,
+                List.of(
+                        new ProfileCharacter("eu", "stormscale", "Alicemage", true, true),
+                        new ProfileCharacter("eu", "draenor", "Alicepriest", false, true)
+                )
+        )));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:profiles:select:1"));
+
+        verify(trackedPlayerService).switchOwnedCharacter(userId, "draenor", "Alicepriest");
+        assertThat(sentMessage().getText()).contains("Alicepriest-draenor");
+    }
+
+    @Test
+    void showsTheAdminButtonMenuOnlyToTheConfiguredAdmin() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+
+        bot().consume(update(chatId, adminId, "/wow_admin"));
+
+        SendMessage message = sentMessage();
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .contains("Users", "User Access", "Profiles", "Profile Access", "M+ Status", "Vault Reminder")
+                .doesNotContain("Mythic+", "Tokens");
+    }
+
+    @Test
+    void rejectsTheAdminButtonMenuForARegularUser() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, "/wow_admin"));
+
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
     }
 
     @Test

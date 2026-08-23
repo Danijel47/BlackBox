@@ -241,6 +241,13 @@ public class TrackedPlayerService {
         profile.setActive(active);
     }
 
+    @Transactional
+    public void setProfileActive(long profileId, boolean active) {
+        PlayerProfileEntity profile = profileRepository.findById(profileId)
+                .orElseThrow(() -> new IllegalArgumentException("Profile not found."));
+        profile.setActive(active);
+    }
+
     private PlayerProfileEntity requireProfile(String profileName) {
         return profileRepository.findByProfileNameIgnoreCase(profileName)
                 .orElseThrow(() -> new IllegalArgumentException("Profile not found: " + profileName));
@@ -277,6 +284,7 @@ public class TrackedPlayerService {
                 ))
                 .toList();
         return new PlayerProfile(
+                profile.getId(),
                 profile.getProfileName(),
                 profile.getTelegramUserId(),
                 profile.isActive(),
@@ -323,7 +331,13 @@ public class TrackedPlayerService {
     public record TrackedPlayer(long profileId, String profileName, String region, String realm, String name) {
     }
 
-    public record PlayerProfile(String name, Long telegramUserId, boolean active, List<ProfileCharacter> characters) {
+    public record PlayerProfile(
+            long id,
+            String name,
+            Long telegramUserId,
+            boolean active,
+            List<ProfileCharacter> characters
+    ) {
     }
 
     public record ProfileCharacter(

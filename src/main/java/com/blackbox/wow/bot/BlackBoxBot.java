@@ -97,6 +97,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String MPLUS_REFRESH_MESSAGE = " Use /mplus to refresh the menu.";
     private static final String MPLUS_INACTIVE_PROFILE_MESSAGE =
             "That profile is no longer active." + MPLUS_REFRESH_MESSAGE;
+    private static final String WOW_CALLBACK_PREFIX = "wow:";
+    private static final String WOW_ADMIN_CALLBACK_PREFIX = "admin:";
+    private static final String WOW_MENU_CALLBACK = "menu";
+    private static final String WOW_COMMAND_CALLBACK = "command";
+    private static final String WOW_PROFILES_CALLBACK = "profiles";
+    private static final String WOW_CHARACTER_CALLBACK = "character";
     private static final int INLINE_BUTTONS_PER_ROW = 2;
     private static final int MAX_PROFILE_BUTTONS = 90;
     private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
@@ -246,7 +252,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             telegramDailyPromptService.onMessage(senderUserId(update));
         }
         if (update != null && update.hasCallbackQuery()) {
-            handleMPlusCallback(update.getCallbackQuery());
+            handleCallback(update.getCallbackQuery());
             return;
         }
         CommandContext context = CommandContext.from(update);
@@ -364,6 +370,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private boolean handlePlayerProfileCommand(CommandContext context) {
         return switch (context.command()) {
             case "/mplus" -> handled(() -> handleUnifiedMPlusCommand(context));
+            case "/profiles" -> handled(() -> sendProfilesMenu(context.chatId()));
             case "/profile-help" -> handled(() -> send(context.chatId(), profileHelpMessage()));
             case "/profile" -> handled(() -> sendOwnProfile(context));
             case "/profilemain" -> handled(() -> changeOwnMain(context));
@@ -374,7 +381,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void handleUnifiedMPlusCommand(CommandContext context) {
         if (commandArguments(context).isBlank()) {
-            sendMPlusMenu(context.chatId(), context.senderUserId());
+            sendMPlusMenu(context.chatId());
             return;
         }
         MPlusRequest request = MPlusRequest.from(context.text());
@@ -439,14 +446,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /mplus_awards
                 /mplus_coverage [profile]
                 /mplus_combat [profile]
-                /mplus_status — admin only
                 """.strip();
     }
 
-    private void sendMPlusMenu(long chatId, Long senderUserId) {
+    private void sendMPlusMenu(long chatId) {
         List<InlineKeyboardButton> buttons = new ArrayList<>();
         for (MPlusMenuAction action : MPlusMenuAction.values()) {
-            if (action == MPlusMenuAction.STATUS && !isAdmin(senderUserId)) {
+            if (action == MPlusMenuAction.STATUS) {
                 continue;
             }
             buttons.add(inlineButton(
@@ -454,12 +460,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     MPLUS_CALLBACK_PREFIX + MPLUS_ACTION_CALLBACK + ":" + action.key()
             ));
         }
+        buttons.add(inlineButton("WoW Menu", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
         send(chatId, "Choose a Mythic+ report:", inlineKeyboard(buttons));
     }
 
-    private void handleMPlusCallback(CallbackQuery callback) {
-        if (callback == null || callback.getData() == null
-                || !callback.getData().startsWith(MPLUS_CALLBACK_PREFIX)) {
+    private void handleCallback(CallbackQuery callback) {
+        if (callback == null || !isSupportedCallback(callback.getData())) {
             return;
         }
         answerCallback(callback.getId());
@@ -477,18 +483,34 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
         try {
-            routeMPlusCallback(chatId, senderUserId, callback.getData());
+            routeCallback(chatId, senderUserId, callback.getData());
         } catch (RuntimeException _) {
-            send(chatId, "Could not load the Mythic+ selection. Please try again.");
+            send(chatId, "Could not load that menu selection. Please try again.");
         } finally {
             workingMessage.cancel(false);
+        }
+    }
+
+    private static boolean isSupportedCallback(String callbackData) {
+        return callbackData != null && (callbackData.startsWith(MPLUS_CALLBACK_PREFIX)
+                || callbackData.startsWith(WOW_CALLBACK_PREFIX)
+                || callbackData.startsWith(WOW_ADMIN_CALLBACK_PREFIX));
+    }
+
+    private void routeCallback(long chatId, long senderUserId, String callbackData) {
+        if (callbackData.startsWith(MPLUS_CALLBACK_PREFIX)) {
+            routeMPlusCallback(chatId, senderUserId, callbackData);
+        } else if (callbackData.startsWith(WOW_ADMIN_CALLBACK_PREFIX)) {
+            routeWowAdminCallback(chatId, senderUserId, callbackData);
+        } else {
+            routeWowCallback(chatId, senderUserId, callbackData);
         }
     }
 
     private void routeMPlusCallback(long chatId, long senderUserId, String callbackData) {
         String[] parts = callbackData.split(":");
         if (parts.length == 2 && parts[1].equals(MPLUS_MENU_CALLBACK)) {
-            sendMPlusMenu(chatId, senderUserId);
+            sendMPlusMenu(chatId);
             return;
         }
         if (parts.length == 3 && parts[1].equals(MPLUS_ACTION_CALLBACK)) {
@@ -630,6 +652,381 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return new InlineKeyboardMarkup(rows);
     }
 
+    private void sendWowMenu(long chatId) {
+        send(chatId, "Choose a WoW section:", inlineKeyboard(List.of(
+                wowMenuButton("Mythic+", "mplus"),
+                wowMenuButton("Profiles", WOW_PROFILES_CALLBACK),
+                wowMenuButton("Character", WOW_CHARACTER_CALLBACK),
+                wowMenuButton("Raids", "raids"),
+                wowMenuButton("Season", "season"),
+                wowMenuButton("Tokens", "tokens"),
+                wowMenuButton("Materials", "materials"),
+                wowMenuButton("Travel", "travel")
+        )));
+    }
+
+    private static InlineKeyboardButton wowMenuButton(String label, String menuKey) {
+        return inlineButton(label, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + menuKey);
+    }
+
+    private void routeWowCallback(long chatId, long senderUserId, String callbackData) {
+        String[] parts = callbackData.split(":");
+        if (parts.length == 2 && parts[1].equals(WOW_MENU_CALLBACK)) {
+            sendWowMenu(chatId);
+            return;
+        }
+        if (parts.length == 3 && parts[1].equals(WOW_MENU_CALLBACK)) {
+            openWowSubmenu(chatId, parts[2]);
+            return;
+        }
+        if (parts.length == 3 && parts[1].equals(WOW_COMMAND_CALLBACK)) {
+            runWowCommand(chatId, senderUserId, parts[2]);
+            return;
+        }
+        if (parts.length >= 3 && parts[1].equals(WOW_PROFILES_CALLBACK)) {
+            routeProfilesCallback(chatId, senderUserId, parts);
+            return;
+        }
+        if (parts.length >= 3 && parts[1].equals(WOW_CHARACTER_CALLBACK)) {
+            routeCharacterCallback(chatId, parts);
+            return;
+        }
+        send(chatId, "That WoW menu selection is no longer valid. Use /wow to start again.");
+    }
+
+    private void openWowSubmenu(long chatId, String menuKey) {
+        switch (menuKey) {
+            case "mplus" -> sendMPlusMenu(chatId);
+            case WOW_PROFILES_CALLBACK -> sendProfilesMenu(chatId);
+            case WOW_CHARACTER_CALLBACK -> sendCharacterMenu(chatId);
+            case "raids" -> sendCommandMenu(chatId, "Choose a raid report:", WowMenuGroup.RAIDS);
+            case "season" -> sendCommandMenu(chatId, "Choose a season report:", WowMenuGroup.SEASON);
+            case "tokens" -> sendCommandMenu(chatId, "Choose a token report:", WowMenuGroup.TOKENS);
+            case "materials" -> sendCommandMenu(chatId, "Choose a material list:", WowMenuGroup.MATERIALS);
+            case "travel" -> sendCommandMenu(chatId, "Choose a travel report:", WowMenuGroup.TRAVEL);
+            default -> send(chatId, "That WoW section is unavailable. Use /wow to refresh the menu.");
+        }
+    }
+
+    private void sendCommandMenu(long chatId, String prompt, WowMenuGroup group) {
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (WowCommandAction action : WowCommandAction.values()) {
+            if (action.group() == group) {
+                buttons.add(inlineButton(
+                        action.label(),
+                        WOW_CALLBACK_PREFIX + WOW_COMMAND_CALLBACK + ":" + action.key()
+                ));
+            }
+        }
+        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        send(chatId, prompt, inlineKeyboard(buttons));
+    }
+
+    private void runWowCommand(long chatId, long senderUserId, String actionKey) {
+        WowCommandAction action = WowCommandAction.fromKey(actionKey);
+        if (action == null) {
+            send(chatId, "That WoW report is unavailable. Use /wow to refresh the menu.");
+            return;
+        }
+        dispatchCommand(CommandContext.forCallback(chatId, senderUserId, action.commandText()));
+    }
+
+    private void sendProfilesMenu(long chatId) {
+        send(chatId, "Choose a profile action:", inlineKeyboard(List.of(
+                inlineButton("My Profile", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":view"),
+                inlineButton("Select Main", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":main"),
+                inlineButton("Group Mains", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":mains"),
+                inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+        )));
+    }
+
+    private void routeProfilesCallback(long chatId, long senderUserId, String[] parts) {
+        if (parts.length == 3 && parts[2].equals("view")) {
+            dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/profile"));
+        } else if (parts.length == 3 && parts[2].equals("mains")) {
+            dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/mains"));
+        } else if (parts.length == 3 && parts[2].equals("main")) {
+            sendOwnedCharacterMenu(chatId, senderUserId);
+        } else if (parts.length == 4 && parts[2].equals("select")) {
+            selectOwnedCharacter(chatId, senderUserId, parts[3]);
+        } else {
+            send(chatId, "That profile selection is no longer valid. Use /profiles to start again.");
+        }
+    }
+
+    private void sendOwnedCharacterMenu(long chatId, long senderUserId) {
+        var profile = trackedPlayerService.profileForTelegramUser(senderUserId);
+        if (profile.isEmpty()) {
+            send(chatId, "No player profile is linked to your Telegram account.");
+            return;
+        }
+        List<TrackedPlayerService.ProfileCharacter> characters = activeCharacters(profile.get());
+        if (characters.isEmpty()) {
+            send(chatId, "Your profile has no active characters.");
+            return;
+        }
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (int index = 0; index < characters.size(); index++) {
+            var character = characters.get(index);
+            String selectedMarker = character.selected() ? " ✓" : "";
+            buttons.add(inlineButton(
+                    character.name() + "-" + character.realm() + selectedMarker,
+                    WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":select:" + index
+            ));
+        }
+        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_PROFILES_CALLBACK));
+        send(chatId, "Choose your main character:", inlineKeyboard(buttons));
+    }
+
+    private void selectOwnedCharacter(long chatId, long senderUserId, String characterIndexValue) {
+        Long characterIndex = parseLong(characterIndexValue);
+        var profile = trackedPlayerService.profileForTelegramUser(senderUserId);
+        if (characterIndex == null || characterIndex < 0 || profile.isEmpty()) {
+            send(chatId, "That character selection is no longer valid. Open /profiles again.");
+            return;
+        }
+        List<TrackedPlayerService.ProfileCharacter> characters = activeCharacters(profile.get());
+        if (characterIndex >= characters.size()) {
+            send(chatId, "That character selection is no longer valid. Open /profiles again.");
+            return;
+        }
+        var character = characters.get(characterIndex.intValue());
+        trackedPlayerService.switchOwnedCharacter(senderUserId, character.realm(), character.name());
+        send(chatId, "Your selected main is now " + character.name() + "-" + character.realm() + " (EU).",
+                inlineKeyboard(List.of(
+                        inlineButton("Profiles", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":"
+                                + WOW_PROFILES_CALLBACK),
+                        inlineButton("WoW Menu", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+                )));
+    }
+
+    private static List<TrackedPlayerService.ProfileCharacter> activeCharacters(
+            TrackedPlayerService.PlayerProfile profile
+    ) {
+        return profile.characters().stream()
+                .filter(TrackedPlayerService.ProfileCharacter::active)
+                .toList();
+    }
+
+    private void sendCharacterMenu(long chatId) {
+        send(chatId, "Choose a character report:", inlineKeyboard(List.of(
+                inlineButton("Raider.IO Score", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":rio"),
+                inlineButton("Weekly Vault", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":vault"),
+                inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
+                inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+        )));
+    }
+
+    private void routeCharacterCallback(long chatId, String[] parts) {
+        if (parts.length == 3 && CharacterReportAction.isSupported(parts[2])) {
+            sendCharacterProfileMenu(chatId, parts[2]);
+            return;
+        }
+        if (parts.length == 4) {
+            runCharacterReport(chatId, parts[2], parts[3]);
+            return;
+        }
+        send(chatId, "That character report is no longer valid. Use /wow to start again.");
+    }
+
+    private void sendCharacterProfileMenu(long chatId, String actionKey) {
+        CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
+        if (action == null) {
+            send(chatId, "That character report is unavailable.");
+            return;
+        }
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (TrackedPlayer profile : trackedPlayerService.activePlayers()) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            buttons.add(inlineButton(
+                    profile.profileName(),
+                    WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":" + profile.profileId()
+            ));
+        }
+        if (buttons.isEmpty()) {
+            send(chatId, "No active profiles are available.");
+            return;
+        }
+        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
+        send(chatId, "Choose a profile for " + action.label() + ":", inlineKeyboard(buttons));
+    }
+
+    private void runCharacterReport(long chatId, String actionKey, String profileIdValue) {
+        CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
+        TrackedPlayer profile = findActiveProfile(profileIdValue);
+        if (action == null || profile == null) {
+            send(chatId, "That character or report is no longer available. Use /wow to refresh the menu.");
+            return;
+        }
+        switch (action) {
+            case RAIDER_IO -> send(chatId, formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(
+                    profile.region(), profile.realm(), profile.name()
+            )));
+            case VAULT -> send(chatId, formatWeeklyVault(raiderIoClient.getWeeklyVaultProgress(
+                    profile.region(), profile.realm(), profile.name()
+            )));
+            case MOUNTS -> send(chatId, "Insurmountable Collection: " + formatMountAchievementProgress(
+                    mountService.getMountProgress(profile.realm(), profile.name()).usable()
+            ));
+        }
+    }
+
+    private void sendWowAdminMenu(long chatId, Long senderUserId) {
+        if (!isAdmin(senderUserId)) {
+            send(chatId, adminOnlyMessage());
+            return;
+        }
+        send(chatId, "Choose an admin action:", inlineKeyboard(List.of(
+                adminButton("Users", "users"),
+                adminButton("User Access", "user_access"),
+                adminButton("Profiles", WOW_PROFILES_CALLBACK),
+                adminButton("Profile Access", "profile_access"),
+                adminCommandButton("M+ Status", "mplus_status"),
+                adminCommandButton("Vault Reminder", "vault_reminder"),
+                adminCommandButton("Travel Import", "travel_import"),
+                adminCommandButton("Import Status", "import_status"),
+                adminCommandButton("Group ID", "group_id"),
+                inlineButton("Public WoW Menu", WOW_ADMIN_CALLBACK_PREFIX + "public")
+        )));
+    }
+
+    private static InlineKeyboardButton adminButton(String label, String action) {
+        return inlineButton(label, WOW_ADMIN_CALLBACK_PREFIX + action);
+    }
+
+    private static InlineKeyboardButton adminCommandButton(String label, String action) {
+        return inlineButton(label, WOW_ADMIN_CALLBACK_PREFIX + WOW_COMMAND_CALLBACK + ":" + action);
+    }
+
+    private void routeWowAdminCallback(long chatId, long senderUserId, String callbackData) {
+        if (!isAdmin(senderUserId)) {
+            send(chatId, adminOnlyMessage());
+            return;
+        }
+        String[] parts = callbackData.split(":");
+        if (parts.length == 2 && parts[1].equals(WOW_MENU_CALLBACK)) {
+            sendWowAdminMenu(chatId, senderUserId);
+        } else if (parts.length == 2 && parts[1].equals("public")) {
+            sendWowMenu(chatId);
+        } else if (parts.length == 2 && parts[1].equals("users")) {
+            send(chatId, formatTelegramUsers(), adminBackKeyboard());
+        } else if (parts.length == 2 && parts[1].equals("user_access")) {
+            sendAdminUserAccessMenu(chatId);
+        } else if (parts.length == 2 && parts[1].equals(WOW_PROFILES_CALLBACK)) {
+            send(chatId, formatPlayerProfiles(), adminBackKeyboard());
+        } else if (parts.length == 2 && parts[1].equals("profile_access")) {
+            sendAdminProfileAccessMenu(chatId);
+        } else if (parts.length == 3 && parts[1].equals(WOW_COMMAND_CALLBACK)) {
+            runWowAdminAction(chatId, senderUserId, parts[2]);
+        } else if (parts.length == 4 && parts[1].equals("user")) {
+            changeUserAccessFromButton(chatId, parts[2], parts[3]);
+        } else if (parts.length == 4 && parts[1].equals("profile")) {
+            changeProfileAccessFromButton(chatId, parts[2], parts[3]);
+        } else {
+            send(chatId, "That admin selection is no longer valid. Use /wow_admin to start again.");
+        }
+    }
+
+    private InlineKeyboardMarkup adminBackKeyboard() {
+        return inlineKeyboard(List.of(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)));
+    }
+
+    private void runWowAdminAction(long chatId, long senderUserId, String actionKey) {
+        switch (actionKey) {
+            case "mplus_status" -> send(chatId, adminMPlusStatus(senderUserId), adminBackKeyboard());
+            case "vault_reminder" -> send(chatId, vaultReminderService.checkNowMessage(), adminBackKeyboard());
+            case "travel_import" -> send(chatId, timeToGoCommands.submitHistoricalImport(), adminBackKeyboard());
+            case "import_status" -> send(chatId, timeToGoCommands.refreshHistoricalImport(), adminBackKeyboard());
+            case "group_id" -> send(chatId, "Chat ID: " + chatId, adminBackKeyboard());
+            default -> send(chatId, "That admin action is unavailable. Use /wow_admin to refresh the menu.");
+        }
+    }
+
+    private void sendAdminUserAccessMenu(long chatId) {
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (var user : telegramBotUserService.users()) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            boolean enable = !user.isActive();
+            String displayName = user.getDisplayName() == null || user.getDisplayName().isBlank()
+                    ? Long.toString(user.getTelegramUserId())
+                    : user.getDisplayName();
+            buttons.add(inlineButton(
+                    (enable ? "Enable " : "Disable ") + displayName,
+                    WOW_ADMIN_CALLBACK_PREFIX + "user:" + user.getTelegramUserId() + ":" + enable
+            ));
+        }
+        if (buttons.isEmpty()) {
+            send(chatId, "No Telegram users are registered.", adminBackKeyboard());
+            return;
+        }
+        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        send(chatId, "Choose a user access change:", inlineKeyboard(buttons));
+    }
+
+    private void changeUserAccessFromButton(long chatId, String userIdValue, String activeValue) {
+        Long userId = parseLong(userIdValue);
+        Boolean active = parseBoolean(activeValue);
+        if (userId == null || userId <= 0 || active == null) {
+            send(chatId, "That user access selection is invalid. Use /wow_admin to refresh the menu.");
+            return;
+        }
+        telegramBotUserService.setActive(userId, active);
+        telegramAccessPolicy.userAccessChanged(userId);
+        send(chatId, "Telegram user " + userId + (active ? " enabled." : " disabled."), adminBackKeyboard());
+    }
+
+    private void sendAdminProfileAccessMenu(long chatId) {
+        List<TrackedPlayerService.PlayerProfile> profiles = trackedPlayerService.profiles();
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        for (var profile : profiles) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            boolean enable = !profile.active();
+            buttons.add(inlineButton(
+                    (enable ? "Enable " : "Disable ") + profile.name(),
+                    WOW_ADMIN_CALLBACK_PREFIX + "profile:" + profile.id() + ":" + enable
+            ));
+        }
+        if (buttons.isEmpty()) {
+            send(chatId, "No player profiles are configured.", adminBackKeyboard());
+            return;
+        }
+        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        send(chatId, "Choose a profile access change:", inlineKeyboard(buttons));
+    }
+
+    private void changeProfileAccessFromButton(long chatId, String profileIdValue, String activeValue) {
+        Long profileId = parseLong(profileIdValue);
+        Boolean active = parseBoolean(activeValue);
+        if (profileId == null || profileId <= 0 || active == null) {
+            send(chatId, "That profile access selection is invalid. Use /wow_admin to refresh the menu.");
+            return;
+        }
+        var profile = trackedPlayerService.profiles().stream()
+                .filter(candidate -> candidate.id() == profileId)
+                .findFirst()
+                .orElse(null);
+        if (profile == null) {
+            send(chatId, "That profile no longer exists. Use /wow_admin to refresh the menu.");
+            return;
+        }
+        trackedPlayerService.setProfileActive(profile.id(), active);
+        send(chatId, PROFILE_PREFIX + profile.name() + (active ? " enabled." : " disabled."), adminBackKeyboard());
+    }
+
+    private static Boolean parseBoolean(String value) {
+        return switch (value) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> null;
+        };
+    }
+
     private void sendOwnProfile(CommandContext context) {
         Long telegramUserId = context.senderUserId();
         if (telegramUserId == null) {
@@ -666,7 +1063,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleProfileAdministrationCommand(CommandContext context) {
         Runnable adminAction = switch (context.command()) {
-            case "/profiles", "/profilelist" -> () -> send(context.chatId(), formatPlayerProfiles());
+            case "/profilelist" -> () -> send(context.chatId(), formatPlayerProfiles());
             case "/profileadd" -> () -> addProfile(context);
             case "/profilecharadd" -> () -> addProfileCharacter(context);
             case "/profilechardelete", "/profilecharremove" -> () -> deleteProfileCharacter(context);
@@ -1216,12 +1613,14 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleGeneralCommand(CommandContext context) {
         return switch (context.command()) {
+            case "/wow", "/start" -> handled(() -> sendWowMenu(context.chatId()));
+            case "/wowadmin" -> handled(() -> sendWowAdminMenu(context.chatId(), context.senderUserId()));
             case "/vault" -> handled(() -> handleVaultCommand(context));
             case "/rio" -> handled(() -> handleRaiderIoCommand(context));
-            case "/help", "/commands" -> handled(() -> send(context.chatId(), publicHelpMessage()));
+            case "/help", "/commands" -> handled(() -> sendWowMenu(context.chatId()));
             case "/help-admin" -> handled(() -> runAdminCommand(
                     context,
-                    () -> send(context.chatId(), adminHelpMessage())
+                    () -> sendWowAdminMenu(context.chatId(), context.senderUserId())
             ));
             default -> false;
         };
@@ -1273,98 +1672,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     Reason: %s
                     """.formatted(region, realm, name, e.getMessage()).strip());
         }
-    }
-
-    private static String publicHelpMessage() {
-        // Public help deliberately omits administration and TomTom commands.
-        return """
-                Commands:
-                /my_id
-                /profile
-                /profile_help
-                /profile_main <realm> <character>
-                /mains
-                /mplus — interactive Mythic+ menu
-                /rio <region> <realm> <name>
-                /vault
-                /title
-                /title_01
-                /season_recap
-                /season_recap_depleted
-                /season_recap_abandoned
-                /affixes
-                /guild
-                /guild_list
-                /rwf
-                /mount_achievement <realm> <name>
-                /price <itemId|item name> [realm-if-itemId]
-                /price_ah <connectedRealmId> <auctionHouseId> <itemId>
-                /token
-                /token_lowest_week
-                /token_lowest_month
-                /token_highest_week
-                /token_highest_month
-                /token_best
-                /ores
-                /herbs
-                """.strip();
-    }
-
-    private static String adminHelpMessage() {
-        return """
-                All commands:
-                /help
-                /help_admin
-                /my_id
-                /group_id
-                /users
-                /user_add <telegramUserId> [display name]
-                /user_disable <telegramUserId>
-                /user_enable <telegramUserId>
-                /profile
-                /profile_help
-                /profile_main <realm> <character>
-                /mains
-                /profiles
-                /mplus — interactive Mythic+ menu, including admin status
-                /profile_add <profile> <region> <realm> <character>
-                /profile_char_add <profile> <realm> <character>
-                /profile_char_delete <profile> <realm> <character>
-                /profile_link <telegramUserId> <profile>
-                /profile_unlink <profile>
-                /profile_switch <profile> <region> <realm> <character>
-                /profile_disable <profile>
-                /profile_enable <profile>
-                /vault_reminder_now
-                /rio <region> <realm> <name>
-                /vault
-                /title
-                /title_01
-                /season_recap
-                /season_recap_depleted
-                /season_recap_abandoned
-                /affixes
-                /guild
-                /guild_list
-                /rwf
-                /road_zadar_zagreb
-                /road_zagreb_zadar
-                /road_best_zadar_zagreb
-                /road_best_zagreb_zadar
-                /time_to_go_import_30
-                /time_to_go_import_status
-                /mount_achievement <realm> <name>
-                /price <itemId|item name> [realm-if-itemId]
-                /price_ah <connectedRealmId> <auctionHouseId> <itemId>
-                /token
-                /token_lowest_week
-                /token_lowest_month
-                /token_highest_week
-                /token_highest_month
-                /token_best
-                /ores
-                /herbs
-                """.strip();
     }
 
     private ScheduledFuture<?> scheduleWorkingMessage(long chatId) {
@@ -2279,6 +2586,121 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     ) {
     }
 
+    private enum WowMenuGroup {
+        RAIDS,
+        SEASON,
+        TOKENS,
+        MATERIALS,
+        TRAVEL
+    }
+
+    private enum WowCommandAction {
+        RWF("rwf", "World First", "/rwf", WowMenuGroup.RAIDS),
+        VAULT("vault", "Vault Watch", "/vault", WowMenuGroup.RAIDS),
+        AFFIXES("affixes", "Affixes", "/affixes", WowMenuGroup.RAIDS),
+        GUILD("guild", "Guild Progress", "/guild", WowMenuGroup.RAIDS),
+        GUILD_LIST("guild_list", "Raid List", "/guildlist", WowMenuGroup.RAIDS),
+        TITLE("title", "Title Watch", "/title", WowMenuGroup.SEASON),
+        TITLE_ZERO_ONE("title_01", "Top 0.1%", "/title01", WowMenuGroup.SEASON),
+        RECAP("recap", "Season Recap", "/seasonrecap", WowMenuGroup.SEASON),
+        RECAP_DEPLETED("recap_depleted", "Depleted Runs", "/seasonrecapdepleted", WowMenuGroup.SEASON),
+        RECAP_ABANDONED("recap_abandoned", "Abandoned Runs", "/seasonrecapabandoned", WowMenuGroup.SEASON),
+        TOKEN("token", "Current Price", "/token", WowMenuGroup.TOKENS),
+        TOKEN_LOW_WEEK("token_low_week", "Lowest Week", TOKEN_LOWEST_WEEK_COMMAND, WowMenuGroup.TOKENS),
+        TOKEN_LOW_MONTH("token_low_month", "Lowest Month", TOKEN_LOWEST_MONTH_COMMAND, WowMenuGroup.TOKENS),
+        TOKEN_HIGH_WEEK("token_high_week", "Highest Week", TOKEN_HIGHEST_WEEK_COMMAND, WowMenuGroup.TOKENS),
+        TOKEN_HIGH_MONTH("token_high_month", "Highest Month", TOKEN_HIGHEST_MONTH_COMMAND, WowMenuGroup.TOKENS),
+        TOKEN_BEST("token_best", "Best Hours", TOKEN_BEST_COMMAND, WowMenuGroup.TOKENS),
+        ORES("ores", "Ores", "/ores", WowMenuGroup.MATERIALS),
+        HERBS("herbs", "Herbs", "/herbs", WowMenuGroup.MATERIALS),
+        ROAD_ZADAR_ZAGREB("road_zadar_zagreb", "Zadar → Zagreb", "/road zadar zagreb", WowMenuGroup.TRAVEL),
+        ROAD_ZAGREB_ZADAR("road_zagreb_zadar", "Zagreb → Zadar", "/road zagreb zadar", WowMenuGroup.TRAVEL),
+        ROAD_BEST_ZADAR_ZAGREB(
+                "road_best_zadar_zagreb",
+                "Best Zadar → Zagreb",
+                "/roadbest zadar zagreb",
+                WowMenuGroup.TRAVEL
+        ),
+        ROAD_BEST_ZAGREB_ZADAR(
+                "road_best_zagreb_zadar",
+                "Best Zagreb → Zadar",
+                "/roadbest zagreb zadar",
+                WowMenuGroup.TRAVEL
+        );
+
+        private final String key;
+        private final String label;
+        private final String commandText;
+        private final WowMenuGroup group;
+
+        WowCommandAction(String key, String label, String commandText, WowMenuGroup group) {
+            this.key = key;
+            this.label = label;
+            this.commandText = commandText;
+            this.group = group;
+        }
+
+        String key() {
+            return key;
+        }
+
+        String label() {
+            return label;
+        }
+
+        String commandText() {
+            return commandText;
+        }
+
+        WowMenuGroup group() {
+            return group;
+        }
+
+        static WowCommandAction fromKey(String key) {
+            for (WowCommandAction action : values()) {
+                if (action.key.equals(key)) {
+                    return action;
+                }
+            }
+            return null;
+        }
+    }
+
+    private enum CharacterReportAction {
+        RAIDER_IO("rio", "Raider.IO Score"),
+        VAULT("vault", "Weekly Vault"),
+        MOUNTS("mount", "Mount Progress");
+
+        private final String key;
+        private final String label;
+
+        CharacterReportAction(String key, String label) {
+            this.key = key;
+            this.label = label;
+        }
+
+        String key() {
+            return key;
+        }
+
+        String label() {
+            return label;
+        }
+
+        static boolean isSupported(String key) {
+            return fromKey(key) != null;
+        }
+
+        static CharacterReportAction fromKey(String key) {
+            for (CharacterReportAction action : values()) {
+                if (action.key.equals(key)) {
+                    return action;
+                }
+            }
+            return null;
+        }
+    }
+
     private enum MPlusMenuAction {
         PROGRESS("progress", "Progress", true),
         DUNGEONS("dungeons", "Dungeons", true),
@@ -2351,7 +2773,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 return null;
             }
 
-            String text = update.getMessage().getText().trim();
+            Long senderUserId = update.getMessage().getFrom() == null
+                    ? null
+                    : update.getMessage().getFrom().getId();
+            return fromText(update.getMessage().getChatId(), senderUserId, update.getMessage().getText());
+        }
+
+        private static CommandContext forCallback(long chatId, Long senderUserId, String text) {
+            return fromText(chatId, senderUserId, text);
+        }
+
+        private static CommandContext fromText(long chatId, Long senderUserId, String inputText) {
+            String text = inputText.trim();
             String[] commandAndArguments = text.split("\\s+", 2);
             String command = commandAndArguments[0];
             int mentionSeparator = command.indexOf('@');
@@ -2365,10 +2798,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 text = normalized.rewrittenPrefix() + (arguments.isBlank() ? "" : " " + arguments);
             }
 
-            Long senderUserId = update.getMessage().getFrom() == null
-                    ? null
-                    : update.getMessage().getFrom().getId();
-            return new CommandContext(update.getMessage().getChatId(), senderUserId, text, command);
+            return new CommandContext(chatId, senderUserId, text, command);
         }
 
         private static NormalizedCommand normalizeSnakeCaseCommand(String command) {
