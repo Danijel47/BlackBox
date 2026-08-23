@@ -24,6 +24,7 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -154,6 +155,7 @@ public class WarcraftLogsStatisticsService {
         List<PlayerStatistics> selected = statistics().stream()
                 .filter(statistic -> requestedProfile.isBlank()
                         || statistic.profileName().equalsIgnoreCase(requestedProfile))
+                .sorted(combatStatisticComparator())
                 .toList();
         if (selected.isEmpty()) {
             return requestedProfile.isBlank()
@@ -161,21 +163,31 @@ public class WarcraftLogsStatisticsService {
                     : "Active player profile not found: " + requestedProfile;
         }
         StringBuilder message = new StringBuilder("Warcraft Logs M+ combat — ")
-                .append(properties.seasonKey()).append('\n');
+                .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
         return message.append("Averages use logged runs only; missing/private logs are unavailable, not zero.")
                 .toString();
     }
 
+    private static Comparator<PlayerStatistics> combatStatisticComparator() {
+        return Comparator
+                .comparing(
+                        PlayerStatistics::averageKeyParsePercentage,
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                )
+                .thenComparing(PlayerStatistics::profileName, String.CASE_INSENSITIVE_ORDER);
+    }
+
     private static void appendCombatStatistic(StringBuilder message, PlayerStatistics statistic) {
         message.append("• ").append(statistic.profileName()).append(" (")
-                .append(statistic.characterName()).append(") — N=").append(statistic.dungeonRuns())
-                .append(", interrupts ").append(formatMetric(statistic.averageInterrupts()))
-                .append(", deaths ").append(formatMetric(statistic.averageDeaths()))
-                .append(", Key parse ").append(formatPercentMetric(statistic.averageKeyParsePercentage()))
-                .append(", DPS ").append(formatDamagePerSecond(statistic.averageDamagePerSecond()));
-        if (statistic.keyParsedDungeonRuns() > 0) {
-            message.append(" (key-parse N=").append(statistic.keyParsedDungeonRuns()).append(')');
+                .append(statistic.characterName()).append(")\n")
+                .append("  Key parse: ").append(formatPercentMetric(statistic.averageKeyParsePercentage())).append('\n')
+                .append("  DPS: ").append(formatDamagePerSecond(statistic.averageDamagePerSecond())).append('\n')
+                .append("  Interrupts per run: ").append(formatMetric(statistic.averageInterrupts())).append('\n')
+                .append("  Deaths per run: ").append(formatMetric(statistic.averageDeaths())).append('\n')
+                .append("  Logged runs: ").append(statistic.dungeonRuns()).append('\n');
+        if (statistic.keyParsedDungeonRuns() != statistic.dungeonRuns()) {
+            message.append("  Key-parse runs: ").append(statistic.keyParsedDungeonRuns()).append('\n');
         }
         message.append('\n');
     }

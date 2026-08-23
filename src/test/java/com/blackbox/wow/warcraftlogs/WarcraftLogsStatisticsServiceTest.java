@@ -52,8 +52,44 @@ class WarcraftLogsStatisticsServiceTest {
         );
 
         assertThat(service.combatMessage("Linq"))
-                .contains("Linq (Thelinq) — N=1, interrupts 4, deaths 0, Key parse 62%, DPS 140,000")
+                .contains("""
+                        • Linq (Thelinq)
+                          Key parse: 62%
+                          DPS: 140,000
+                          Interrupts per run: 4
+                          Deaths per run: 0
+                          Logged runs: 1
+                        """.strip())
+                .doesNotContain("N=", "Key-parse runs:")
                 .doesNotContain("Linqq", "interrupts 13", "deaths 1");
+    }
+
+    @Test
+    void ordersCombatProfilesByKeyParseDescending() {
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        WarcraftLogPlayerRunEntity lowerParse = run(
+                1L, "AlphaMain", "alpha-report", 2, 1, "42", "100000"
+        );
+        WarcraftLogPlayerRunEntity higherParse = run(
+                2L, "BravoMain", "bravo-report", 3, 0, "88", "150000"
+        );
+        when(runRepository.findBySeasonKey("midnight-season-2"))
+                .thenReturn(List.of(lowerParse, higherParse));
+        when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1L, "Alpha", "eu", "Stormscale", "AlphaMain"),
+                new TrackedPlayerService.TrackedPlayer(2L, "Bravo", "eu", "Draenor", "BravoMain")
+        ));
+        WarcraftLogsStatisticsService service = service(
+                trackedPlayerService, runRepository, snapshotRepository
+        );
+
+        String message = service.combatMessage("");
+
+        assertThat(message.indexOf("• Bravo (BravoMain)")).isLessThan(message.indexOf("• Alpha (AlphaMain)"));
     }
 
     @Test
@@ -149,7 +185,7 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(statistics.averageKeyParsePercentage()).isNull();
         assertThat(statistics.averageDamagePerSecond()).isNull();
         assertThat(service.combatMessage(""))
-                .contains("Key parse unavailable")
+                .contains("Key parse: unavailable")
                 .doesNotContain(", Parse ", ", Key unavailable");
     }
 
@@ -177,8 +213,20 @@ class WarcraftLogsStatisticsServiceTest {
             String keyParse,
             String damagePerSecond
     ) {
+        return run(1L, characterName, reportCode, interrupts, deaths, keyParse, damagePerSecond);
+    }
+
+    private static WarcraftLogPlayerRunEntity run(
+            long profileId,
+            String characterName,
+            String reportCode,
+            int interrupts,
+            int deaths,
+            String keyParse,
+            String damagePerSecond
+    ) {
         WarcraftLogPlayerRunEntity run = new WarcraftLogPlayerRunEntity(
-                "midnight-season-2", 1, characterName, reportCode, 1,
+                "midnight-season-2", profileId, characterName, reportCode, 1,
                 Instant.parse("2026-08-19T10:00:00Z"), 7, "King's Rest", 10,
                 interrupts, deaths, null,
                 keyParse == null ? null : new BigDecimal(keyParse),
