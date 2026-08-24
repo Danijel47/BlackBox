@@ -7,15 +7,16 @@ import com.blackbox.wow.blizzard.BlizzardMountService;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
-import com.blackbox.wow.service.RaiderIoAbandonedRunService;
 import com.blackbox.wow.service.RaceToWorldFirstService;
 import com.blackbox.wow.service.MPlusDataCollectionService;
 import com.blackbox.wow.service.MPlusProgressService;
 import com.blackbox.wow.service.MPlusDungeonVaultService;
 import com.blackbox.wow.service.MPlusPerformanceService;
 import com.blackbox.wow.service.MPlusTeamService;
+import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
+import com.blackbox.wow.service.MPlusSeasonReportService;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TelegramDailyPromptService;
@@ -24,10 +25,7 @@ import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.VaultReminderService;
-import com.blackbox.wow.service.WowTokenPriceHistoryService;
-import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenHourAverage;
-import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenPricePoint;
-import com.blackbox.wow.service.WowTokenPriceHistoryService.TokenTradingHours;
+import com.blackbox.wow.service.WowTokenReportService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +45,6 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -67,11 +64,10 @@ class BlackBoxBotTest {
     @Mock private RaiderIoDefaultGuildProperties defaultGuildProperties;
     @Mock private WowWatchlistProperties watchlistProperties;
     @Mock private BlizzardAuctionService auctionService;
-    @Mock private WowTokenPriceHistoryService tokenPriceHistoryService;
+    @Mock private WowTokenReportService wowTokenReportService;
     @Mock private BlizzardItemService itemService;
     @Mock private BlizzardMountService mountService;
     @Mock private TimeToGoCommandService timeToGoCommandService;
-    @Mock private RaiderIoAbandonedRunService abandonedRunService;
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
@@ -82,6 +78,8 @@ class BlackBoxBotTest {
     @Mock private MPlusTeamService mplusTeamService;
     @Mock private MPlusAdvancedService mplusAdvancedService;
     @Mock private MPlusRunCorrelationService mplusRunCorrelationService;
+    @Mock private MPlusSeasonReportService mplusSeasonReportService;
+    @Mock private MPlusTitleWatchService mplusTitleWatchService;
     @Mock private WarcraftLogsStatisticsService warcraftLogsStatisticsService;
     @Mock private TelegramAccessPolicy accessPolicy;
     @Mock private TelegramBotUserService telegramBotUserService;
@@ -102,7 +100,8 @@ class BlackBoxBotTest {
         long userId = 456L;
         Update update = update(chatId, userId, "/vault@BlackBoxBot");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.vaultWatchPlayers()).thenReturn(List.of());
+        when(mplusSeasonReportService.weeklyVaultWatch())
+                .thenReturn("No Mythic+ vault watch players configured.");
 
         bot().consume(update);
 
@@ -285,16 +284,12 @@ class BlackBoxBotTest {
         long userId = 456L;
         Update update = update(chatId, userId, "/token_lowest_week");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(tokenPriceHistoryService.lowestPriceSince(any(Instant.class))).thenReturn(Optional.of(
-                new TokenPricePoint(3_456_789_000L, Instant.parse("2026-08-21T08:00:00Z"))
-        ));
+        when(wowTokenReportService.lowestPrice(any(), any())).thenReturn("Lowest token price");
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).isEqualTo("""
-                Lowest WoW Token price (EU) in the last week: 345678g 90s
-                Date: 21 Aug 2026, 10:00 CEST
-                """.strip());
+        verify(wowTokenReportService).lowestPrice(any(), any());
+        assertThat(sentMessage().getText()).isEqualTo("Lowest token price");
     }
 
     @Test
@@ -308,7 +303,7 @@ class BlackBoxBotTest {
 
         assertThat(sentMessage().getText())
                 .isEqualTo("Usage: /token_lowest_week or /token_lowest_month");
-        verify(tokenPriceHistoryService, never()).lowestPriceSince(any());
+        verify(wowTokenReportService, never()).lowestPrice(any(), any());
     }
 
     @Test
@@ -317,16 +312,12 @@ class BlackBoxBotTest {
         long userId = 456L;
         Update update = update(chatId, userId, "/token_highest_month");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(tokenPriceHistoryService.highestPriceSince(any(Instant.class))).thenReturn(Optional.of(
-                new TokenPricePoint(4_100_000_000L, Instant.parse("2026-08-20T18:00:00Z"))
-        ));
+        when(wowTokenReportService.highestPrice(any(), any())).thenReturn("Highest token price");
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).isEqualTo("""
-                Highest WoW Token price (EU) in the last 30 days: 410000g 0s
-                Date: 20 Aug 2026, 20:00 CEST
-                """.strip());
+        verify(wowTokenReportService).highestPrice(any(), any());
+        assertThat(sentMessage().getText()).isEqualTo("Highest token price");
     }
 
     @Test
@@ -335,96 +326,40 @@ class BlackBoxBotTest {
         long userId = 456L;
         Update update = update(chatId, userId, "/token_best");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(tokenPriceHistoryService.bestTradingHoursSince(any(Instant.class), any(ZoneId.class)))
-                .thenReturn(Optional.of(new TokenTradingHours(
-                        new TokenHourAverage(4, 3_200_000_000L, 28),
-                        new TokenHourAverage(20, 3_600_000_000L, 29)
-                )));
+        when(wowTokenReportService.bestTradingHours()).thenReturn("Best recurring token hours");
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).isEqualTo("""
-                Best recurring WoW Token times (EU, last 30 days; Europe/Zagreb):
-                Buy with gold: 04:00–04:59 — avg 320000g 0s (28 daily samples)
-                Sell for gold: 20:00–20:59 — avg 360000g 0s (29 daily samples)
-                Based on hourly averages; historical patterns do not guarantee future prices.
-                """.strip());
+        verify(wowTokenReportService).bestTradingHours();
+        assertThat(sentMessage().getText()).isEqualTo("Best recurring token hours");
     }
 
     @Test
-    void reportsUnavailableTitleWatchWhenRaiderIoOmitsTheCutoffScore() throws Exception {
+    void routesTheTitleWatchCommand() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
         Update update = update(chatId, userId, "/title");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.titleWatchPlayers()).thenReturn(List.of(player));
-        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu")).thenReturn(
-                new RaiderIoClient.MPlusTitleCutoff("eu", "season-mn-2", null, 0, "")
-        );
+        when(mplusTitleWatchService.onePercentReport()).thenReturn("1% title watch");
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).contains("unavailable", "no cutoff score");
-        verify(raiderIoClient, never()).getCurrentMPlusScore("eu", "Stormscale", "Bucothered");
+        verify(mplusTitleWatchService).onePercentReport();
+        assertThat(sentMessage().getText()).isEqualTo("1% title watch");
     }
 
     @Test
-    void reportsUnavailablePointOneTitleWatchWhenRaiderIoOmitsTheCutoffScore() throws Exception {
+    void routesThePointOneTitleWatchCommand() throws Exception {
         long chatId = 123L;
         long userId = 456L;
-        TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
         Update update = update(chatId, userId, "/title01");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.activePlayers()).thenReturn(List.of(player));
-        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
-                new RaiderIoClient.MPlusTitleCutoff("eu", "season-mn-2", null, 0, "")
-        );
+        when(mplusTitleWatchService.pointOnePercentReport()).thenReturn("0.1% title watch");
 
         bot().consume(update);
 
-        assertThat(sentMessage().getText()).contains("unavailable", "no cutoff score");
-        verify(raiderIoClient, never()).getCurrentMPlusScore("eu", "Stormscale", "Bucothered");
-    }
-
-    @Test
-    void includesAllActiveProfilesInPointOneTitleWatch() throws Exception {
-        long chatId = 123L;
-        long userId = 456L;
-        TrackedPlayer buco = new TrackedPlayer(1L, "Buco", "eu", "stormscale", "Bucothered");
-        TrackedPlayer linq = new TrackedPlayer(2L, "Linq", "eu", "draenor", "Thelinq");
-        Update update = update(chatId, userId, "/title01");
-        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
-        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
-                new RaiderIoClient.MPlusTitleCutoff(
-                        "eu",
-                        "season-mn-2",
-                        new BigDecimal("3000"),
-                        1000,
-                        ""
-                )
-        );
-        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered")).thenReturn(
-                new RaiderIoClient.RaiderIoScore(
-                        "Bucothered", "Stormscale", "eu",
-                        new BigDecimal("2900"), null, null, null, "", Instant.EPOCH
-                )
-        );
-        when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq")).thenReturn(
-                new RaiderIoClient.RaiderIoScore(
-                        "Thelinq", "Draenor", "eu",
-                        new BigDecimal("3100"), null, null, null, "", Instant.EPOCH
-                )
-        );
-
-        bot().consume(update);
-
-        assertThat(sentMessage().getText())
-                .contains("M+ 0.1% title watch", "• Bucothered:", "• Thelinq:")
-                .containsSubsequence("• Thelinq:", "• Bucothered:");
-        verify(raiderIoClient).getCurrentMPlusScore("eu", "stormscale", "Bucothered");
-        verify(raiderIoClient).getCurrentMPlusScore("eu", "draenor", "Thelinq");
+        verify(mplusTitleWatchService).pointOnePercentReport();
+        assertThat(sentMessage().getText()).isEqualTo("0.1% title watch");
     }
 
     @Test
@@ -675,6 +610,31 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void routesAdminUserAccessCallbacks() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, adminId, "admin:user:456:false"));
+
+        verify(telegramBotUserService).setActive(456L, false);
+        verify(accessPolicy).userAccessChanged(456L);
+        assertThat(sentMessage().getText()).isEqualTo("Telegram user 456 disabled.");
+    }
+
+    @Test
+    void rejectsUnknownAdminCallbackShapes() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, adminId, "admin:unknown:value"));
+
+        assertThat(sentMessage().getText())
+                .isEqualTo("That admin selection is no longer valid. Use /wow_admin to start again.");
+    }
+
+    @Test
     void letsTheAdminAddAnAltThroughTheButtonPrompt() throws Exception {
         long chatId = 123L;
         long adminId = 999L;
@@ -894,11 +854,10 @@ class BlackBoxBotTest {
                 defaultGuildProperties,
                 watchlistProperties,
                 auctionService,
-                tokenPriceHistoryService,
+                wowTokenReportService,
                 itemService,
                 mountService,
                 timeToGoCommandService,
-                abandonedRunService,
                 trackedPlayerService,
                 vaultReminderService,
                 raceToWorldFirstService,
@@ -909,6 +868,8 @@ class BlackBoxBotTest {
                 mplusTeamService,
                 mplusAdvancedService,
                 mplusRunCorrelationService,
+                mplusSeasonReportService,
+                mplusTitleWatchService,
                 warcraftLogsStatisticsService,
                 accessPolicy,
                 telegramBotUserService,
