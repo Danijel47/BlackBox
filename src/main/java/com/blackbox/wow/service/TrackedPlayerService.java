@@ -59,16 +59,6 @@ public class TrackedPlayerService {
     }
 
     @Transactional(readOnly = true)
-    public Optional<TrackedPlayer> titleZeroPointOneWatchPlayer() {
-        return profileRepository
-                .findByActiveTrueAndTitleZeroPointOneWatchEnabledTrueOrderByDisplayOrderAscIdAsc()
-                .stream()
-                .map(this::selectedPlayer)
-                .flatMap(Optional::stream)
-                .findFirst();
-    }
-
-    @Transactional(readOnly = true)
     public List<PlayerProfile> profiles() {
         return profileRepository.findAllByOrderByDisplayOrderAscIdAsc().stream()
                 .map(this::toProfile)

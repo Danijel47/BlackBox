@@ -17,9 +17,6 @@ public interface PlayerProfileRepository extends JpaRepository<PlayerProfileEnti
 
     List<PlayerProfileEntity> findByActiveTrueOrderByDisplayOrderAscIdAsc();
 
-    List<PlayerProfileEntity>
-    findByActiveTrueAndTitleZeroPointOneWatchEnabledTrueOrderByDisplayOrderAscIdAsc();
-
     List<PlayerProfileEntity> findAllByOrderByDisplayOrderAscIdAsc();
 
     Optional<PlayerProfileEntity> findByProfileNameIgnoreCase(String profileName);

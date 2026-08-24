@@ -78,6 +78,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final int INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS = 600;
     private static final Duration TITLE_WATCH_CACHE_TTL = Duration.ofMinutes(5);
     private static final Duration TITLE_PREDICTION_CACHE_TTL = Duration.ofMinutes(30);
+    private static final String TITLE_PERCENTILE_ONE = "p990";
+    private static final String TITLE_PERCENTILE_POINT_ONE = "p999";
     private static final Duration SEASON_RECAP_CACHE_TTL = Duration.ofHours(24);
     private static final Duration FAILED_SEASON_RECAP_CACHE_TTL = Duration.ofMinutes(10);
     private static final Duration TOKEN_MONTH_LOOKBACK = Duration.ofDays(30);
@@ -566,7 +568,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return;
         }
         if (action == MPlusMenuAction.PAIR) {
-            sendProfileMenu(chatId, "Choose the first profile:", MPLUS_PAIR_FIRST_CALLBACK, null);
+            sendProfileMenu(chatId, "Choose the first profile:", MPLUS_PAIR_FIRST_CALLBACK, null, false);
             return;
         }
         if (action.requiresProfile()) {
@@ -574,7 +576,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     chatId,
                     "Choose a profile for " + action.label() + ":",
                     MPLUS_PROFILE_CALLBACK + ":" + action.key(),
-                    null
+                    null,
+                    action.supportsAllProfiles()
             );
             return;
         }
@@ -589,6 +592,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     ) {
         if (action == null || !action.requiresProfile()) {
             send(chatId, "That Mythic+ report is unavailable." + MPLUS_REFRESH_MESSAGE);
+            return;
+        }
+        if (action.supportsAllProfiles() && "all".equals(profileIdValue)) {
+            send(chatId, mPlusResponse(action.key(), "", senderUserId));
             return;
         }
         TrackedPlayer profile = findActiveProfile(profileIdValue);
@@ -609,7 +616,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 chatId,
                 "Pair " + firstProfile.profileName() + " with:",
                 MPLUS_PAIR_CALLBACK + ":" + firstProfile.profileId(),
-                firstProfile.profileId()
+                firstProfile.profileId(),
+                false
         );
     }
 
@@ -627,9 +635,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         ));
     }
 
-    private void sendProfileMenu(long chatId, String prompt, String callbackAction, Long excludedProfileId) {
+    private void sendProfileMenu(
+            long chatId,
+            String prompt,
+            String callbackAction,
+            Long excludedProfileId,
+            boolean includeAllProfiles
+    ) {
         List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
         List<InlineKeyboardButton> buttons = new ArrayList<>();
+        if (includeAllProfiles) {
+            buttons.add(inlineButton("All Profiles", MPLUS_CALLBACK_PREFIX + callbackAction + ":all"));
+        }
         for (TrackedPlayer profile : profiles) {
             if (buttons.size() >= MAX_PROFILE_BUTTONS) {
                 break;
@@ -848,7 +865,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void sendCharacterMenu(long chatId) {
         send(chatId, "Choose a character report:", inlineKeyboard(List.of(
                 inlineButton("Raider.IO Score", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":rio"),
-                inlineButton("Weekly Vault", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":vault"),
                 inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
                 inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
@@ -872,8 +888,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, "That character report is unavailable.");
             return;
         }
+        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+        if (profiles.isEmpty()) {
+            send(chatId, "No active profiles are available.");
+            return;
+        }
         List<InlineKeyboardButton> buttons = new ArrayList<>();
-        for (TrackedPlayer profile : trackedPlayerService.activePlayers()) {
+        buttons.add(inlineButton(
+                "All Profiles",
+                WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":all"
+        ));
+        for (TrackedPlayer profile : profiles) {
             if (buttons.size() >= MAX_PROFILE_BUTTONS) {
                 break;
             }
@@ -882,16 +907,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":" + profile.profileId()
             ));
         }
-        if (buttons.isEmpty()) {
-            send(chatId, "No active profiles are available.");
-            return;
-        }
         buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
         send(chatId, "Choose a profile for " + action.label() + ":", inlineKeyboard(buttons));
     }
 
     private void runCharacterReport(long chatId, String actionKey, String profileIdValue) {
         CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
+        if (action != null && "all".equals(profileIdValue)) {
+            sendAllCharacterReports(chatId, action);
+            return;
+        }
         TrackedPlayer profile = findActiveProfile(profileIdValue);
         if (action == null || profile == null) {
             send(chatId, "That character or report is no longer available. Use /wow to refresh the menu.");
@@ -901,12 +926,57 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case RAIDER_IO -> send(chatId, formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(
                     profile.region(), profile.realm(), profile.name()
             )));
-            case VAULT -> send(chatId, formatWeeklyVault(raiderIoClient.getWeeklyVaultProgress(
-                    profile.region(), profile.realm(), profile.name()
-            )));
             case MOUNTS -> send(chatId, "Insurmountable Collection: " + formatMountAchievementProgress(
                     mountService.getMountProgress(profile.realm(), profile.name()).usable()
             ));
+        }
+    }
+
+    private void sendAllCharacterReports(long chatId, CharacterReportAction action) {
+        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+        if (profiles.isEmpty()) {
+            send(chatId, "No active profiles are available.");
+            return;
+        }
+        StringBuilder message = new StringBuilder(action.label()).append(" — all profiles\n\n");
+        for (TrackedPlayer profile : profiles) {
+            try {
+                appendCharacterReport(message, action, profile);
+            } catch (RuntimeException _) {
+                message.append("• ").append(profile.profileName()).append(" (")
+                        .append(profile.name()).append('-').append(profile.realm())
+                        .append(")\n  Status: unavailable\n\n");
+            }
+        }
+        send(chatId, message.toString().trim());
+    }
+
+    private void appendCharacterReport(
+            StringBuilder message,
+            CharacterReportAction action,
+            TrackedPlayer profile
+    ) {
+        switch (action) {
+            case RAIDER_IO -> {
+                var score = raiderIoClient.getCurrentMPlusScore(
+                        profile.region(), profile.realm(), profile.name()
+                );
+                message.append("• ").append(profile.profileName()).append(" (")
+                        .append(score.name()).append('-').append(score.realm()).append(")\n")
+                        .append("  Score: ").append(valueOrUnavailable(score.all())).append('\n')
+                        .append("  DPS: ").append(valueOrUnavailable(score.dps())).append('\n')
+                        .append("  Healer: ").append(valueOrUnavailable(score.healer())).append('\n')
+                        .append("  Tank: ").append(valueOrUnavailable(score.tank())).append("\n\n");
+            }
+            case MOUNTS -> {
+                var progress = mountService.getMountProgress(profile.realm(), profile.name());
+                message.append("• ").append(profile.profileName()).append(" (")
+                        .append(progress.characterName()).append('-').append(progress.realmSlug()).append(")\n")
+                        .append("  Usable mounts: ").append(progress.usable()).append('\n')
+                        .append("  Collected mounts: ").append(progress.collected()).append('\n')
+                        .append("  Achievement: ").append(formatMountAchievementProgress(progress.usable()))
+                        .append("\n\n");
+            }
         }
     }
 
@@ -2299,44 +2369,36 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private String formatTitle01Watch() {
-        TrackedPlayer player = trackedPlayerService.titleZeroPointOneWatchPlayer().orElse(null);
-        if (player == null) {
-            return "No 0.1% title watch player configured.";
+        List<TrackedPlayer> players = trackedPlayerService.activePlayers();
+        if (players.isEmpty()) {
+            return "No active profiles are configured for the 0.1% title watch.";
         }
 
         Instant now = Instant.now();
-        List<TrackedPlayer> players = List.of(player);
         if (title01WatchCache != null
                 && title01WatchCache.expiresAt().isAfter(now)
                 && title01WatchCache.players().equals(players)) {
             return title01WatchCache.message();
         }
 
-        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(player.region(), "p999");
+        var cutoff = raiderIoClient.getCurrentMPlusTitleCutoff(
+                players.getFirst().region(),
+                TITLE_PERCENTILE_POINT_ONE
+        );
         BigDecimal cutoffScore = cutoff.score();
         if (cutoffScore == null) {
             return "M+ 0.1% title watch is unavailable because Raider.IO returned no cutoff score.";
         }
-        StringBuilder sb = new StringBuilder("M+ 0.1% title watch\n");
-        sb.append("Cutoff: ").append(formatScore(cutoffScore))
-                .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
-                .append("\n");
-        appendTitlePrediction(sb, "p999", player.region());
+        List<TitleWatchResult> results = loadSortedTitleWatchResults(players, cutoffScore);
 
-        try {
-            var score = raiderIoClient.getCurrentMPlusScore(player.region(), player.realm(), player.name());
-            BigDecimal all = score.all();
-            TitleScoreDelta delta = calculateTitleScoreDelta(all, cutoffScore);
-            sb.append("• ").append(score.name()).append(": ").append(formatTitleScoreLine(
-                    all,
-                    delta.remaining(),
-                    delta.above()
-            ));
-        } catch (Exception e) {
-            sb.append("• ").append(player.name()).append(": error: ").append(e.getMessage());
-        }
-
-        String message = sb.toString().trim();
+        String message = formatTitleWatchMessage(
+                "M+ 0.1% title watch",
+                TITLE_PERCENTILE_POINT_ONE,
+                players,
+                cutoff,
+                cutoffScore,
+                results
+        );
         title01WatchCache = new TitleWatchCache(message, players, now.plus(TITLE_WATCH_CACHE_TTL));
         return message;
     }
@@ -2357,13 +2419,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (cutoffScore == null) {
             return "M+ 1% title watch is unavailable because Raider.IO returned no cutoff score.";
         }
-        List<TitleWatchResult> results = loadTitleWatchResults(players, cutoffScore);
-        results.sort(Comparator.comparing(
-                TitleWatchResult::score,
-                Comparator.nullsLast(Comparator.reverseOrder())
-        ));
+        List<TitleWatchResult> results = loadSortedTitleWatchResults(players, cutoffScore);
 
-        String message = formatTitleWatchMessage(players, cutoff, cutoffScore, results);
+        String message = formatTitleWatchMessage(
+                "M+ 1% title watch",
+                TITLE_PERCENTILE_ONE,
+                players,
+                cutoff,
+                cutoffScore,
+                results
+        );
         titleWatchCache = new TitleWatchCache(message, players, now.plus(TITLE_WATCH_CACHE_TTL));
         return message;
     }
@@ -2382,6 +2447,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         for (TrackedPlayer player : players) {
             results.add(loadTitleWatchResult(player, cutoffScore));
         }
+        return results;
+    }
+
+    private List<TitleWatchResult> loadSortedTitleWatchResults(
+            List<TrackedPlayer> players,
+            BigDecimal cutoffScore
+    ) {
+        List<TitleWatchResult> results = loadTitleWatchResults(players, cutoffScore);
+        results.sort(Comparator.comparing(
+                TitleWatchResult::score,
+                Comparator.nullsLast(Comparator.reverseOrder())
+        ));
         return results;
     }
 
@@ -2424,16 +2501,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private String formatTitleWatchMessage(
+            String heading,
+            String percentileKey,
             List<TrackedPlayer> players,
             RaiderIoClient.MPlusTitleCutoff cutoff,
             BigDecimal cutoffScore,
             List<TitleWatchResult> results
     ) {
-        StringBuilder message = new StringBuilder("M+ 1% title watch\n");
+        StringBuilder message = new StringBuilder(heading).append("\n");
         message.append("Cutoff: ").append(formatScore(cutoffScore))
                 .append("\nCutoff updated: ").append(formatCutoffUpdatedAt(cutoff.updatedAt()))
                 .append("\n");
-        appendTitlePrediction(message, "p990", players.getFirst().region());
+        appendTitlePrediction(message, percentileKey, players.getFirst().region());
         results.forEach(result -> appendTitleWatchResult(message, result));
         return message.toString().trim();
     }
@@ -2462,7 +2541,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private RaiderIoClient.MPlusTitlePrediction getCachedTitlePrediction(String percentileKey, String region) {
         Instant now = Instant.now();
-        TitlePredictionCache cache = "p999".equals(percentileKey) ? title01PredictionCache : titlePredictionCache;
+        TitlePredictionCache cache = TITLE_PERCENTILE_POINT_ONE.equals(percentileKey)
+                ? title01PredictionCache
+                : titlePredictionCache;
         if (cache != null && cache.expiresAt().isAfter(now) && cache.region().equalsIgnoreCase(region)) {
             return cache.prediction();
         }
@@ -2470,7 +2551,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         try {
             var prediction = raiderIoClient.getCurrentMPlusTitlePrediction(region, percentileKey);
             var nextCache = new TitlePredictionCache(prediction, region, now.plus(TITLE_PREDICTION_CACHE_TTL));
-            if ("p999".equals(percentileKey)) {
+            if (TITLE_PERCENTILE_POINT_ONE.equals(percentileKey)) {
                 title01PredictionCache = nextCache;
             } else {
                 titlePredictionCache = nextCache;
@@ -2828,8 +2909,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private enum WowCommandAction {
         RWF("rwf", "World First", "/rwf", WowMenuGroup.RAIDS),
-        VAULT("vault", "Vault Watch", "/vault", WowMenuGroup.RAIDS),
-        AFFIXES("affixes", "Affixes", "/affixes", WowMenuGroup.RAIDS),
         GUILD("guild", "Guild Progress", "/guild", WowMenuGroup.RAIDS),
         GUILD_LIST("guild_list", "Raid List", "/guildlist", WowMenuGroup.RAIDS),
         TITLE("title", "Title Watch", "/title", WowMenuGroup.SEASON),
@@ -2900,7 +2979,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private enum CharacterReportAction {
         RAIDER_IO("rio", "Raider.IO Score"),
-        VAULT("vault", "Weekly Vault"),
         MOUNTS("mount", "Mount Progress");
 
         private final String key;
@@ -2967,6 +3045,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
         boolean requiresProfile() {
             return requiresProfile;
+        }
+
+        boolean supportsAllProfiles() {
+            return this == PROGRESS || this == TEAM || this == COMBAT;
         }
 
         static MPlusMenuAction fromKey(String key) {

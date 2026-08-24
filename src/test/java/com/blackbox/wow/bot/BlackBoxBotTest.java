@@ -45,6 +45,7 @@ import org.telegram.telegrambots.meta.api.objects.message.MaybeInaccessibleMessa
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
@@ -373,9 +374,9 @@ class BlackBoxBotTest {
         long chatId = 123L;
         long userId = 456L;
         TrackedPlayer player = new TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered");
-        Update update = update(chatId, userId, "/title_01");
+        Update update = update(chatId, userId, "/title01");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.titleZeroPointOneWatchPlayer()).thenReturn(Optional.of(player));
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(player));
         when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
                 new RaiderIoClient.MPlusTitleCutoff("eu", "season-mn-2", null, 0, "")
         );
@@ -384,6 +385,46 @@ class BlackBoxBotTest {
 
         assertThat(sentMessage().getText()).contains("unavailable", "no cutoff score");
         verify(raiderIoClient, never()).getCurrentMPlusScore("eu", "Stormscale", "Bucothered");
+    }
+
+    @Test
+    void includesAllActiveProfilesInPointOneTitleWatch() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(1L, "Buco", "eu", "stormscale", "Bucothered");
+        TrackedPlayer linq = new TrackedPlayer(2L, "Linq", "eu", "draenor", "Thelinq");
+        Update update = update(chatId, userId, "/title01");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
+        when(raiderIoClient.getCurrentMPlusTitleCutoff("eu", "p999")).thenReturn(
+                new RaiderIoClient.MPlusTitleCutoff(
+                        "eu",
+                        "season-mn-2",
+                        new BigDecimal("3000"),
+                        1000,
+                        ""
+                )
+        );
+        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered")).thenReturn(
+                new RaiderIoClient.RaiderIoScore(
+                        "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("2900"), null, null, null, "", Instant.EPOCH
+                )
+        );
+        when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq")).thenReturn(
+                new RaiderIoClient.RaiderIoScore(
+                        "Thelinq", "Draenor", "eu",
+                        new BigDecimal("3100"), null, null, null, "", Instant.EPOCH
+                )
+        );
+
+        bot().consume(update);
+
+        assertThat(sentMessage().getText())
+                .contains("M+ 0.1% title watch", "• Bucothered:", "• Thelinq:")
+                .containsSubsequence("• Thelinq:", "• Bucothered:");
+        verify(raiderIoClient).getCurrentMPlusScore("eu", "stormscale", "Bucothered");
+        verify(raiderIoClient).getCurrentMPlusScore("eu", "draenor", "Thelinq");
     }
 
     @Test
@@ -455,6 +496,85 @@ class BlackBoxBotTest {
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
                 .containsExactly("My Profile", "Select Main", "Group Mains", "Back");
+    }
+
+    @Test
+    void keepsVaultOnlyInTheMythicPlusMenu() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:menu:character"));
+
+        InlineKeyboardMarkup characterKeyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(characterKeyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly("Raider.IO Score", "Mount Progress", "Back")
+                .doesNotContain("Weekly Vault");
+    }
+
+    @Test
+    void offersAllProfilesForCharacterReports() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:rio"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("wow:character:rio:all", "wow:character:rio:11");
+    }
+
+    @Test
+    void runsRaiderIoScoreForAllProfilesFromTheButton() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        TrackedPlayer linq = new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("3210.5"), new BigDecimal("3210.5"),
+                        null, null, "", Instant.EPOCH
+                ));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Thelinq", "Draenor", "eu",
+                        new BigDecimal("3100"), null,
+                        new BigDecimal("3100"), null, "", Instant.EPOCH
+                ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:rio:all"));
+
+        assertThat(sentMessage().getText())
+                .contains("Raider.IO Score — all profiles")
+                .contains("• Buco (Bucothered-Stormscale)", "Score: 3210.5", "DPS: 3210.5")
+                .contains("• Linq (Thelinq-Draenor)", "Score: 3100", "Healer: 3100");
+    }
+
+    @Test
+    void removesVaultWatchFromTheRaidMenu() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:menu:raids"));
+
+        InlineKeyboardMarkup raidKeyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(raidKeyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly("World First", "Guild Progress", "Raid List", "Back")
+                .doesNotContain("Vault Watch", "Affixes");
     }
 
     @Test
@@ -607,7 +727,61 @@ class BlackBoxBotTest {
         assertThat(keyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getCallbackData()))
-                .contains("mplus:profile:progress:11", "mplus:profile:progress:12", "mplus:menu");
+                .contains(
+                        "mplus:profile:progress:all",
+                        "mplus:profile:progress:11",
+                        "mplus:profile:progress:12",
+                        "mplus:menu"
+                );
+    }
+
+    @Test
+    void offersAnAllProfilesOptionForCombat() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:action:combat"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("mplus:profile:combat:all", "mplus:profile:combat:11");
+    }
+
+    @Test
+    void offersAnAllProfilesOptionForTeamReports() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:action:team"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("mplus:profile:team:all", "mplus:profile:team:11");
+    }
+
+    @Test
+    void runsTheCombatReportForAllProfilesFromTheButton() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(warcraftLogsStatisticsService.combatMessage("")).thenReturn("All combat profiles");
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:profile:combat:all"));
+
+        verify(warcraftLogsStatisticsService).combatMessage("");
+        assertThat(sentMessage().getText()).isEqualTo("All combat profiles");
     }
 
     @Test
