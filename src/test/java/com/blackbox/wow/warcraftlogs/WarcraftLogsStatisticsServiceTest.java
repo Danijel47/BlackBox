@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,7 +41,7 @@ class WarcraftLogsStatisticsServiceTest {
                 "Linqq", "old-report", 9, 1, "49", "124013.3"
         );
         WarcraftLogPlayerRunEntity selectedMainRun = run(
-                "Thelinq", "new-report", 4, 0, "62", "140000.0"
+                1L, "Thelinq", "new-report", 4, 0, "62", "140000.0", "9500"
         );
         WarcraftLogPlayerRunEntity partialFight = run(
                 "Thelinq", "partial-fight", 20, 3, null, "250000.0"
@@ -59,8 +60,8 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("""
                         • Linq (Thelinq)
                           Key parse: 62%
-                          DPS: 140,000
-                          Avoidable damage per run: unavailable
+                          DPS: 140k
+                          Avoidable damage per run: 9,500
                           Interrupts per run: 4
                           Deaths per run: 0
                           Logged runs: 1
@@ -104,7 +105,7 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(
-                run(1L, "BucoMain", "buco", 2, 4, "70", "100000", "950000"),
+                run(1L, "BucoMain", "buco", 2, 4, "70", "100000", "2800000"),
                 run(2L, "LinqMain", "linq", 12, 1, "80", "120000", "300000"),
                 run(3L, "LazoMain", "lazo", 4, 0, "95", "180000", "200000")
         ));
@@ -124,9 +125,28 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains(
                         "🔥 Stand in Fire DPS higher — Most average avoidable damage taken",
                         "• Buco (BucoMain)",
-                        "Avoidable damage/run: 950,000"
+                        "Avoidable damage/run: 2.8m"
                 )
                 .doesNotContain("formula:", "N=");
+    }
+
+    @Test
+    void asksUsersToWaitWhileCombatDataIsRefreshing() {
+        WarcraftLogsStatisticsService service = service(
+                mock(TrackedPlayerService.class),
+                mock(WarcraftLogPlayerRunRepository.class),
+                mock(WarcraftLogProfileSnapshotRepository.class)
+        );
+        AtomicBoolean refreshRunning = (AtomicBoolean) ReflectionTestUtils.getField(
+                service, "refreshRunning"
+        );
+        assertThat(refreshRunning).isNotNull();
+        refreshRunning.set(true);
+        String expectedMessage = "⛏️ Work, work! A peon is refreshing Warcraft Logs data. "
+                + "Please wait and try again shortly.";
+
+        assertThat(service.combatMessage("")).isEqualTo(expectedMessage);
+        assertThat(service.awardsMessage()).isEqualTo(expectedMessage);
     }
 
     @Test

@@ -33,6 +33,14 @@ import java.util.stream.Collectors;
 public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
+    private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
+    private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
+    private static final BigDecimal ONE_THOUSAND = BigDecimal.valueOf(1_000);
+    private static final String COMPACT_NUMBER_PATTERN = "0.#";
+    private static final String STANDARD_NUMBER_PATTERN = "#,##0.##";
+    private static final String REFRESH_IN_PROGRESS_MESSAGE =
+            "⛏️ Work, work! A peon is refreshing Warcraft Logs data. "
+                    + "Please wait and try again shortly.";
     private static final String NAME_FIELD = "name";
     private static final String SERVER_FIELD = "server";
     private static final String REGION_FIELD = "region";
@@ -195,12 +203,18 @@ public class WarcraftLogsStatisticsService {
     }
 
     public String combatMessage(String profileArgument) {
+        if (refreshRunning.get()) {
+            return REFRESH_IN_PROGRESS_MESSAGE;
+        }
         String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
         List<PlayerStatistics> selected = statistics().stream()
                 .filter(statistic -> requestedProfile.isBlank()
                         || statistic.profileName().equalsIgnoreCase(requestedProfile))
                 .sorted(combatStatisticComparator())
                 .toList();
+        if (refreshRunning.get()) {
+            return REFRESH_IN_PROGRESS_MESSAGE;
+        }
         if (selected.isEmpty()) {
             return requestedProfile.isBlank()
                     ? "No Warcraft Logs combat statistics are available."
@@ -214,9 +228,15 @@ public class WarcraftLogsStatisticsService {
     }
 
     public String awardsMessage() {
+        if (refreshRunning.get()) {
+            return REFRESH_IN_PROGRESS_MESSAGE;
+        }
         List<PlayerStatistics> candidates = statistics().stream()
                 .filter(statistic -> statistic.dungeonRuns() > 0)
                 .toList();
+        if (refreshRunning.get()) {
+            return REFRESH_IN_PROGRESS_MESSAGE;
+        }
         if (candidates.isEmpty()) {
             return "M+ awards are unavailable until Warcraft Logs combat data is collected.";
         }
@@ -392,8 +412,18 @@ public class WarcraftLogsStatisticsService {
 
     private static String formatDamageAmount(BigDecimal value) {
         if (value == null) return UNAVAILABLE_LABEL;
+        if (value.compareTo(COMPACT_MILLION_THRESHOLD) >= 0) {
+            return formatNumber(value.divide(COMPACT_MILLION_THRESHOLD), COMPACT_NUMBER_PATTERN) + 'm';
+        }
+        if (value.compareTo(COMPACT_THOUSAND_THRESHOLD) >= 0) {
+            return formatNumber(value.divide(ONE_THOUSAND), COMPACT_NUMBER_PATTERN) + 'k';
+        }
+        return formatNumber(value, STANDARD_NUMBER_PATTERN);
+    }
+
+    private static String formatNumber(BigDecimal value, String pattern) {
         DecimalFormat formatter = new DecimalFormat(
-                "#,##0.##", DecimalFormatSymbols.getInstance(Locale.US)
+                pattern, DecimalFormatSymbols.getInstance(Locale.US)
         );
         return formatter.format(value);
     }
