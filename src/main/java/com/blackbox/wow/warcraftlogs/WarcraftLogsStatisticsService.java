@@ -47,6 +47,7 @@ public class WarcraftLogsStatisticsService {
     private static final String SOURCE_ID_FIELD = "sourceID";
     private static final String TARGET_ID_FIELD = "targetID";
     private static final String IS_AVOIDABLE_FIELD = "isAvoidable";
+    private static final String ABILITY_GAME_ID_FIELD = "abilityGameID";
     private static final String AMOUNT_FIELD = "amount";
     private static final String UNAVAILABLE_LABEL = "unavailable";
     private static final String CHARACTER_REPORTS_QUERY = """
@@ -709,7 +710,7 @@ public class WarcraftLogsStatisticsService {
             int interruptCount = countEventsForActor(events.interrupts(), SOURCE_ID_FIELD, participant.actorId);
             int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
             BigDecimal avoidableDamage = sumAvoidableDamageForActor(
-                    events.damageTaken(), participant.actorId
+                    events.damageTaken(), participant.actorId, participant.dungeonName
             );
             RankingPercentiles rankingPercentiles = findRankingPercentiles(
                     reportData.path("p" + participant.fightId),
@@ -879,22 +880,42 @@ public class WarcraftLogsStatisticsService {
         return count;
     }
 
-    static BigDecimal sumAvoidableDamageForActor(Iterable<JsonNode> events, int actorId) {
+    static BigDecimal sumAvoidableDamageForActor(
+            Iterable<JsonNode> events,
+            int actorId,
+            String dungeonName
+    ) {
         BigDecimal total = BigDecimal.ZERO;
-        boolean classificationAvailable = false;
+        Optional<Set<Long>> catalogue = MidnightSeason2AvoidableAbilities.abilitiesFor(dungeonName);
+        Set<Long> avoidableAbilityIds = catalogue.orElseGet(Set::of);
+        boolean classificationAvailable = catalogue.isPresent();
         for (JsonNode event : events) {
-            if (event.path(TARGET_ID_FIELD).asInt(-1) != actorId
-                    || !event.path(IS_AVOIDABLE_FIELD).isBoolean()) {
+            if (event.path(TARGET_ID_FIELD).asInt(-1) != actorId) {
                 continue;
             }
-            classificationAvailable = true;
+            JsonNode explicitClassification = event.path(IS_AVOIDABLE_FIELD);
+            classificationAvailable |= explicitClassification.isBoolean();
             JsonNode amount = event.path(AMOUNT_FIELD);
-            if (event.path(IS_AVOIDABLE_FIELD).asBoolean() && amount.isNumber()
+            if (isAvoidableDamageEvent(event, avoidableAbilityIds, explicitClassification)
+                    && amount.isNumber()
                     && amount.decimalValue().signum() >= 0) {
                 total = total.add(amount.decimalValue());
             }
         }
         return classificationAvailable ? total : null;
+    }
+
+    private static boolean isAvoidableDamageEvent(
+            JsonNode event,
+            Set<Long> avoidableAbilityIds,
+            JsonNode explicitClassification
+    ) {
+        if (explicitClassification.isBoolean()) {
+            return explicitClassification.asBoolean();
+        }
+        JsonNode abilityGameId = event.path(ABILITY_GAME_ID_FIELD);
+        return abilityGameId.canConvertToLong()
+                && avoidableAbilityIds.contains(abilityGameId.asLong());
     }
 
     static RankingPercentiles findRankingPercentiles(JsonNode node, int actorId, String characterName) {

@@ -14,7 +14,7 @@ import java.time.Instant;
 @Table(name = "warcraft_log_player_run")
 public class WarcraftLogPlayerRunEntity {
 
-    public static final int CURRENT_METRICS_VERSION = 6;
+    public static final int CURRENT_METRICS_VERSION = 7;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

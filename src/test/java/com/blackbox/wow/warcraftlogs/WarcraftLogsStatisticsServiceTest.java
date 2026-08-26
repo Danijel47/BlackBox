@@ -28,6 +28,8 @@ import static org.mockito.Mockito.when;
 
 class WarcraftLogsStatisticsServiceTest {
 
+    private static final String RUBY_LIFE_POOLS = "Ruby Life Pools";
+
     @Test
     void reportsOnlyRunsForTheCurrentlySelectedMain() {
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
@@ -139,17 +141,58 @@ class WarcraftLogsStatisticsServiceTest {
                 ]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(events, 42))
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+                events, 42, RUBY_LIFE_POOLS
+        ))
                 .isEqualByComparingTo("150000.5");
     }
 
     @Test
-    void keepsAvoidableDamageUnavailableWhenTheReportHasNoClassification() throws Exception {
+    void classifiesSeasonTwoAvoidableDamageByDungeonAndAbility() throws Exception {
         JsonNode events = new ObjectMapper().readTree("""
-                [{"targetID":42,"amount":120000}]
+                [
+                  {"targetID":42,"abilityGameID":373614,"amount":120000},
+                  {"targetID":42,"abilityGameID":372735,"amount":900000},
+                  {"targetID":7,"abilityGameID":373614,"amount":800000}
+                ]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(events, 42)).isNull();
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+                events, 42, RUBY_LIFE_POOLS
+        )).isEqualByComparingTo("120000");
+    }
+
+    @Test
+    void recordsZeroWhenSupportedDungeonHasNoAvoidableHits() throws Exception {
+        JsonNode events = new ObjectMapper().readTree("""
+                [{"targetID":42,"abilityGameID":372735,"amount":120000}]
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+                events, 42, RUBY_LIFE_POOLS
+        )).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void keepsAvoidableDamageUnavailableForAnUnsupportedDungeon() throws Exception {
+        JsonNode events = new ObjectMapper().readTree("""
+                [{"targetID":42,"abilityGameID":373614,"amount":120000}]
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+                events, 42, "Unknown Dungeon"
+        )).isNull();
+    }
+
+    @Test
+    void explicitWarcraftLogsClassificationOverridesTheCatalogue() throws Exception {
+        JsonNode events = new ObjectMapper().readTree("""
+                [{"targetID":42,"abilityGameID":373614,"isAvoidable":false,"amount":120000}]
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+                events, 42, RUBY_LIFE_POOLS
+        )).isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     @Test
