@@ -8,6 +8,7 @@ import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaceToWorldFirstService;
+import com.blackbox.wow.service.RaidReportService;
 import com.blackbox.wow.service.MPlusDataCollectionService;
 import com.blackbox.wow.service.MPlusProgressService;
 import com.blackbox.wow.service.MPlusDungeonVaultService;
@@ -71,6 +72,7 @@ class BlackBoxBotTest {
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
+    @Mock private RaidReportService raidReportService;
     @Mock private MPlusDataCollectionService mplusDataCollectionService;
     @Mock private MPlusProgressService mplusProgressService;
     @Mock private MPlusDungeonVaultService mplusDungeonVaultService;
@@ -497,7 +499,7 @@ class BlackBoxBotTest {
     }
 
     @Test
-    void removesVaultWatchFromTheRaidMenu() throws Exception {
+    void offersProfileRaidReportsWithoutGuildProgress() throws Exception {
         long chatId = 123L;
         long userId = 456L;
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
@@ -508,8 +510,76 @@ class BlackBoxBotTest {
         assertThat(raidKeyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("World First", "Guild Progress", "Raid List", "Back")
-                .doesNotContain("Vault Watch", "Affixes");
+                .containsExactly("World First", "Raid Progress", "Raid Vault", "Raid Combat", "Back")
+                .doesNotContain("Guild Progress", "Raid List", "Affixes");
+    }
+
+    @Test
+    void offersAllAndIndividualProfilesForRaidProgress() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered"),
+                new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:raid:progress"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly("All Profiles", "Buco", "Linq", "Back");
+    }
+
+    @Test
+    void runsRaidCombatForAllProfiles() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        List<TrackedPlayer> profiles = List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        );
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(profiles);
+        when(warcraftLogsStatisticsService.raidCombatMessage(profiles)).thenReturn("Raid parses");
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:raid:combat:all"));
+
+        verify(warcraftLogsStatisticsService).raidCombatMessage(profiles);
+        assertThat(sentMessage().getText()).isEqualTo("Raid parses");
+    }
+
+    @Test
+    void runsRaidCombatForNamedProfileCommand() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                buco,
+                new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq")
+        ));
+        when(warcraftLogsStatisticsService.raidCombatMessage(List.of(buco))).thenReturn("Buco raid parses");
+
+        bot().consume(update(chatId, userId, "/raid_combat Buco"));
+
+        verify(warcraftLogsStatisticsService).raidCombatMessage(List.of(buco));
+        assertThat(sentMessage().getText()).isEqualTo("Buco raid parses");
+    }
+
+    @Test
+    void usesWarcraftLogsCombatMetricsForMPlusAwards() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus_awards");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(warcraftLogsStatisticsService.awardsMessage()).thenReturn("Readable M+ awards");
+
+        bot().consume(update);
+
+        verify(warcraftLogsStatisticsService).awardsMessage();
+        assertThat(sentMessage().getText()).isEqualTo("Readable M+ awards");
     }
 
     @Test
@@ -861,6 +931,7 @@ class BlackBoxBotTest {
                 trackedPlayerService,
                 vaultReminderService,
                 raceToWorldFirstService,
+                raidReportService,
                 mplusDataCollectionService,
                 mplusProgressService,
                 mplusDungeonVaultService,

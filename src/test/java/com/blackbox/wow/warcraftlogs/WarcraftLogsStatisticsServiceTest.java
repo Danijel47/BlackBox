@@ -93,6 +93,64 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
+    void formatsReadableCombatAwardsFromLoggedRuns() {
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(
+                run(1L, "BucoMain", "buco", 2, 4, "70", "100000"),
+                run(2L, "LinqMain", "linq", 12, 1, "80", "120000"),
+                run(3L, "LazoMain", "lazo", 4, 0, "95", "180000")
+        ));
+        when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1L, "Buco", "eu", "Stormscale", "BucoMain"),
+                new TrackedPlayerService.TrackedPlayer(2L, "Linq", "eu", "Draenor", "LinqMain"),
+                new TrackedPlayerService.TrackedPlayer(3L, "Lazo", "eu", "Tarren Mill", "LazoMain")
+        ));
+
+        String message = service(trackedPlayerService, runRepository, snapshotRepository).awardsMessage();
+
+        assertThat(message)
+                .contains("💀 Floor POV — Most deaths per run", "• Buco (BucoMain)", "Deaths/run: 4")
+                .contains("🛑 CC Machine — Most interrupts per run", "• Linq (LinqMain)", "Interrupts/run: 12")
+                .contains("🔥 Top Pumper — Best average key parse", "• Lazo (LazoMain)", "Key parse: 95%")
+                .doesNotContain("formula:", "N=");
+    }
+
+    @Test
+    void formatsRaidCombatAveragesForEveryDifficulty() throws Exception {
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        JsonNode response = new ObjectMapper().readTree("""
+                {"characterData":{"character":{"name":"Bucothered",
+                  "normal":{"bestPerformanceAverage":81.2},
+                  "heroic":{"bestPerformanceAverage":72.5},
+                  "mythic":null
+                }}}
+                """);
+        when(client.query(anyString(), anyMap())).thenReturn(response);
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                mock(WarcraftLogPlayerRunRepository.class),
+                mock(WarcraftLogProfileSnapshotRepository.class),
+                mock(MPlusRunCorrelationService.class),
+                mock(WarcraftLogsEventPager.class)
+        );
+
+        String message = service.raidCombatMessage(List.of(
+                new TrackedPlayerService.TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered")
+        ));
+
+        assertThat(message)
+                .contains("Raid Combat — best performance average")
+                .contains("Normal: 81.2%", "Heroic: 72.5%", "Mythic: —");
+    }
+
+    @Test
     void acceptsOnlyCompletedKeystoneFights() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode completed = mapper.readTree("""

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.Map;
 
 @Service
@@ -37,7 +36,7 @@ public class BlizzardMountService {
         JsonNode data = api.get(
                 "/profile/wow/character/{realmSlug}/{characterName}/collections/mounts",
                 Map.of("realmSlug", realmSlug, "characterName", characterSlug),
-                profileQuery());
+                api.profileQuery());
 
         JsonNode mounts = data.path("mounts");
         int collected = mounts.isArray() ? mounts.size() : 0;
@@ -58,23 +57,6 @@ public class BlizzardMountService {
             }
         }
         return usable;
-    }
-
-    private Map<String, String> profileQuery() {
-        Map<String, String> query = new HashMap<>(api.defaultQuery());
-        query.put("namespace", toProfileNamespace(query.get("namespace")));
-        return query;
-    }
-
-    private static String toProfileNamespace(String namespace) {
-        if (namespace == null || namespace.isBlank()) return "profile-eu";
-        if (namespace.startsWith("dynamic-")) {
-            return "profile-" + namespace.substring("dynamic-".length());
-        }
-        if (namespace.startsWith("static-")) {
-            return "profile-" + namespace.substring("static-".length());
-        }
-        return namespace;
     }
 
     private static String slug(String value) {

@@ -8,10 +8,16 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.util.HashMap;
 import java.util.Map;
 
 @Component
 public class BlizzardApiClient {
+
+    private static final String NAMESPACE_QUERY_PARAM = "namespace";
+    private static final String DYNAMIC_NAMESPACE_PREFIX = "dynamic-";
+    private static final String STATIC_NAMESPACE_PREFIX = "static-";
+    private static final String PROFILE_NAMESPACE_PREFIX = "profile-";
 
     private final RestClient apiClient;
     private final BlizzardAuthService authService;
@@ -57,8 +63,27 @@ public class BlizzardApiClient {
 
     public Map<String, String> defaultQuery() {
         return Map.of(
-                "namespace", props.namespace(),
+                NAMESPACE_QUERY_PARAM, props.namespace(),
                 "locale", props.locale()
         );
+    }
+
+    public Map<String, String> profileQuery() {
+        Map<String, String> query = new HashMap<>(defaultQuery());
+        query.put(NAMESPACE_QUERY_PARAM, toProfileNamespace(query.get(NAMESPACE_QUERY_PARAM)));
+        return Map.copyOf(query);
+    }
+
+    private static String toProfileNamespace(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            return PROFILE_NAMESPACE_PREFIX + "eu";
+        }
+        if (namespace.startsWith(DYNAMIC_NAMESPACE_PREFIX)) {
+            return PROFILE_NAMESPACE_PREFIX + namespace.substring(DYNAMIC_NAMESPACE_PREFIX.length());
+        }
+        if (namespace.startsWith(STATIC_NAMESPACE_PREFIX)) {
+            return PROFILE_NAMESPACE_PREFIX + namespace.substring(STATIC_NAMESPACE_PREFIX.length());
+        }
+        return namespace;
     }
 }

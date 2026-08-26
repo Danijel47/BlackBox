@@ -25,7 +25,6 @@ class MPlusAdvancedServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-08-19T10:00:00Z");
 
-    @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private MPlusPlayerResolver playerResolver;
     @Mock private MPlusProgressRepository progressRepository;
     @Mock private MPlusPerformanceRepository performanceRepository;
@@ -40,36 +39,6 @@ class MPlusAdvancedServiceTest {
         assertThat(message).contains("unavailable (N=1, need 2 deduplicated observed runs)");
     }
 
-    @Test
-    void keepsAwardsOptIn() {
-        assertThat(service(false, 2).awardsMessage())
-                .contains("awards are disabled")
-                .contains("WOW_MPLUS_AWARDS_ENABLED=true");
-    }
-
-    @Test
-    void displaysEveryWinnerWhenAwardMetricsAreTied() {
-        TrackedPlayer buco = player(1, "Buco");
-        TrackedPlayer linq = player(2, "Linq");
-        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
-        when(progressRepository.latestScore(1)).thenReturn(Optional.of(score(1)));
-        when(progressRepository.latestScore(2)).thenReturn(Optional.of(score(2)));
-        List<ObservedRun> equalRuns = List.of(
-                run(1, "AD", 10, 20), run(2, "BD", 12, 30), run(3, "CC", 11, 40)
-        );
-        when(performanceRepository.observedRuns(1, "season-mn-2")).thenReturn(equalRuns);
-        when(performanceRepository.observedRuns(2, "season-mn-2")).thenReturn(equalRuns);
-
-        String message = service(true, 2).awardsMessage();
-
-        assertThat(message)
-                .contains("Most consistent: Buco (N=3), Linq (N=3)")
-                .contains("Dungeon tourist: Buco (N=3), Linq (N=3)")
-                .contains("Clutch: Buco (N=3), Linq (N=3)")
-                .contains("All ties are shown")
-                .contains("Observed data only");
-    }
-
     private void prepareResolvedPlayer(TrackedPlayer player, List<ObservedRun> runs) {
         when(playerResolver.resolveSelfOrNamed("", 123L)).thenReturn(Resolution.found(player));
         when(progressRepository.latestScore(player.profileId())).thenReturn(Optional.of(score(player.profileId())));
@@ -78,7 +47,6 @@ class MPlusAdvancedServiceTest {
 
     private MPlusAdvancedService service(boolean awardsEnabled, int minimumRuns) {
         return new MPlusAdvancedService(
-                trackedPlayerService,
                 playerResolver,
                 progressRepository,
                 performanceRepository,

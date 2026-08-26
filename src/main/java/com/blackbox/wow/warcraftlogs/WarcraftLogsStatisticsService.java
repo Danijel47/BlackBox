@@ -32,12 +32,19 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 public class WarcraftLogsStatisticsService {
 
+    private static final String NAME_FIELD = "name";
+    private static final String SERVER_FIELD = "server";
+    private static final String REGION_FIELD = "region";
+    private static final String CHARACTER_DATA_FIELD = "characterData";
+    private static final String CHARACTER_FIELD = "character";
+    private static final String UNAVAILABLE_LABEL = "unavailable";
     private static final String CHARACTER_REPORTS_QUERY = """
             query CharacterReports($name: String!, $server: String!, $region: String!, $limit: Int!) {
               characterData {
@@ -67,6 +74,18 @@ public class WarcraftLogsStatisticsService {
                       }
                     }
                   }
+                }
+              }
+            }
+            """;
+    private static final String RAID_RANKINGS_QUERY = """
+            query CharacterRaidRankings($name: String!, $server: String!, $region: String!) {
+              characterData {
+                character(name: $name, serverSlug: $server, serverRegion: $region) {
+                  name
+                  normal: zoneRankings(difficulty: 3)
+                  heroic: zoneRankings(difficulty: 4)
+                  mythic: zoneRankings(difficulty: 5)
                 }
               }
             }
@@ -169,6 +188,135 @@ public class WarcraftLogsStatisticsService {
                 .toString();
     }
 
+    public String awardsMessage() {
+        List<PlayerStatistics> candidates = statistics().stream()
+                .filter(statistic -> statistic.dungeonRuns() > 0)
+                .toList();
+        if (candidates.isEmpty()) {
+            return "M+ awards are unavailable until Warcraft Logs combat data is collected.";
+        }
+
+        StringBuilder message = new StringBuilder("🏆 M+ Awards — ")
+                .append(properties.seasonKey()).append("\n")
+                .append("Based on logged dungeon runs; ties are shown.\n\n");
+        appendCombatAward(
+                message,
+                "💀 Floor POV",
+                "Most deaths per run",
+                "Deaths/run",
+                candidates,
+                PlayerStatistics::averageDeaths,
+                false
+        );
+        appendCombatAward(
+                message,
+                "🛑 CC Machine",
+                "Most interrupts per run",
+                "Interrupts/run",
+                candidates,
+                PlayerStatistics::averageInterrupts,
+                false
+        );
+        appendCombatAward(
+                message,
+                "🔥 Top Pumper",
+                "Best average key parse",
+                "Key parse",
+                candidates,
+                PlayerStatistics::averageKeyParsePercentage,
+                true
+        );
+        return message.append("Logged runs only; missing or private logs are excluded.").toString();
+    }
+
+    public String raidCombatMessage(List<TrackedPlayer> players) {
+        if (players.isEmpty()) {
+            return "No active profiles are available for raid combat parses.";
+        }
+        StringBuilder message = new StringBuilder("Raid Combat — best performance average\n\n");
+        for (TrackedPlayer player : players) {
+            appendRaidCombatProfile(message, player);
+        }
+        return message.append("Public Warcraft Logs rankings; unavailable difficulties are shown as —.")
+                .toString();
+    }
+
+    private void appendRaidCombatProfile(StringBuilder message, TrackedPlayer player) {
+        try {
+            JsonNode character = client.query(RAID_RANKINGS_QUERY, Map.of(
+                    NAME_FIELD, player.name(),
+                    SERVER_FIELD, player.realm().toLowerCase(Locale.ROOT),
+                    REGION_FIELD, player.region().toUpperCase(Locale.ROOT)
+            )).path(CHARACTER_DATA_FIELD).path(CHARACTER_FIELD);
+            if (character.isMissingNode() || character.isNull()) {
+                throw new IllegalStateException("character rankings unavailable");
+            }
+            message.append("• ").append(player.profileName()).append(" (")
+                    .append(character.path(NAME_FIELD).asText(player.name())).append(")\n")
+                    .append("  Normal: ").append(formatRaidParse(character.path("normal"))).append('\n')
+                    .append("  Heroic: ").append(formatRaidParse(character.path("heroic"))).append('\n')
+                    .append("  Mythic: ").append(formatRaidParse(character.path("mythic"))).append("\n\n");
+        } catch (RuntimeException _) {
+            message.append("• ").append(player.profileName()).append(" (").append(player.name())
+                    .append("): unavailable\n\n");
+        }
+    }
+
+    private static String formatRaidParse(JsonNode rankings) {
+        JsonNode average = rankings.path("bestPerformanceAverage");
+        return average.isNumber() ? formatPercentMetric(average.decimalValue()) : "—";
+    }
+
+    private static void appendCombatAward(
+            StringBuilder message,
+            String title,
+            String description,
+            String metricLabel,
+            List<PlayerStatistics> candidates,
+            Function<PlayerStatistics, BigDecimal> metric,
+            boolean percentage
+    ) {
+        List<PlayerStatistics> eligible = candidates.stream()
+                .filter(candidate -> metric.apply(candidate) != null)
+                .toList();
+        message.append(title).append(" — ").append(description).append('\n');
+        if (eligible.isEmpty()) {
+            message.append("• Unavailable\n\n");
+            return;
+        }
+
+        BigDecimal winningValue = eligible.stream()
+                .map(metric)
+                .max(BigDecimal::compareTo)
+                .orElseThrow();
+        eligible.stream()
+                .filter(candidate -> metric.apply(candidate).compareTo(winningValue) == 0)
+                .forEach(candidate -> appendCombatAwardWinner(
+                        message,
+                        candidate,
+                        metricLabel,
+                        winningValue,
+                        percentage
+                ));
+        message.append('\n');
+    }
+
+    private static void appendCombatAwardWinner(
+            StringBuilder message,
+            PlayerStatistics winner,
+            String metricLabel,
+            BigDecimal metric,
+            boolean percentage
+    ) {
+        message.append("• ").append(winner.profileName()).append(" (")
+                .append(winner.characterName()).append(")\n  ")
+                .append(metricLabel).append(": ").append(formatMetric(metric));
+        if (percentage) {
+            message.append('%');
+        }
+        message.append("\n  Logged runs: ").append(winner.dungeonRuns()).append('\n');
+    }
+
     private static Comparator<PlayerStatistics> combatStatisticComparator() {
         return Comparator
                 .comparing(
@@ -193,15 +341,15 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static String formatMetric(BigDecimal value) {
-        return value == null ? "unavailable" : value.stripTrailingZeros().toPlainString();
+        return value == null ? UNAVAILABLE_LABEL : value.stripTrailingZeros().toPlainString();
     }
 
     private static String formatPercentMetric(BigDecimal value) {
-        return value == null ? "unavailable" : formatMetric(value) + '%';
+        return value == null ? UNAVAILABLE_LABEL : formatMetric(value) + '%';
     }
 
     private static String formatDamagePerSecond(BigDecimal value) {
-        if (value == null) return "unavailable";
+        if (value == null) return UNAVAILABLE_LABEL;
         DecimalFormat formatter = new DecimalFormat(
                 "#,##0.##", DecimalFormatSymbols.getInstance(Locale.US)
         );
@@ -290,14 +438,14 @@ public class WarcraftLogsStatisticsService {
             Map<ReportFingerprint, String> canonicalReportCodes
     ) {
         Map<String, Object> variables = Map.of(
-                "name", player.name(),
-                "server", player.realm().toLowerCase(Locale.ROOT),
-                "region", player.region().toUpperCase(Locale.ROOT),
+                NAME_FIELD, player.name(),
+                SERVER_FIELD, player.realm().toLowerCase(Locale.ROOT),
+                REGION_FIELD, player.region().toUpperCase(Locale.ROOT),
                 "limit", Math.clamp(properties.recentReportLimit(), 1, 100)
         );
         JsonNode character = client.query(CHARACTER_REPORTS_QUERY, variables)
-                .path("characterData")
-                .path("character");
+                .path(CHARACTER_DATA_FIELD)
+                .path(CHARACTER_FIELD);
         if (character.isMissingNode() || character.isNull()) {
             throw new IllegalStateException("character not found or has no public logs");
         }
@@ -389,7 +537,7 @@ public class WarcraftLogsStatisticsService {
                 player,
                 fightId,
                 discoveredReport.actorId(),
-                fight.path("name").asText("Unknown dungeon"),
+                fight.path(NAME_FIELD).asText("Unknown dungeon"),
                 keyLevel,
                 keystoneTimeMs,
                 existing
@@ -424,7 +572,7 @@ public class WarcraftLogsStatisticsService {
         );
         correlationService.correlate(new LogFight(
                 properties.seasonKey(), report.code(), report.revision(), fightId,
-                fight.path("name").asText(""), keyLevel,
+                fight.path(NAME_FIELD).asText(""), keyLevel,
                 report.startedAt().plusMillis(startOffset), report.startedAt().plusMillis(endOffset),
                 endOffset - startOffset, roster
         ));
@@ -558,9 +706,9 @@ public class WarcraftLogsStatisticsService {
         Map<Integer, ReportActor> result = new LinkedHashMap<>();
         for (JsonNode actor : actors) {
             int id = actor.path("id").asInt(0);
-            String name = actor.path("name").asText("");
+            String name = actor.path(NAME_FIELD).asText("");
             if (id > 0 && !name.isBlank()) {
-                result.put(id, new ReportActor(id, name, actor.path("server").asText("")));
+                result.put(id, new ReportActor(id, name, actor.path(SERVER_FIELD).asText("")));
             }
         }
         return Map.copyOf(result);
@@ -689,7 +837,7 @@ public class WarcraftLogsStatisticsService {
                 || ranking.path("sourceID").asInt(-1) == actorId) {
             return true;
         }
-        return ranking.path("name").asText("").equalsIgnoreCase(characterName);
+        return ranking.path(NAME_FIELD).asText("").equalsIgnoreCase(characterName);
     }
 
     private static BigDecimal average(int total, int count) {
@@ -705,7 +853,7 @@ public class WarcraftLogsStatisticsService {
 
     private static List<BigDecimal> nonNullMetrics(
             List<WarcraftLogPlayerRunEntity> runs,
-            java.util.function.Function<WarcraftLogPlayerRunEntity, BigDecimal> metric
+            Function<WarcraftLogPlayerRunEntity, BigDecimal> metric
     ) {
         return runs.stream().map(metric).filter(value -> value != null).toList();
     }

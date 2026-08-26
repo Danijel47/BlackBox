@@ -8,6 +8,7 @@ import com.blackbox.wow.helper.RaidProgressFormatter;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaceToWorldFirstService;
+import com.blackbox.wow.service.RaidReportService;
 import com.blackbox.wow.service.MPlusDataCollectionService;
 import com.blackbox.wow.service.MPlusProgressService;
 import com.blackbox.wow.service.MPlusDungeonVaultService;
@@ -77,6 +78,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String TELEGRAM_USER_PREFIX = "Telegram user ";
     private static final String PROFILE_PREFIX = "Profile ";
     private static final String PROFILES_LABEL = "Profiles";
+    private static final String BACK_LABEL = "Back";
+    private static final String CHOOSE_PROFILE_PREFIX = "Choose a profile for ";
     private static final String USAGE_PREFIX = "Usage: ";
     private static final String ROAD_COMMAND = "/road";
     private static final String ROAD_BEST_COMMAND = "/roadbest";
@@ -101,6 +104,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String WOW_COMMAND_CALLBACK = "command";
     private static final String WOW_PROFILES_CALLBACK = "profiles";
     private static final String WOW_CHARACTER_CALLBACK = "character";
+    private static final String WOW_RAID_CALLBACK = "raid";
+    private static final String RAID_PROGRESS_CALLBACK = "progress";
+    private static final String RAID_VAULT_CALLBACK = "vault";
+    private static final String RAID_COMBAT_CALLBACK = "combat";
+    private static final String ALL_PROFILES_CALLBACK = "all";
+    private static final String ALL_PROFILES_LABEL = "All Profiles";
+    private static final String RAID_PROGRESS_LABEL = "Raid Progress";
+    private static final String RAID_VAULT_LABEL = "Raid Vault";
+    private static final String RAID_COMBAT_LABEL = "Raid Combat";
+    private static final String NO_ACTIVE_PROFILES_MESSAGE = "No active profiles are available.";
     private static final String ADMIN_PUBLIC_CALLBACK = "public";
     private static final String ADMIN_USERS_CALLBACK = "users";
     private static final String ADMIN_USER_ACCESS_CALLBACK = "user_access";
@@ -160,6 +173,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TrackedPlayerService trackedPlayerService;
     private final VaultReminderService vaultReminderService;
     private final RaceToWorldFirstService raceToWorldFirstService;
+    private final RaidReportService raidReportService;
     private final MPlusDataCollectionService mplusDataCollectionService;
     private final MPlusProgressService mplusProgressService;
     private final MPlusDungeonVaultService mplusDungeonVaultService;
@@ -197,6 +211,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TrackedPlayerService trackedPlayerService,
             VaultReminderService vaultReminderService,
             RaceToWorldFirstService raceToWorldFirstService,
+            RaidReportService raidReportService,
             MPlusDataCollectionService mplusDataCollectionService,
             MPlusProgressService mplusProgressService,
             MPlusDungeonVaultService mplusDungeonVaultService,
@@ -225,6 +240,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.trackedPlayerService = trackedPlayerService;
         this.vaultReminderService = vaultReminderService;
         this.raceToWorldFirstService = raceToWorldFirstService;
+        this.raidReportService = raidReportService;
         this.mplusDataCollectionService = mplusDataCollectionService;
         this.mplusProgressService = mplusProgressService;
         this.mplusDungeonVaultService = mplusDungeonVaultService;
@@ -407,11 +423,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private String mPlusResponse(String section, String arguments, Long senderUserId) {
         return switch (section) {
-            case "progress" -> mplusProgressService.progressMessage(arguments, senderUserId);
+            case RAID_PROGRESS_CALLBACK -> mplusProgressService.progressMessage(arguments, senderUserId);
             case "dungeons" -> mplusDungeonVaultService.dungeonCoverageMessage(
                     arguments, senderUserId
             );
-            case "vault" -> mplusDungeonVaultService.currentVaultMessage(
+            case RAID_VAULT_CALLBACK -> mplusDungeonVaultService.currentVaultMessage(
                     arguments, senderUserId
             );
             case "performance" -> mplusPerformanceService.performanceMessage(
@@ -421,15 +437,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     arguments, senderUserId
             );
             case "team" -> mplusTeamService.teamMessage(arguments, senderUserId);
-            case "pair" -> mplusTeamService.pairMessage(arguments);
+            case MPLUS_PAIR_CALLBACK -> mplusTeamService.pairMessage(arguments);
             case "consistency" -> mplusAdvancedService.consistencyMessage(
                     arguments, senderUserId
             );
-            case "awards" -> mplusAdvancedService.awardsMessage();
+            case "awards" -> warcraftLogsStatisticsService.awardsMessage();
             case "coverage" -> mplusRunCorrelationService.coverageMessage(
                     arguments, senderUserId
             );
-            case "combat" -> warcraftLogsStatisticsService.combatMessage(arguments);
+            case RAID_COMBAT_CALLBACK -> warcraftLogsStatisticsService.combatMessage(arguments);
             case "status" -> adminMPlusStatus(senderUserId);
             default -> mplusHelpMessage();
         };
@@ -576,7 +592,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         if (action.requiresProfile()) {
             sendProfileMenu(
                     chatId,
-                    "Choose a profile for " + action.label() + ":",
+                    CHOOSE_PROFILE_PREFIX + action.label() + ":",
                     MPLUS_PROFILE_CALLBACK + ":" + action.key(),
                     null,
                     action.supportsAllProfiles()
@@ -596,7 +612,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, "That Mythic+ report is unavailable." + MPLUS_REFRESH_MESSAGE);
             return;
         }
-        if (action.supportsAllProfiles() && "all".equals(profileIdValue)) {
+        if (action.supportsAllProfiles() && ALL_PROFILES_CALLBACK.equals(profileIdValue)) {
             send(chatId, mPlusResponse(action.key(), "", senderUserId));
             return;
         }
@@ -647,7 +663,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
         List<InlineKeyboardButton> buttons = new ArrayList<>();
         if (includeAllProfiles) {
-            buttons.add(inlineButton("All Profiles", MPLUS_CALLBACK_PREFIX + callbackAction + ":all"));
+            buttons.add(inlineButton(
+                    ALL_PROFILES_LABEL,
+                    MPLUS_CALLBACK_PREFIX + callbackAction + ":" + ALL_PROFILES_CALLBACK
+            ));
         }
         for (TrackedPlayer profile : profiles) {
             if (buttons.size() >= MAX_PROFILE_BUTTONS) {
@@ -664,7 +683,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, "No active profiles are available for that Mythic+ report.");
             return;
         }
-        buttons.add(inlineButton("Back", MPLUS_CALLBACK_PREFIX + MPLUS_MENU_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, MPLUS_CALLBACK_PREFIX + MPLUS_MENU_CALLBACK));
         send(chatId, prompt, inlineKeyboard(buttons));
     }
 
@@ -737,6 +756,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             routeCharacterCallback(chatId, parts);
             return;
         }
+        if (parts.length >= 3 && parts[1].equals(WOW_RAID_CALLBACK)) {
+            routeRaidCallback(chatId, parts);
+            return;
+        }
         send(chatId, "That WoW menu selection is no longer valid. Use /wow to start again.");
     }
 
@@ -745,7 +768,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "mplus" -> sendMPlusMenu(chatId);
             case WOW_PROFILES_CALLBACK -> sendProfilesMenu(chatId);
             case WOW_CHARACTER_CALLBACK -> sendCharacterMenu(chatId);
-            case "raids" -> sendCommandMenu(chatId, "Choose a raid report:", WowMenuGroup.RAIDS);
+            case "raids" -> sendRaidMenu(chatId);
             case "season" -> sendCommandMenu(chatId, "Choose a season report:", WowMenuGroup.SEASON);
             case "tokens" -> sendCommandMenu(chatId, "Choose a token report:", WowMenuGroup.TOKENS);
             case "materials" -> sendCommandMenu(chatId, "Choose a material list:", WowMenuGroup.MATERIALS);
@@ -764,7 +787,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 ));
             }
         }
-        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
         send(chatId, prompt, inlineKeyboard(buttons));
     }
 
@@ -777,12 +800,99 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         dispatchCommand(CommandContext.forCallback(chatId, senderUserId, action.commandText()));
     }
 
+    private void sendRaidMenu(long chatId) {
+        send(chatId, "Choose a raid report:", inlineKeyboard(List.of(
+                inlineButton("World First", WOW_CALLBACK_PREFIX + WOW_COMMAND_CALLBACK + ":rwf"),
+                inlineButton(RAID_PROGRESS_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
+                        + RAID_PROGRESS_CALLBACK),
+                inlineButton(RAID_VAULT_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
+                        + RAID_VAULT_CALLBACK),
+                inlineButton(RAID_COMBAT_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
+                        + RAID_COMBAT_CALLBACK),
+                inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+        )));
+    }
+
+    private void routeRaidCallback(long chatId, String[] parts) {
+        if (parts.length == 3 && isRaidAction(parts[2])) {
+            sendRaidProfileMenu(chatId, parts[2]);
+            return;
+        }
+        if (parts.length == 4 && isRaidAction(parts[2])) {
+            runRaidReport(chatId, parts[2], parts[3]);
+            return;
+        }
+        send(chatId, "That raid report is no longer available. Use /wow to refresh the menu.");
+    }
+
+    private void sendRaidProfileMenu(long chatId, String action) {
+        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+        if (profiles.isEmpty()) {
+            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
+            return;
+        }
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        buttons.add(inlineButton(
+                ALL_PROFILES_LABEL,
+                WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":" + action + ":" + ALL_PROFILES_CALLBACK
+        ));
+        for (TrackedPlayer profile : profiles) {
+            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
+                break;
+            }
+            buttons.add(inlineButton(
+                    profile.profileName(),
+                    WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":" + action + ":" + profile.profileId()
+            ));
+        }
+        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":raids"));
+        send(chatId, CHOOSE_PROFILE_PREFIX + raidActionLabel(action) + ":", inlineKeyboard(buttons));
+    }
+
+    private void runRaidReport(long chatId, String action, String profileIdValue) {
+        List<TrackedPlayer> players = raidReportPlayersById(profileIdValue);
+        if (players.isEmpty()) {
+            send(chatId, "That raid profile is no longer active. Use /wow to refresh the menu.");
+            return;
+        }
+        String report = switch (action) {
+            case RAID_PROGRESS_CALLBACK -> raidReportService.progress(players);
+            case RAID_VAULT_CALLBACK -> raidReportService.weeklyVault(players);
+            case RAID_COMBAT_CALLBACK -> warcraftLogsStatisticsService.raidCombatMessage(players);
+            default -> "That raid report is unavailable.";
+        };
+        send(chatId, report);
+    }
+
+    private List<TrackedPlayer> raidReportPlayersById(String profileIdValue) {
+        if (ALL_PROFILES_CALLBACK.equals(profileIdValue)) {
+            return trackedPlayerService.activePlayers();
+        }
+        TrackedPlayer profile = findActiveProfile(profileIdValue);
+        return profile == null ? List.of() : List.of(profile);
+    }
+
+    private static boolean isRaidAction(String action) {
+        return RAID_PROGRESS_CALLBACK.equals(action)
+                || RAID_VAULT_CALLBACK.equals(action)
+                || RAID_COMBAT_CALLBACK.equals(action);
+    }
+
+    private static String raidActionLabel(String action) {
+        return switch (action) {
+            case RAID_PROGRESS_CALLBACK -> RAID_PROGRESS_LABEL;
+            case RAID_VAULT_CALLBACK -> RAID_VAULT_LABEL;
+            case RAID_COMBAT_CALLBACK -> RAID_COMBAT_LABEL;
+            default -> "Raid Report";
+        };
+    }
+
     private void sendProfilesMenu(long chatId) {
         send(chatId, "Choose a profile action:", inlineKeyboard(List.of(
                 inlineButton("My Profile", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":view"),
                 inlineButton("Select Main", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":main"),
                 inlineButton("Group Mains", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":mains"),
-                inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+                inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
 
@@ -820,7 +930,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":select:" + senderUserId + ":" + index
             ));
         }
-        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_PROFILES_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_PROFILES_CALLBACK));
         send(chatId, "Choose your main character:", inlineKeyboard(buttons));
     }
 
@@ -868,7 +978,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         send(chatId, "Choose a character report:", inlineKeyboard(List.of(
                 inlineButton("Raider.IO Score", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":rio"),
                 inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
-                inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+                inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
 
@@ -892,12 +1002,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
         if (profiles.isEmpty()) {
-            send(chatId, "No active profiles are available.");
+            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
             return;
         }
         List<InlineKeyboardButton> buttons = new ArrayList<>();
         buttons.add(inlineButton(
-                "All Profiles",
+                ALL_PROFILES_LABEL,
                 WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":all"
         ));
         for (TrackedPlayer profile : profiles) {
@@ -909,13 +1019,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":" + profile.profileId()
             ));
         }
-        buttons.add(inlineButton("Back", WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
-        send(chatId, "Choose a profile for " + action.label() + ":", inlineKeyboard(buttons));
+        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
+        send(chatId, CHOOSE_PROFILE_PREFIX + action.label() + ":", inlineKeyboard(buttons));
     }
 
     private void runCharacterReport(long chatId, String actionKey, String profileIdValue) {
         CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
-        if (action != null && "all".equals(profileIdValue)) {
+        if (action != null && ALL_PROFILES_CALLBACK.equals(profileIdValue)) {
             sendAllCharacterReports(chatId, action);
             return;
         }
@@ -937,7 +1047,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void sendAllCharacterReports(long chatId, CharacterReportAction action) {
         List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
         if (profiles.isEmpty()) {
-            send(chatId, "No active profiles are available.");
+            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
             return;
         }
         StringBuilder message = new StringBuilder(action.label()).append(" — all profiles\n\n");
@@ -1086,7 +1196,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private InlineKeyboardMarkup adminBackKeyboard() {
-        return inlineKeyboard(List.of(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)));
+        return inlineKeyboard(List.of(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)));
     }
 
     private void runWowAdminAction(long chatId, long senderUserId, String actionKey) {
@@ -1119,7 +1229,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, "No Telegram users are registered.", adminBackKeyboard());
             return;
         }
-        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
         send(chatId, "Choose a user access change:", inlineKeyboard(buttons));
     }
 
@@ -1152,7 +1262,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, NO_PLAYER_PROFILES_MESSAGE, adminBackKeyboard());
             return;
         }
-        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
         send(chatId, "Choose a profile access change:", inlineKeyboard(buttons));
     }
 
@@ -1190,7 +1300,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, NO_PLAYER_PROFILES_MESSAGE, adminBackKeyboard());
             return;
         }
-        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
         send(chatId, "Choose a profile to manage its alts:", inlineKeyboard(buttons));
     }
 
@@ -1218,7 +1328,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                             + character.id() + ":" + enable
             ));
         }
-        buttons.add(inlineButton("Back", WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALTS_CALLBACK));
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + ADMIN_ALTS_CALLBACK));
         String prompt = statusMessage == null
                 ? "Manage alts for " + profile.name() + ":"
                 : statusMessage + "\n\nManage alts for " + profile.name() + ":";
@@ -1554,8 +1664,31 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/guild" -> handled(() -> handleGuildCommand(context));
             case "/guildlist" -> handled(() -> send(context.chatId(), formatAvailableRaids()));
             case "/rwf" -> handled(() -> sendRaceToWorldFirstStandings(context.chatId()));
+            case "/raidprogress" -> handled(() -> send(
+                    context.chatId(),
+                    raidReportService.progress(raidReportPlayersByName(commandArguments(context)))
+            ));
+            case "/raidvault" -> handled(() -> send(
+                    context.chatId(),
+                    raidReportService.weeklyVault(raidReportPlayersByName(commandArguments(context)))
+            ));
+            case "/raidcombat" -> handled(() -> send(
+                    context.chatId(),
+                    warcraftLogsStatisticsService.raidCombatMessage(raidReportPlayersByName(commandArguments(context)))
+            ));
             default -> false;
         };
+    }
+
+    private List<TrackedPlayer> raidReportPlayersByName(String profileArgument) {
+        String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
+        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+        if (requestedProfile.isBlank() || ALL_PROFILES_CALLBACK.equalsIgnoreCase(requestedProfile)) {
+            return profiles;
+        }
+        return profiles.stream()
+                .filter(profile -> profile.profileName().equalsIgnoreCase(requestedProfile))
+                .toList();
     }
 
     private void sendRaceToWorldFirstStandings(long chatId) {
@@ -2350,8 +2483,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private enum WowCommandAction {
         RWF("rwf", "World First", "/rwf", WowMenuGroup.RAIDS),
-        GUILD("guild", "Guild Progress", "/guild", WowMenuGroup.RAIDS),
-        GUILD_LIST("guild_list", "Raid List", "/guildlist", WowMenuGroup.RAIDS),
         TITLE("title", "Title Watch", "/title", WowMenuGroup.SEASON),
         TITLE_ZERO_ONE("title_01", "Top 0.1%", "/title01", WowMenuGroup.SEASON),
         RECAP("recap", "Season Recap", "/seasonrecap", WowMenuGroup.SEASON),
@@ -2453,17 +2584,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private enum MPlusMenuAction {
-        PROGRESS("progress", "Progress", true),
+        PROGRESS(RAID_PROGRESS_CALLBACK, "Progress", true),
         DUNGEONS("dungeons", "Dungeons", true),
-        VAULT("vault", "Vault", true),
+        VAULT(RAID_VAULT_CALLBACK, "Vault", true),
         PERFORMANCE("performance", "Performance", true),
         HIGHLIGHTS("highlights", "Highlights", true),
         TEAM("team", "Team", true),
-        PAIR("pair", "Pair", false),
+        PAIR(MPLUS_PAIR_CALLBACK, "Pair", false),
         CONSISTENCY("consistency", "Consistency", true),
         AWARDS("awards", "Awards", false),
         COVERAGE("coverage", "Coverage", true),
-        COMBAT("combat", "Combat", true),
+        COMBAT(RAID_COMBAT_CALLBACK, "Combat", true),
         STATUS("status", "Status", false);
 
         private final String key;

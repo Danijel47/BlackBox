@@ -32,6 +32,18 @@ import java.util.regex.Pattern;
 public class RaiderIoClient {
 
     private static final Pattern SEASON_SLUG_PATTERN = Pattern.compile("/(season-[^/]+)/");
+    private static final String CHARACTER_PROFILE_PATH = "/api/v1/characters/profile";
+    private static final String REGION_QUERY_PARAM = "region";
+    private static final String REALM_QUERY_PARAM = "realm";
+    private static final String NAME_QUERY_PARAM = "name";
+    private static final String FIELDS_QUERY_PARAM = "fields";
+    private static final String SEASON_QUERY_PARAM = "season";
+    private static final String EXPANSION_ID_QUERY_PARAM = "expansion_id";
+    private static final String RAID_PROGRESSION_FIELD = "raid_progression";
+    private static final String WEEKLY_RUNS_FIELD = "mythic_plus_weekly_highest_level_runs";
+    private static final String PROFILE_URL_FIELD = "profile_url";
+    private static final String ALL_SCORE_FIELD = "all";
+    private static final String UNKNOWN_DUNGEON_LABEL = "Unknown dungeon";
 
     private final RestClient rio;
     private final RestClient mplusTitle;
@@ -54,7 +66,7 @@ public class RaiderIoClient {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/mythic-plus/affixes")
-                        .queryParam("region", region)
+                        .queryParam(REGION_QUERY_PARAM, region)
                         .queryParamIfPresent("locale", Optional.ofNullable(locale))
                         .build())
                 .retrieve()
@@ -75,10 +87,10 @@ public class RaiderIoClient {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/guilds/profile")
-                        .queryParam("region", region)
-                        .queryParam("realm", realm)
-                        .queryParam("name", guildName)
-                        .queryParam("fields", "name,profile_url,raid_progression")
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, guildName)
+                        .queryParam(FIELDS_QUERY_PARAM, "name,profile_url,raid_progression")
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -93,11 +105,11 @@ public class RaiderIoClient {
     public RaiderIoScore getCurrentMPlusScore(String region, String realm, String name) {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
-                        .path("/api/v1/characters/profile")
-                        .queryParam("region", region)
-                        .queryParam("realm", realm)
-                        .queryParam("name", name)
-                        .queryParam("fields", "mythic_plus_scores_by_season:current")
+                        .path(CHARACTER_PROFILE_PATH)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, name)
+                        .queryParam(FIELDS_QUERY_PARAM, "mythic_plus_scores_by_season:current")
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -119,30 +131,79 @@ public class RaiderIoClient {
 
         Instant updatedAt = Instant.now();
         return new RaiderIoScore(
-                profile.path("name").asText(name),
-                profile.path("realm").asText(realm),
-                profile.path("region").asText(region),
-                decimalOrNull(scores, "all"),
+                profile.path(NAME_QUERY_PARAM).asText(name),
+                profile.path(REALM_QUERY_PARAM).asText(realm),
+                profile.path(REGION_QUERY_PARAM).asText(region),
+                decimalOrNull(scores, ALL_SCORE_FIELD),
                 decimalOrNull(scores, "dps"),
                 decimalOrNull(scores, "healer"),
                 decimalOrNull(scores, "tank"),
-                profile.path("profile_url").asText(""),
+                profile.path(PROFILE_URL_FIELD).asText(""),
                 updatedAt
+        );
+    }
+
+    public CharacterRaidProgress getCharacterRaidProgress(
+            String region,
+            String realm,
+            String name,
+            String raidSlug
+    ) {
+        String body = rio.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path(CHARACTER_PROFILE_PATH)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, name)
+                        .queryParam(FIELDS_QUERY_PARAM, RAID_PROGRESSION_FIELD)
+                        .build())
+                .retrieve()
+                .body(String.class);
+        if (body == null || body.isBlank()) {
+            throw new IllegalStateException("Empty Raider.IO character raid response");
+        }
+        try {
+            return parseCharacterRaidProgress(json.readTree(body), raidSlug, name, realm, region);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to parse Raider.IO character raid JSON", e);
+        }
+    }
+
+    static CharacterRaidProgress parseCharacterRaidProgress(
+            JsonNode profile,
+            String raidSlug,
+            String fallbackName,
+            String fallbackRealm,
+            String fallbackRegion
+    ) {
+        JsonNode progress = profile.path(RAID_PROGRESSION_FIELD).path(raidSlug);
+        if (progress.isMissingNode()) {
+            throw new IllegalStateException("Raider.IO returned no progress for the configured raid");
+        }
+        return new CharacterRaidProgress(
+                profile.path(NAME_QUERY_PARAM).asText(fallbackName),
+                profile.path(REALM_QUERY_PARAM).asText(fallbackRealm),
+                profile.path(REGION_QUERY_PARAM).asText(fallbackRegion),
+                raidSlug,
+                progress.path("total_bosses").asInt(0),
+                progress.path("normal_bosses_killed").asInt(0),
+                progress.path("heroic_bosses_killed").asInt(0),
+                progress.path("mythic_bosses_killed").asInt(0)
         );
     }
 
     public MPlusObservation getMPlusObservation(String region, String realm, String name) {
         String body = collectionRequest(() -> rio.get()
                 .uri(uriBuilder -> uriBuilder
-                        .path("/api/v1/characters/profile")
-                        .queryParam("region", region)
-                        .queryParam("realm", realm)
-                        .queryParam("name", name)
-                        .queryParam("fields", String.join(",",
+                        .path(CHARACTER_PROFILE_PATH)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, name)
+                        .queryParam(FIELDS_QUERY_PARAM, String.join(",",
                                 "mythic_plus_scores_by_season:current",
                                 "mythic_plus_recent_runs",
                                 "mythic_plus_best_runs:all",
-                                "mythic_plus_weekly_highest_level_runs",
+                                WEEKLY_RUNS_FIELD,
                                 "mythic_plus_previous_weekly_highest_level_runs"
                         ))
                         .build())
@@ -162,7 +223,7 @@ public class RaiderIoClient {
         String body = collectionRequest(() -> rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/mythic-plus/run-details")
-                        .queryParam("season", season)
+                        .queryParam(SEASON_QUERY_PARAM, season)
                         .queryParam("id", runId)
                         .build())
                 .retrieve()
@@ -195,7 +256,7 @@ public class RaiderIoClient {
         LinkedHashMap<Long, RunSummary> runs = new LinkedHashMap<>();
         mergeRuns(runs, profile.path("mythic_plus_recent_runs"), RunSource.RECENT);
         mergeRuns(runs, profile.path("mythic_plus_best_runs"), RunSource.BEST);
-        JsonNode weeklyNodes = profile.path("mythic_plus_weekly_highest_level_runs");
+        JsonNode weeklyNodes = profile.path(WEEKLY_RUNS_FIELD);
         JsonNode previousWeeklyNodes = profile.path("mythic_plus_previous_weekly_highest_level_runs");
         List<RunSummary> weeklyRuns = parseRuns(weeklyNodes, RunSource.WEEKLY);
         List<RunSummary> previousWeeklyRuns = parseRuns(previousWeeklyNodes, RunSource.WEEKLY);
@@ -203,11 +264,11 @@ public class RaiderIoClient {
         mergeRunList(runs, previousWeeklyRuns);
         JsonNode scores = currentSeason.path("scores");
         return new MPlusObservation(
-                profile.path("name").asText(requestedName),
-                profile.path("realm").asText(requestedRealm),
-                profile.path("region").asText(requestedRegion),
+                profile.path(NAME_QUERY_PARAM).asText(requestedName),
+                profile.path(REALM_QUERY_PARAM).asText(requestedRealm),
+                profile.path(REGION_QUERY_PARAM).asText(requestedRegion),
                 season,
-                decimalOrNull(scores, "all"),
+                decimalOrNull(scores, ALL_SCORE_FIELD),
                 decimalOrNull(scores, "dps"),
                 decimalOrNull(scores, "healer"),
                 decimalOrNull(scores, "tank"),
@@ -223,7 +284,7 @@ public class RaiderIoClient {
         String body = collectionRequest(() -> rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/mythic-plus/static-data")
-                        .queryParam("expansion_id", expansionId)
+                        .queryParam(EXPANSION_ID_QUERY_PARAM, expansionId)
                         .build())
                 .retrieve()
                 .body(String.class));
@@ -250,7 +311,7 @@ public class RaiderIoClient {
             List<MPlusStaticData.Dungeon> dungeons = parseStaticDungeons(seasonNode.path("dungeons"));
             seasons.add(new MPlusStaticData.Season(
                     seasonKey,
-                    seasonNode.path("name").asText(seasonKey),
+                    seasonNode.path(NAME_QUERY_PARAM).asText(seasonKey),
                     seasonNode.path("short_name").asText(seasonKey),
                     dungeons
             ));
@@ -278,7 +339,7 @@ public class RaiderIoClient {
                     id,
                     challengeModeId,
                     dungeon.path("slug").asText(""),
-                    dungeon.path("name").asText("Unknown dungeon"),
+                    dungeon.path(NAME_QUERY_PARAM).asText(UNKNOWN_DUNGEON_LABEL),
                     dungeon.path("short_name").asText("Unknown"),
                     timer
             ));
@@ -292,16 +353,16 @@ public class RaiderIoClient {
         if (roster.isArray()) {
             for (JsonNode rosterMember : roster) {
                 JsonNode character = rosterMember.path("character");
-                String characterName = character.path("name").asText("");
+                String characterName = character.path(NAME_QUERY_PARAM).asText("");
                 if (characterName.isBlank()) {
                     continue;
                 }
                 members.add(new Member(
-                        firstText(character.path("region"), "short_name", "slug", "name"),
-                        firstText(character.path("realm"), "name", "slug"),
+                        firstText(character.path(REGION_QUERY_PARAM), "short_name", "slug", NAME_QUERY_PARAM),
+                        firstText(character.path(REALM_QUERY_PARAM), NAME_QUERY_PARAM, "slug"),
                         characterName,
-                        character.path("class").path("name").asText(""),
-                        character.path("spec").path("name").asText(""),
+                        character.path("class").path(NAME_QUERY_PARAM).asText(""),
+                        character.path("spec").path(NAME_QUERY_PARAM).asText(""),
                         rosterMember.path("role").asText(character.path("spec").path("role").asText(""))
                 ));
             }
@@ -314,7 +375,7 @@ public class RaiderIoClient {
                 if (id > 0) {
                     modifiers.add(new Modifier(
                             id,
-                            modifier.path("name").asText("Unknown"),
+                            modifier.path(NAME_QUERY_PARAM).asText("Unknown"),
                             modifier.path("slug").asText("")
                     ));
                 }
@@ -326,11 +387,11 @@ public class RaiderIoClient {
     public WeeklyVaultProgress getWeeklyVaultProgress(String region, String realm, String name) {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
-                        .path("/api/v1/characters/profile")
-                        .queryParam("region", region)
-                        .queryParam("realm", realm)
-                        .queryParam("name", name)
-                        .queryParam("fields", "mythic_plus_weekly_highest_level_runs")
+                        .path(CHARACTER_PROFILE_PATH)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, name)
+                        .queryParam(FIELDS_QUERY_PARAM, WEEKLY_RUNS_FIELD)
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -342,20 +403,20 @@ public class RaiderIoClient {
             throw new IllegalStateException("Failed to parse Raider.IO vault JSON", e);
         }
 
-        String resolvedName = profile.path("name").asText(name);
-        String resolvedRealm = profile.path("realm").asText(realm);
-        String profileUrl = profile.path("profile_url").asText("");
+        String resolvedName = profile.path(NAME_QUERY_PARAM).asText(name);
+        String resolvedRealm = profile.path(REALM_QUERY_PARAM).asText(realm);
+        String profileUrl = profile.path(PROFILE_URL_FIELD).asText("");
 
         List<MPlusRun> runs = new ArrayList<>();
-        JsonNode weeklyRuns = profile.path("mythic_plus_weekly_highest_level_runs");
+        JsonNode weeklyRuns = profile.path(WEEKLY_RUNS_FIELD);
         if (weeklyRuns.isArray()) {
             for (JsonNode run : weeklyRuns) {
                 int level = run.path("mythic_level").asInt(0);
                 if (level <= 0) continue;
 
-                String dungeon = firstText(run, "short_name", "dungeon", "zone", "name");
+                String dungeon = firstText(run, "short_name", "dungeon", "zone", NAME_QUERY_PARAM);
                 if (dungeon.isBlank()) {
-                    dungeon = "Unknown dungeon";
+                    dungeon = UNKNOWN_DUNGEON_LABEL;
                 }
 
                 String completedAt = run.path("completed_at").asText("");
@@ -373,7 +434,7 @@ public class RaiderIoClient {
                         .path("/api/v1/raiding/raid-rankings")
                         .queryParam("raid", raidSlug)
                         .queryParam("difficulty", "mythic")
-                        .queryParam("region", "world")
+                        .queryParam(REGION_QUERY_PARAM, "world")
                         .queryParam("limit", Math.max(1, Math.min(limit, 200)))
                         .queryParam("page", 0)
                         .build())
@@ -391,7 +452,7 @@ public class RaiderIoClient {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/raiding/static-data")
-                        .queryParam("expansion_id", expansionId)
+                        .queryParam(EXPANSION_ID_QUERY_PARAM, expansionId)
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -426,7 +487,7 @@ public class RaiderIoClient {
         List<RaidEncounter> encounters = new ArrayList<>();
         for (JsonNode encounterNode : encounterNodes) {
             String slug = encounterNode.path("slug").asText("");
-            String name = encounterNode.path("name").asText("");
+            String name = encounterNode.path(NAME_QUERY_PARAM).asText("");
             if (!slug.isBlank() && !name.isBlank()) {
                 encounters.add(new RaidEncounter(slug, name));
             }
@@ -443,15 +504,15 @@ public class RaiderIoClient {
         List<RaidRanking> rankings = new ArrayList<>();
         for (JsonNode rankingNode : rankingNodes) {
             JsonNode guild = rankingNode.path("guild");
-            String guildName = firstText(guild, "displayName", "name");
+            String guildName = firstText(guild, "displayName", NAME_QUERY_PARAM);
             if (guildName.isBlank()) {
                 continue;
             }
             rankings.add(new RaidRanking(
                     Math.max(0, rankingNode.path("rank").asInt(0)),
                     guildName,
-                    guild.path("realm").path("name").asText("Unknown realm"),
-                    guild.path("region").path("short_name").asText("World"),
+                    guild.path(REALM_QUERY_PARAM).path(NAME_QUERY_PARAM).asText("Unknown realm"),
+                    guild.path(REGION_QUERY_PARAM).path("short_name").asText("World"),
                     parseBossDefeats(rankingNode.path("encountersDefeated")),
                     parseBossProgress(rankingNode.path("encountersPulled")),
                     guild.path("path").asText("")
@@ -518,11 +579,11 @@ public class RaiderIoClient {
     ) {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
-                        .path("/api/v1/characters/profile")
-                        .queryParam("region", region)
-                        .queryParam("realm", realm)
-                        .queryParam("name", name)
-                        .queryParam("fields", "mythic_plus_dungeon_run_counts:" + season)
+                        .path(CHARACTER_PROFILE_PATH)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(REALM_QUERY_PARAM, realm)
+                        .queryParam(NAME_QUERY_PARAM, name)
+                        .queryParam(FIELDS_QUERY_PARAM, "mythic_plus_dungeon_run_counts:" + season)
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -534,15 +595,15 @@ public class RaiderIoClient {
             throw new IllegalStateException("Failed to parse Raider.IO season recap JSON", e);
         }
 
-        String resolvedName = profile.path("name").asText(name);
-        String resolvedRealm = profile.path("realm").asText(realm);
-        String profileUrl = profile.path("profile_url").asText("");
+        String resolvedName = profile.path(NAME_QUERY_PARAM).asText(name);
+        String resolvedRealm = profile.path(REALM_QUERY_PARAM).asText(realm);
+        String profileUrl = profile.path(PROFILE_URL_FIELD).asText("");
         List<DungeonRunCount> dungeons = new ArrayList<>();
 
         JsonNode runCounts = profile.path("mythic_plus_dungeon_run_counts");
         if (runCounts.isArray()) {
             for (JsonNode runCount : runCounts) {
-                String dungeon = runCount.path("dungeon").asText("Unknown dungeon");
+                String dungeon = runCount.path("dungeon").asText(UNKNOWN_DUNGEON_LABEL);
                 String shortName = runCount.path("short_name").asText(dungeon);
                 int total = Math.max(0, runCount.path("season_runs_total").asInt(0));
                 int timed = Math.max(0, runCount.path("season_runs_timed").asInt(0));
@@ -571,8 +632,8 @@ public class RaiderIoClient {
         String body = rio.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/mythic-plus/season-cutoffs")
-                        .queryParam("region", region)
-                        .queryParam("season", season)
+                        .queryParam(REGION_QUERY_PARAM, region)
+                        .queryParam(SEASON_QUERY_PARAM, season)
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -584,7 +645,7 @@ public class RaiderIoClient {
             throw new IllegalStateException("Failed to parse Raider.IO season cutoffs JSON", e);
         }
 
-        JsonNode cutoffAll = cutoffs.path("cutoffs").path(percentileKey).path("all");
+        JsonNode cutoffAll = cutoffs.path("cutoffs").path(percentileKey).path(ALL_SCORE_FIELD);
         if (cutoffAll.isMissingNode() || cutoffAll.path("quantileMinValue").isMissingNode()) {
             throw new IllegalStateException("Raider.IO season cutoffs did not include " + percentileKey + " all score");
         }
@@ -793,8 +854,8 @@ public class RaiderIoClient {
         long parTime = Math.max(0, run.path("par_time_ms").asLong(0));
         return new RunSummary(
                 runId,
-                firstText(run, "dungeon", "name", "short_name"),
-                firstText(run, "short_name", "dungeon", "name"),
+                firstText(run, "dungeon", NAME_QUERY_PARAM, "short_name"),
+                firstText(run, "short_name", "dungeon", NAME_QUERY_PARAM),
                 nullablePositiveInteger(run, "map_challenge_mode_id"),
                 level,
                 completedAt,
@@ -862,6 +923,18 @@ public class RaiderIoClient {
             BigDecimal tank,
             String profileUrl,
             Instant fetchedAt
+    ) {
+    }
+
+    public record CharacterRaidProgress(
+            String name,
+            String realm,
+            String region,
+            String raidSlug,
+            int totalBosses,
+            int normalBossesKilled,
+            int heroicBossesKilled,
+            int mythicBossesKilled
     ) {
     }
 
