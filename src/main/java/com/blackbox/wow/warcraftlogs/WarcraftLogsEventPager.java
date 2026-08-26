@@ -72,7 +72,8 @@ public class WarcraftLogsEventPager {
 
     public enum EventType {
         INTERRUPTS("Interrupts"),
-        DEATHS("Deaths");
+        DEATHS("Deaths"),
+        DAMAGE_TAKEN("DamageTaken");
 
         private final String graphQlValue;
 

@@ -5,6 +5,7 @@ import com.blackbox.wow.repository.WarcraftLogPlayerRunRepository;
 import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TrackedPlayerService;
+import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -56,6 +58,7 @@ class WarcraftLogsStatisticsServiceTest {
                         • Linq (Thelinq)
                           Key parse: 62%
                           DPS: 140,000
+                          Avoidable damage per run: unavailable
                           Interrupts per run: 4
                           Deaths per run: 0
                           Logged runs: 1
@@ -99,9 +102,9 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(
-                run(1L, "BucoMain", "buco", 2, 4, "70", "100000"),
-                run(2L, "LinqMain", "linq", 12, 1, "80", "120000"),
-                run(3L, "LazoMain", "lazo", 4, 0, "95", "180000")
+                run(1L, "BucoMain", "buco", 2, 4, "70", "100000", "950000"),
+                run(2L, "LinqMain", "linq", 12, 1, "80", "120000", "300000"),
+                run(3L, "LazoMain", "lazo", 4, 0, "95", "180000", "200000")
         ));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -116,7 +119,37 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("💀 Floor POV — Most deaths per run", "• Buco (BucoMain)", "Deaths/run: 4")
                 .contains("🛑 CC Machine — Most interrupts per run", "• Linq (LinqMain)", "Interrupts/run: 12")
                 .contains("🔥 Top Pumper — Best average key parse", "• Lazo (LazoMain)", "Key parse: 95%")
+                .contains(
+                        "🔥 Stand in Fire DPS higher — Most average avoidable damage taken",
+                        "• Buco (BucoMain)",
+                        "Avoidable damage/run: 950,000"
+                )
                 .doesNotContain("formula:", "N=");
+    }
+
+    @Test
+    void sumsOnlyExplicitlyAvoidableDamageTakenByThePlayer() throws Exception {
+        JsonNode events = new ObjectMapper().readTree("""
+                [
+                  {"targetID":42,"isAvoidable":true,"amount":120000.5},
+                  {"targetID":42,"isAvoidable":false,"amount":900000},
+                  {"targetID":7,"isAvoidable":true,"amount":800000},
+                  {"targetID":42,"amount":700000},
+                  {"targetID":42,"isAvoidable":true,"amount":30000}
+                ]
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(events, 42))
+                .isEqualByComparingTo("150000.5");
+    }
+
+    @Test
+    void keepsAvoidableDamageUnavailableWhenTheReportHasNoClassification() throws Exception {
+        JsonNode events = new ObjectMapper().readTree("""
+                [{"targetID":42,"amount":120000}]
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(events, 42)).isNull();
     }
 
     @Test
@@ -125,8 +158,8 @@ class WarcraftLogsStatisticsServiceTest {
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         JsonNode response = new ObjectMapper().readTree("""
                 {"characterData":{"character":{"name":"Bucothered",
-                  "normal":{"bestPerformanceAverage":81.2},
-                  "heroic":{"bestPerformanceAverage":72.5},
+                  "normal":{"bestPerformanceAverage":81.68728134929741},
+                  "heroic":{"bestPerformanceAverage":24.692101313564862},
                   "mythic":null
                 }}}
                 """);
@@ -147,7 +180,8 @@ class WarcraftLogsStatisticsServiceTest {
 
         assertThat(message)
                 .contains("Raid Combat — best performance average")
-                .contains("Normal: 81.2%", "Heroic: 72.5%", "Mythic: —");
+                .contains("Normal: 81.69%", "Heroic: 24.69%", "Mythic: —")
+                .doesNotContain("81.68728134929741", "24.692101313564862");
     }
 
     @Test
@@ -211,6 +245,64 @@ class WarcraftLogsStatisticsServiceTest {
         service.refresh();
 
         verify(runRepository, times(1)).save(any(WarcraftLogPlayerRunEntity.class));
+    }
+
+    @Test
+    void backfillsAvoidableDamageForAnAlreadyStoredRun() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        WarcraftLogsEventPager eventPager = mock(WarcraftLogsEventPager.class);
+        WarcraftLogPlayerRunEntity storedRun = run(
+                1L, "Thelinq", "stored", 9, 1, "80", "150000"
+        );
+        ReflectionTestUtils.setField(storedRun, "metricsVersion", 5);
+        JsonNode reports = mapper.readTree("""
+                {"characterData":{"character":{"recentReports":{"data":[]}}}}
+                """);
+        JsonNode storedReport = mapper.readTree("""
+                {"reportData":{"report":{"revision":1,
+                  "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}
+                }}}
+                """);
+        JsonNode emptyReportData = mapper.readTree("""
+                {"reportData":{"report":{}}}
+                """);
+        JsonNode avoidableEvents = mapper.readTree("""
+                [{"targetID":42,"isAvoidable":true,"amount":325000}]
+                """);
+        when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
+        when(client.query(anyString(), anyMap())).thenReturn(reports, storedReport, emptyReportData);
+        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(storedRun));
+        when(runRepository.save(any(WarcraftLogPlayerRunEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(snapshotRepository.findBySeasonKeyAndProfileId("midnight-season-2", 1))
+                .thenReturn(Optional.empty());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")
+        ));
+        when(eventPager.events("stored", 7, EventType.INTERRUPTS)).thenReturn(List.of());
+        when(eventPager.events("stored", 7, EventType.DEATHS)).thenReturn(List.of());
+        when(eventPager.events("stored", 7, EventType.DAMAGE_TAKEN)).thenReturn(List.of(avoidableEvents.get(0)));
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                runRepository,
+                snapshotRepository,
+                mock(MPlusRunCorrelationService.class),
+                eventPager
+        );
+
+        service.refresh();
+
+        verify(runRepository).save(eq(storedRun));
+        assertThat(storedRun.getAvoidableDamage()).isEqualByComparingTo("325000");
+        assertThat(storedRun.getMetricsVersion())
+                .isEqualTo(WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION);
     }
 
     @Test
@@ -283,6 +375,19 @@ class WarcraftLogsStatisticsServiceTest {
             String keyParse,
             String damagePerSecond
     ) {
+        return run(profileId, characterName, reportCode, interrupts, deaths, keyParse, damagePerSecond, null);
+    }
+
+    private static WarcraftLogPlayerRunEntity run(
+            long profileId,
+            String characterName,
+            String reportCode,
+            int interrupts,
+            int deaths,
+            String keyParse,
+            String damagePerSecond,
+            String avoidableDamage
+    ) {
         WarcraftLogPlayerRunEntity run = new WarcraftLogPlayerRunEntity(
                 "midnight-season-2", profileId, characterName, reportCode, 1,
                 Instant.parse("2026-08-19T10:00:00Z"), 7, "King's Rest", 10,
@@ -290,6 +395,7 @@ class WarcraftLogsStatisticsServiceTest {
                 keyParse == null ? null : new BigDecimal(keyParse),
                 new BigDecimal(damagePerSecond)
         );
+        run.recordAvoidableDamage(avoidableDamage == null ? null : new BigDecimal(avoidableDamage));
         if (keyParse != null) {
             run.recordCompletion(1_800_000);
         }

@@ -14,7 +14,7 @@ import java.time.Instant;
 @Table(name = "warcraft_log_player_run")
 public class WarcraftLogPlayerRunEntity {
 
-    public static final int CURRENT_METRICS_VERSION = 5;
+    public static final int CURRENT_METRICS_VERSION = 6;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -64,6 +64,9 @@ public class WarcraftLogPlayerRunEntity {
 
     @Column(name = "damage_per_second", precision = 14, scale = 2)
     private BigDecimal damagePerSecond;
+
+    @Column(name = "avoidable_damage", precision = 18, scale = 2)
+    private BigDecimal avoidableDamage;
 
     @Column(name = "metrics_version", nullable = false)
     private int metricsVersion;
@@ -136,17 +139,27 @@ public class WarcraftLogPlayerRunEntity {
         this.keystoneTimeMs = completionTimeMs;
     }
 
+    public void recordAvoidableDamage(BigDecimal damage) {
+        if (damage != null && damage.signum() < 0) {
+            throw new IllegalArgumentException("Avoidable damage cannot be negative.");
+        }
+        this.avoidableDamage = damage;
+    }
+
     public Long getProfileId() { return profileId; }
     public String getCharacterName() { return characterName; }
     public String getReportCode() { return reportCode; }
     public int getReportRevision() { return reportRevision; }
     public Instant getReportStartedAt() { return reportStartedAt; }
     public int getFightId() { return fightId; }
+    public String getDungeonName() { return dungeonName; }
+    public int getKeystoneLevel() { return keystoneLevel; }
     public Long getKeystoneTimeMs() { return keystoneTimeMs; }
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
     public BigDecimal getParsePercentage() { return parsePercentage; }
     public BigDecimal getKeyParsePercentage() { return keyParsePercentage; }
     public BigDecimal getDamagePerSecond() { return damagePerSecond; }
+    public BigDecimal getAvoidableDamage() { return avoidableDamage; }
     public int getMetricsVersion() { return metricsVersion; }
 }

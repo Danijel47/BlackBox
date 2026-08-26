@@ -23,14 +23,7 @@ import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -39,11 +32,22 @@ import java.util.stream.Collectors;
 @Slf4j
 public class WarcraftLogsStatisticsService {
 
+    private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final String NAME_FIELD = "name";
     private static final String SERVER_FIELD = "server";
     private static final String REGION_FIELD = "region";
     private static final String CHARACTER_DATA_FIELD = "characterData";
     private static final String CHARACTER_FIELD = "character";
+    private static final String REPORT_DATA_FIELD = "reportData";
+    private static final String REPORT_FIELD = "report";
+    private static final String REPORT_CODE_FIELD = "code";
+    private static final String REPORT_REVISION_FIELD = "revision";
+    private static final String MASTER_DATA_FIELD = "masterData";
+    private static final String ACTORS_FIELD = "actors";
+    private static final String SOURCE_ID_FIELD = "sourceID";
+    private static final String TARGET_ID_FIELD = "targetID";
+    private static final String IS_AVOIDABLE_FIELD = "isAvoidable";
+    private static final String AMOUNT_FIELD = "amount";
     private static final String UNAVAILABLE_LABEL = "unavailable";
     private static final String CHARACTER_REPORTS_QUERY = """
             query CharacterReports($name: String!, $server: String!, $region: String!, $limit: Int!) {
@@ -72,6 +76,22 @@ public class WarcraftLogsStatisticsService {
                           server
                         }
                       }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+    private static final String STORED_REPORT_QUERY = """
+            query StoredReport($code: String!) {
+              reportData {
+                report(code: $code) {
+                  revision
+                  masterData(translate: false) {
+                    actors(type: "Player") {
+                      id
+                      name
+                      server
                     }
                   }
                 }
@@ -145,6 +165,9 @@ public class WarcraftLogsStatisticsService {
             List<BigDecimal> damagePerSecond = nonNullMetrics(
                     completeRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
             );
+            List<BigDecimal> avoidableDamage = nonNullMetrics(
+                    completeRuns, WarcraftLogPlayerRunEntity::getAvoidableDamage
+            );
             WarcraftLogProfileSnapshotEntity snapshot = snapshotsByProfile.get(player.profileId());
             result.add(new PlayerStatistics(
                     player.profileName(),
@@ -155,6 +178,7 @@ public class WarcraftLogsStatisticsService {
                     average(deaths, completeRuns.size()),
                     average(keyParses),
                     average(damagePerSecond),
+                    average(avoidableDamage),
                     snapshot == null ? null : snapshot.getLastError()
             ));
         }
@@ -206,7 +230,7 @@ public class WarcraftLogsStatisticsService {
                 "Deaths/run",
                 candidates,
                 PlayerStatistics::averageDeaths,
-                false
+                WarcraftLogsStatisticsService::formatMetric
         );
         appendCombatAward(
                 message,
@@ -215,7 +239,7 @@ public class WarcraftLogsStatisticsService {
                 "Interrupts/run",
                 candidates,
                 PlayerStatistics::averageInterrupts,
-                false
+                WarcraftLogsStatisticsService::formatMetric
         );
         appendCombatAward(
                 message,
@@ -224,7 +248,16 @@ public class WarcraftLogsStatisticsService {
                 "Key parse",
                 candidates,
                 PlayerStatistics::averageKeyParsePercentage,
-                true
+                WarcraftLogsStatisticsService::formatPercentMetric
+        );
+        appendCombatAward(
+                message,
+                "🔥 Stand in Fire DPS higher",
+                "Most average avoidable damage taken",
+                "Avoidable damage/run",
+                candidates,
+                PlayerStatistics::averageAvoidableDamage,
+                WarcraftLogsStatisticsService::formatDamageAmount
         );
         return message.append("Logged runs only; missing or private logs are excluded.").toString();
     }
@@ -264,7 +297,12 @@ public class WarcraftLogsStatisticsService {
 
     private static String formatRaidParse(JsonNode rankings) {
         JsonNode average = rankings.path("bestPerformanceAverage");
-        return average.isNumber() ? formatPercentMetric(average.decimalValue()) : "—";
+        if (!average.isNumber()) {
+            return "—";
+        }
+        BigDecimal roundedAverage = average.decimalValue()
+                .setScale(RAID_PARSE_DECIMAL_PLACES, RoundingMode.HALF_UP);
+        return formatPercentMetric(roundedAverage);
     }
 
     private static void appendCombatAward(
@@ -274,7 +312,7 @@ public class WarcraftLogsStatisticsService {
             String metricLabel,
             List<PlayerStatistics> candidates,
             Function<PlayerStatistics, BigDecimal> metric,
-            boolean percentage
+            Function<BigDecimal, String> formatter
     ) {
         List<PlayerStatistics> eligible = candidates.stream()
                 .filter(candidate -> metric.apply(candidate) != null)
@@ -296,7 +334,7 @@ public class WarcraftLogsStatisticsService {
                         candidate,
                         metricLabel,
                         winningValue,
-                        percentage
+                        formatter
                 ));
         message.append('\n');
     }
@@ -306,14 +344,11 @@ public class WarcraftLogsStatisticsService {
             PlayerStatistics winner,
             String metricLabel,
             BigDecimal metric,
-            boolean percentage
+            Function<BigDecimal, String> formatter
     ) {
         message.append("• ").append(winner.profileName()).append(" (")
                 .append(winner.characterName()).append(")\n  ")
-                .append(metricLabel).append(": ").append(formatMetric(metric));
-        if (percentage) {
-            message.append('%');
-        }
+                .append(metricLabel).append(": ").append(formatter.apply(metric));
         message.append("\n  Logged runs: ").append(winner.dungeonRuns()).append('\n');
     }
 
@@ -331,6 +366,8 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(")\n")
                 .append("  Key parse: ").append(formatPercentMetric(statistic.averageKeyParsePercentage())).append('\n')
                 .append("  DPS: ").append(formatDamagePerSecond(statistic.averageDamagePerSecond())).append('\n')
+                .append("  Avoidable damage per run: ")
+                .append(formatDamageAmount(statistic.averageAvoidableDamage())).append('\n')
                 .append("  Interrupts per run: ").append(formatMetric(statistic.averageInterrupts())).append('\n')
                 .append("  Deaths per run: ").append(formatMetric(statistic.averageDeaths())).append('\n')
                 .append("  Logged runs: ").append(statistic.dungeonRuns()).append('\n');
@@ -349,6 +386,10 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static String formatDamagePerSecond(BigDecimal value) {
+        return formatDamageAmount(value);
+    }
+
+    private static String formatDamageAmount(BigDecimal value) {
         if (value == null) return UNAVAILABLE_LABEL;
         DecimalFormat formatter = new DecimalFormat(
                 "#,##0.##", DecimalFormatSymbols.getInstance(Locale.US)
@@ -398,7 +439,8 @@ public class WarcraftLogsStatisticsService {
 
     private void collectIncrementalRuns() {
         String seasonKey = properties.seasonKey();
-        ExistingRunIndex existingRuns = ExistingRunIndex.from(runRepository.findBySeasonKey(seasonKey));
+        List<WarcraftLogPlayerRunEntity> storedRuns = runRepository.findBySeasonKey(seasonKey);
+        ExistingRunIndex existingRuns = ExistingRunIndex.from(storedRuns);
         Map<ReportFingerprint, ReportWork> reports = new LinkedHashMap<>();
         Map<ReportFingerprint, String> canonicalReportCodes = new LinkedHashMap<>();
         List<TrackedPlayer> players = trackedPlayerService.activePlayers();
@@ -423,12 +465,81 @@ public class WarcraftLogsStatisticsService {
                 log.warn("Could not load Warcraft Logs report {}: {}", report.code, e.getMessage());
             }
         }
+        savedRuns += backfillStoredRunMetrics(storedRuns, players, existingRuns);
         log.info(
                 "Warcraft Logs season {} refresh: {} profiles, {} new or revised runs saved.",
                 seasonKey,
                 players.size(),
                 savedRuns
         );
+    }
+
+    private int backfillStoredRunMetrics(
+            List<WarcraftLogPlayerRunEntity> storedRuns,
+            List<TrackedPlayer> players,
+            ExistingRunIndex existingRuns
+    ) {
+        Map<Long, TrackedPlayer> playersById = players.stream()
+                .collect(Collectors.toMap(TrackedPlayer::profileId, Function.identity()));
+        Map<String, List<WarcraftLogPlayerRunEntity>> staleRunsByReport = storedRuns.stream()
+                .filter(run -> !hasCurrentMetricsVersion(run))
+                .filter(run -> playersById.containsKey(run.getProfileId()))
+                .collect(Collectors.groupingBy(
+                        WarcraftLogPlayerRunEntity::getReportCode,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+        int savedRuns = 0;
+        for (Map.Entry<String, List<WarcraftLogPlayerRunEntity>> entry : staleRunsByReport.entrySet()) {
+            try {
+                ReportWork report = storedReportWork(entry.getKey(), entry.getValue(), playersById);
+                savedRuns += loadAndSaveReportEvents(report, existingRuns);
+            } catch (RuntimeException exception) {
+                log.warn("Could not backfill Warcraft Logs report {}: {}", entry.getKey(), exception.getMessage());
+            }
+        }
+        return savedRuns;
+    }
+
+    private ReportWork storedReportWork(
+            String reportCode,
+            List<WarcraftLogPlayerRunEntity> storedRuns,
+            Map<Long, TrackedPlayer> playersById
+    ) {
+        JsonNode reportData = client.query(STORED_REPORT_QUERY, Map.of(REPORT_CODE_FIELD, reportCode))
+                .path(REPORT_DATA_FIELD)
+                .path(REPORT_FIELD);
+        if (reportData.isMissingNode() || reportData.isNull()) {
+            throw new IllegalStateException("stored report is unavailable");
+        }
+        Map<Integer, ReportActor> actors = reportActors(
+                reportData.path(MASTER_DATA_FIELD).path(ACTORS_FIELD)
+        );
+        int reportRevision = reportData.path(REPORT_REVISION_FIELD).asInt(0);
+        ReportWork report = new ReportWork(
+                reportCode,
+                reportRevision,
+                storedRuns.getFirst().getReportStartedAt()
+        );
+        for (WarcraftLogPlayerRunEntity run : storedRuns) {
+            TrackedPlayer player = playersById.get(run.getProfileId());
+            Integer actorId = findActorId(actors, player);
+            if (actorId == null || run.getKeystoneTimeMs() == null || run.getKeystoneTimeMs() <= 0) {
+                continue;
+            }
+            report.revision = Math.max(report.revision, run.getReportRevision());
+            report.fightIds.add(run.getFightId());
+            report.participants.add(new Participant(
+                    player,
+                    run.getFightId(),
+                    actorId,
+                    run.getDungeonName(),
+                    run.getKeystoneLevel(),
+                    run.getKeystoneTimeMs(),
+                    run
+            ));
+        }
+        return report;
     }
 
     private void discoverPlayerReports(
@@ -474,16 +585,18 @@ public class WarcraftLogsStatisticsService {
                 || startedAt.isBefore(properties.seasonStart())) {
             return null;
         }
-        String code = reportNode.path("code").asText("");
+        String code = reportNode.path(REPORT_CODE_FIELD).asText("");
         if (code.isBlank()) {
             return null;
         }
-        Map<Integer, ReportActor> actors = reportActors(reportNode.path("masterData").path("actors"));
+        Map<Integer, ReportActor> actors = reportActors(
+                reportNode.path(MASTER_DATA_FIELD).path(ACTORS_FIELD)
+        );
         Integer actorId = findActorId(actors, player);
         if (actorId == null) {
             return null;
         }
-        int revision = Math.max(0, reportNode.path("revision").asInt(0));
+        int revision = Math.max(0, reportNode.path(REPORT_REVISION_FIELD).asInt(0));
         return new DiscoveredReport(code, revision, startedAt, actorId, actors);
     }
 
@@ -584,15 +697,20 @@ public class WarcraftLogsStatisticsService {
     ) {
         if (report.fightIds.isEmpty()) return 0;
 
-        JsonNode reportData = client.query(rankingsQuery(report.fightIds), Map.of("code", report.code))
-                .path("reportData")
-                .path("report");
+        JsonNode reportData = client.query(
+                        rankingsQuery(report.fightIds), Map.of(REPORT_CODE_FIELD, report.code)
+                )
+                .path(REPORT_DATA_FIELD)
+                .path(REPORT_FIELD);
         int saved = 0;
         Map<Integer, FightEvents> eventsByFight = loadFightEvents(report);
         for (Participant participant : report.participants) {
             FightEvents events = eventsByFight.get(participant.fightId);
-            int interruptCount = countEventsForActor(events.interrupts(), "sourceID", participant.actorId);
+            int interruptCount = countEventsForActor(events.interrupts(), SOURCE_ID_FIELD, participant.actorId);
             int deathCount = countDeathEventsForActor(events.deaths(), participant.actorId);
+            BigDecimal avoidableDamage = sumAvoidableDamageForActor(
+                    events.damageTaken(), participant.actorId
+            );
             RankingPercentiles rankingPercentiles = findRankingPercentiles(
                     reportData.path("p" + participant.fightId),
                     participant.actorId,
@@ -639,6 +757,7 @@ public class WarcraftLogsStatisticsService {
                         rankingMetrics.damagePerSecond()
                 );
             }
+            entity.recordAvoidableDamage(avoidableDamage);
             entity.recordCompletion(participant.keystoneTimeMs);
             entity = runRepository.save(entity);
             existingRuns.remember(entity);
@@ -667,7 +786,8 @@ public class WarcraftLogsStatisticsService {
         for (Integer fightId : report.fightIds) {
             events.put(fightId, new FightEvents(
                     eventPager.events(report.code, fightId, EventType.INTERRUPTS),
-                    eventPager.events(report.code, fightId, EventType.DEATHS)
+                    eventPager.events(report.code, fightId, EventType.DEATHS),
+                    eventPager.events(report.code, fightId, EventType.DAMAGE_TAKEN)
             ));
         }
         return Map.copyOf(events);
@@ -751,12 +871,30 @@ public class WarcraftLogsStatisticsService {
     private static int countDeathEventsForActor(Iterable<JsonNode> events, int actorId) {
         int count = 0;
         for (JsonNode event : events) {
-            if (event.path("targetID").asInt(-1) == actorId
-                    || (!event.has("targetID") && event.path("sourceID").asInt(-1) == actorId)) {
+            if (event.path(TARGET_ID_FIELD).asInt(-1) == actorId
+                    || (!event.has(TARGET_ID_FIELD) && event.path(SOURCE_ID_FIELD).asInt(-1) == actorId)) {
                 count++;
             }
         }
         return count;
+    }
+
+    static BigDecimal sumAvoidableDamageForActor(Iterable<JsonNode> events, int actorId) {
+        BigDecimal total = BigDecimal.ZERO;
+        boolean classificationAvailable = false;
+        for (JsonNode event : events) {
+            if (event.path(TARGET_ID_FIELD).asInt(-1) != actorId
+                    || !event.path(IS_AVOIDABLE_FIELD).isBoolean()) {
+                continue;
+            }
+            classificationAvailable = true;
+            JsonNode amount = event.path(AMOUNT_FIELD);
+            if (event.path(IS_AVOIDABLE_FIELD).asBoolean() && amount.isNumber()
+                    && amount.decimalValue().signum() >= 0) {
+                total = total.add(amount.decimalValue());
+            }
+        }
+        return classificationAvailable ? total : null;
     }
 
     static RankingPercentiles findRankingPercentiles(JsonNode node, int actorId, String characterName) {
@@ -834,7 +972,7 @@ public class WarcraftLogsStatisticsService {
     private static boolean rankingBelongsToPlayer(JsonNode ranking, int actorId, String characterName) {
         if (ranking.path("id").asInt(-1) == actorId
                 || ranking.path("actorID").asInt(-1) == actorId
-                || ranking.path("sourceID").asInt(-1) == actorId) {
+                || ranking.path(SOURCE_ID_FIELD).asInt(-1) == actorId) {
             return true;
         }
         return ranking.path(NAME_FIELD).asText("").equalsIgnoreCase(characterName);
@@ -855,7 +993,7 @@ public class WarcraftLogsStatisticsService {
             List<WarcraftLogPlayerRunEntity> runs,
             Function<WarcraftLogPlayerRunEntity, BigDecimal> metric
     ) {
-        return runs.stream().map(metric).filter(value -> value != null).toList();
+        return runs.stream().map(metric).filter(Objects::nonNull).toList();
     }
 
     private static boolean hasCurrentMetricsVersion(WarcraftLogPlayerRunEntity run) {
@@ -883,6 +1021,7 @@ public class WarcraftLogsStatisticsService {
             BigDecimal averageDeaths,
             BigDecimal averageKeyParsePercentage,
             BigDecimal averageDamagePerSecond,
+            BigDecimal averageAvoidableDamage,
             String error
     ) {
     }
@@ -930,7 +1069,11 @@ public class WarcraftLogsStatisticsService {
     private record ReportActor(int id, String name, String server) {
     }
 
-    private record FightEvents(List<JsonNode> interrupts, List<JsonNode> deaths) {
+    private record FightEvents(
+            List<JsonNode> interrupts,
+            List<JsonNode> deaths,
+            List<JsonNode> damageTaken
+    ) {
     }
 
     private record Participant(

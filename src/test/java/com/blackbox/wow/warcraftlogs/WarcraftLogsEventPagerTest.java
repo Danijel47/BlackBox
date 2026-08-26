@@ -59,11 +59,11 @@ class WarcraftLogsEventPagerTest {
     void preservesTheDefaultActorIdEventRepresentation() throws Exception {
         when(client.query(anyString(), anyMap())).thenReturn(response("[]", "null"));
 
-        pager.events("report", 7, EventType.INTERRUPTS);
+        pager.events("report", 7, EventType.DAMAGE_TAKEN);
 
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
         verify(client).query(query.capture(), eq(java.util.Map.of(
-                "code", "report", "fightId", 7, "start", 0.0, "dataType", "Interrupts"
+                "code", "report", "fightId", 7, "start", 0.0, "dataType", "DamageTaken"
         )));
         assertThat(query.getValue())
                 .doesNotContain("useActorIDs", "useAbilityIDs")
