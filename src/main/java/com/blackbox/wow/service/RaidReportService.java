@@ -50,10 +50,16 @@ public class RaidReportService {
         if (players.isEmpty()) {
             return "No active profiles are available for raid progress.";
         }
+        List<RaidProgressRow> rows = players.stream()
+                .map(this::loadRaidProgress)
+                .sorted(Comparator
+                        .comparing(RaidProgressRow::ranking, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(row -> row.player().profileName(), String.CASE_INSENSITIVE_ORDER))
+                .toList();
         StringBuilder message = new StringBuilder("Raid Progress — ")
                 .append(raidProperties.raidName()).append("\n\n");
-        for (TrackedPlayer player : players) {
-            appendProgress(message, player);
+        for (RaidProgressRow row : rows) {
+            appendProgress(message, row);
         }
         return message.append("\nData: https://raider.io").toString();
     }
@@ -63,31 +69,47 @@ public class RaidReportService {
             return "No active profiles are available for raid vault progress.";
         }
         Instant resetStartedAt = resetCalendar.periodStart(clock.instant());
+        List<RaidVaultRow> rows = players.stream()
+                .map(player -> loadRaidVault(player, resetStartedAt))
+                .sorted(Comparator
+                        .comparing(RaidVaultRow::ranking, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(row -> row.player().profileName(), String.CASE_INSENSITIVE_ORDER))
+                .toList();
         StringBuilder message = new StringBuilder("Great Vault — Raid only — current week\n")
                 .append(raidProperties.raidName()).append("\n\n");
-        for (TrackedPlayer player : players) {
-            appendRaidVault(message, player, resetStartedAt);
+        for (RaidVaultRow row : rows) {
+            appendRaidVault(message, row);
         }
         return message.append("Raid slots require 2, 4, and 6 unique bosses this reset.").toString();
     }
 
-    private void appendProgress(StringBuilder message, TrackedPlayer player) {
+    private RaidProgressRow loadRaidProgress(TrackedPlayer player) {
         try {
             RaiderIoClient.CharacterRaidProgress progress = raiderIoClient.getCharacterRaidProgress(
                     player.region(), player.realm(), player.name(), raidProperties.raidSlug()
             );
-            int total = progress.totalBosses();
-            message.append("• ").append(player.profileName()).append(" (")
-                    .append(progress.name()).append(")\n  ")
-                    .append(progress.normalBossesKilled()).append('/').append(total).append(" NM | ")
-                    .append(progress.heroicBossesKilled()).append('/').append(total).append(" HC | ")
-                    .append(progress.mythicBossesKilled()).append('/').append(total).append(" M\n");
+            return new RaidProgressRow(player, progress);
         } catch (RuntimeException _) {
-            appendUnavailableProfile(message, player);
+            return new RaidProgressRow(player, null);
         }
     }
 
-    private void appendRaidVault(StringBuilder message, TrackedPlayer player, Instant resetStartedAt) {
+    private static void appendProgress(StringBuilder message, RaidProgressRow row) {
+        TrackedPlayer player = row.player();
+        RaiderIoClient.CharacterRaidProgress progress = row.progress();
+        if (progress == null) {
+            appendUnavailableProfile(message, player);
+            return;
+        }
+        int total = progress.totalBosses();
+        message.append("• ").append(player.profileName()).append(" (")
+                .append(progress.name()).append(")\n  ")
+                .append(progress.normalBossesKilled()).append('/').append(total).append(" NM | ")
+                .append(progress.heroicBossesKilled()).append('/').append(total).append(" HC | ")
+                .append(progress.mythicBossesKilled()).append('/').append(total).append(" M\n");
+    }
+
+    private RaidVaultRow loadRaidVault(TrackedPlayer player, Instant resetStartedAt) {
         try {
             JsonNode raids = blizzardApiClient.get(
                     PROFILE_RAIDS_PATH,
@@ -95,16 +117,26 @@ public class RaidReportService {
                     blizzardApiClient.profileQuery()
             );
             List<RaidBossKill> kills = weeklyBossKills(raids, raidProperties.raidName(), resetStartedAt);
-            message.append("• ").append(player.profileName()).append(" (").append(player.name()).append(")\n")
-                    .append("  Bosses this reset: ").append(kills.size()).append('/').append(RAID_SLOT_THREE_BOSSES)
-                    .append('\n')
-                    .append("  Slot 1 (2 bosses): ").append(formatSlot(kills, RAID_SLOT_ONE_BOSSES)).append('\n')
-                    .append("  Slot 2 (4 bosses): ").append(formatSlot(kills, RAID_SLOT_TWO_BOSSES)).append('\n')
-                    .append("  Slot 3 (6 bosses): ").append(formatSlot(kills, RAID_SLOT_THREE_BOSSES)).append("\n\n");
+            return new RaidVaultRow(player, kills);
         } catch (RuntimeException _) {
+            return new RaidVaultRow(player, null);
+        }
+    }
+
+    private static void appendRaidVault(StringBuilder message, RaidVaultRow row) {
+        TrackedPlayer player = row.player();
+        List<RaidBossKill> kills = row.kills();
+        if (kills == null) {
             appendUnavailableProfile(message, player);
             message.append('\n');
+            return;
         }
+        message.append("• ").append(player.profileName()).append(" (").append(player.name()).append(")\n")
+                .append("  Bosses this reset: ").append(kills.size()).append('/').append(RAID_SLOT_THREE_BOSSES)
+                .append('\n')
+                .append("  Slot 1 (2 bosses): ").append(formatSlot(kills, RAID_SLOT_ONE_BOSSES)).append('\n')
+                .append("  Slot 2 (4 bosses): ").append(formatSlot(kills, RAID_SLOT_TWO_BOSSES)).append('\n')
+                .append("  Slot 3 (6 bosses): ").append(formatSlot(kills, RAID_SLOT_THREE_BOSSES)).append("\n\n");
     }
 
     static List<RaidBossKill> weeklyBossKills(JsonNode raids, String raidName, Instant resetStartedAt) {
@@ -186,6 +218,30 @@ public class RaidReportService {
     }
 
     record RaidBossKill(String boss, String difficulty, int difficultyRank) {
+    }
+
+    private record RaidProgressRow(
+            TrackedPlayer player,
+            RaiderIoClient.CharacterRaidProgress progress
+    ) {
+        private Integer ranking() {
+            if (progress == null) {
+                return null;
+            }
+            return progress.mythicBossesKilled() * 10_000
+                    + progress.heroicBossesKilled() * 100
+                    + progress.normalBossesKilled();
+        }
+    }
+
+    private record RaidVaultRow(TrackedPlayer player, List<RaidBossKill> kills) {
+        private Integer ranking() {
+            if (kills == null) {
+                return null;
+            }
+            int difficultyTotal = kills.stream().mapToInt(RaidBossKill::difficultyRank).sum();
+            return kills.size() * 100 + difficultyTotal;
+        }
     }
 
     private enum RaidDifficulty {

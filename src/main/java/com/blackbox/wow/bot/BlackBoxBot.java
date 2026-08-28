@@ -57,6 +57,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1058,29 +1059,60 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
             return;
         }
+        List<CharacterReportRow> rows = profiles.stream()
+                .map(profile -> loadCharacterReportRow(action, profile))
+                .sorted(characterReportComparator(action))
+                .toList();
         StringBuilder message = new StringBuilder(action.label()).append(" — all profiles\n\n");
-        for (TrackedPlayer profile : profiles) {
-            try {
-                appendCharacterReport(message, action, profile);
-            } catch (RuntimeException _) {
-                message.append("• ").append(profile.profileName()).append(" (")
-                        .append(profile.name()).append('-').append(profile.realm())
-                        .append(")\n  Status: unavailable\n\n");
-            }
+        for (CharacterReportRow row : rows) {
+            appendCharacterReport(message, action, row);
         }
         send(chatId, message.toString().trim());
+    }
+
+    private CharacterReportRow loadCharacterReportRow(CharacterReportAction action, TrackedPlayer profile) {
+        try {
+            return switch (action) {
+                case RAIDER_IO, ITEM_LEVEL -> new CharacterReportRow(
+                        profile,
+                        raiderIoClient.getCurrentMPlusScore(profile.region(), profile.realm(), profile.name()),
+                        null
+                );
+                case MOUNTS -> new CharacterReportRow(
+                        profile,
+                        null,
+                        mountService.getMountProgress(profile.realm(), profile.name())
+                );
+            };
+        } catch (RuntimeException _) {
+            return new CharacterReportRow(profile, null, null);
+        }
+    }
+
+    private static Comparator<CharacterReportRow> characterReportComparator(CharacterReportAction action) {
+        return Comparator
+                .comparing(
+                        (CharacterReportRow row) -> row.metric(action),
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                )
+                .thenComparing(row -> row.profile().profileName(), String.CASE_INSENSITIVE_ORDER);
     }
 
     private void appendCharacterReport(
             StringBuilder message,
             CharacterReportAction action,
-            TrackedPlayer profile
+            CharacterReportRow row
     ) {
+        TrackedPlayer profile = row.profile();
+        if (row.unavailable()) {
+            message.append("• ").append(profile.profileName()).append(" (")
+                    .append(profile.name()).append('-').append(profile.realm())
+                    .append(")\n  Status: unavailable\n\n");
+            return;
+        }
         switch (action) {
             case RAIDER_IO -> {
-                var score = raiderIoClient.getCurrentMPlusScore(
-                        profile.region(), profile.realm(), profile.name()
-                );
+                RaiderIoClient.RaiderIoScore score = row.score();
                 message.append("• ").append(profile.profileName()).append(" (")
                         .append(score.name()).append('-').append(score.realm()).append(")\n")
                         .append("  ").append(ITEM_LEVEL_PREFIX)
@@ -1091,16 +1123,14 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                         .append("  Tank: ").append(valueOrUnavailable(score.tank())).append("\n\n");
             }
             case ITEM_LEVEL -> {
-                var score = raiderIoClient.getCurrentMPlusScore(
-                        profile.region(), profile.realm(), profile.name()
-                );
+                RaiderIoClient.RaiderIoScore score = row.score();
                 message.append("• ").append(profile.profileName()).append(" (")
                         .append(score.name()).append('-').append(score.realm()).append(")\n")
                         .append("  ").append(ITEM_LEVEL_PREFIX)
                         .append(valueOrUnavailable(score.itemLevel())).append("\n\n");
             }
             case MOUNTS -> {
-                var progress = mountService.getMountProgress(profile.realm(), profile.name());
+                BlizzardMountService.MountProgress progress = row.mountProgress();
                 message.append("• ").append(profile.profileName()).append(" (")
                         .append(progress.characterName()).append('-').append(progress.realmSlug()).append(")\n")
                         .append("  Usable mounts: ").append(progress.usable()).append('\n')
@@ -2617,6 +2647,24 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 }
             }
             return null;
+        }
+    }
+
+    private record CharacterReportRow(
+            TrackedPlayer profile,
+            RaiderIoClient.RaiderIoScore score,
+            BlizzardMountService.MountProgress mountProgress
+    ) {
+        private boolean unavailable() {
+            return score == null && mountProgress == null;
+        }
+
+        private BigDecimal metric(CharacterReportAction action) {
+            return switch (action) {
+                case RAIDER_IO -> score == null ? null : score.all();
+                case ITEM_LEVEL -> score == null ? null : score.itemLevel();
+                case MOUNTS -> mountProgress == null ? null : BigDecimal.valueOf(mountProgress.usable());
+            };
         }
     }
 

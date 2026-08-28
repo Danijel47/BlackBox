@@ -251,6 +251,39 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
+    void sortsRaidCombatProfilesByBestAvailableParse() throws Exception {
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode buco = mapper.readTree("""
+                {"characterData":{"character":{"name":"Bucothered",
+                  "normal":{"bestPerformanceAverage":60},"heroic":null,"mythic":null}}}
+                """);
+        JsonNode linq = mapper.readTree("""
+                {"characterData":{"character":{"name":"Thelinq",
+                  "normal":{"bestPerformanceAverage":85},"heroic":null,"mythic":null}}}
+                """);
+        when(client.query(anyString(), anyMap())).thenReturn(buco, linq);
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                mock(WarcraftLogPlayerRunRepository.class),
+                mock(WarcraftLogProfileSnapshotRepository.class),
+                mock(MPlusRunCorrelationService.class),
+                mock(WarcraftLogsEventPager.class),
+                mock(WarcraftLogItemLevelRepository.class)
+        );
+
+        String report = service.raidCombatMessage(List.of(
+                new TrackedPlayerService.TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered"),
+                new TrackedPlayerService.TrackedPlayer(2L, "Linq", "eu", "Draenor", "Thelinq")
+        ));
+
+        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
+    }
+
+    @Test
     void acceptsOnlyCompletedKeystoneFights() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode completed = mapper.readTree("""

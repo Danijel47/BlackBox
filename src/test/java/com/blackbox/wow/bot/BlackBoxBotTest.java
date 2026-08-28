@@ -531,11 +531,13 @@ class BlackBoxBotTest {
 
         bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl:all"));
 
-        assertThat(sentMessage().getText())
+        String report = sentMessage().getText();
+        assertThat(report)
                 .contains("Item Level — all profiles")
                 .contains("• Buco (Bucothered-Stormscale)", "Item level: 303.25")
                 .contains("• Linq (Thelinq-Draenor)", "Item level: 306")
                 .doesNotContain("Score:", "DPS:");
+        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
     }
 
     @Test
@@ -557,16 +559,38 @@ class BlackBoxBotTest {
                 .thenReturn(new RaiderIoClient.RaiderIoScore(
                         "Thelinq", "Draenor", "eu",
                         new BigDecimal("306"),
-                        new BigDecimal("3100"), null,
-                        new BigDecimal("3100"), null, "", Instant.EPOCH
+                        new BigDecimal("3300"), null,
+                        new BigDecimal("3300"), null, "", Instant.EPOCH
                 ));
 
         bot().consume(callbackUpdate(chatId, userId, "wow:character:rio:all"));
 
-        assertThat(sentMessage().getText())
+        String report = sentMessage().getText();
+        assertThat(report)
                 .contains("Raider.IO Score — all profiles")
                 .contains("• Buco (Bucothered-Stormscale)", "Item level: 303", "Score: 3210.5", "DPS: 3210.5")
-                .contains("• Linq (Thelinq-Draenor)", "Item level: 306", "Score: 3100", "Healer: 3100");
+                .contains("• Linq (Thelinq-Draenor)", "Item level: 306", "Score: 3300", "Healer: 3300");
+        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
+    }
+
+    @Test
+    void sortsAllProfilesByUsableMountCount() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        TrackedPlayer linq = new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
+        when(mountService.getMountProgress("stormscale", "Bucothered"))
+                .thenReturn(new BlizzardMountService.MountProgress("Bucothered", "stormscale", 500, 550));
+        when(mountService.getMountProgress("draenor", "Thelinq"))
+                .thenReturn(new BlizzardMountService.MountProgress("Thelinq", "draenor", 600, 650));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:mount:all"));
+
+        String report = sentMessage().getText();
+        assertThat(report).contains("Mount Progress — all profiles", "Usable mounts: 600", "Usable mounts: 500");
+        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
     }
 
     @Test

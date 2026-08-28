@@ -30,6 +30,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 @Slf4j
@@ -299,15 +300,21 @@ public class WarcraftLogsStatisticsService {
         if (players.isEmpty()) {
             return "No active profiles are available for raid combat parses.";
         }
+        List<RaidCombatRow> rows = players.stream()
+                .map(this::loadRaidCombatRow)
+                .sorted(Comparator
+                        .comparing(RaidCombatRow::bestParse, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(row -> row.player().profileName(), String.CASE_INSENSITIVE_ORDER))
+                .toList();
         StringBuilder message = new StringBuilder("Raid Combat — best performance average\n\n");
-        for (TrackedPlayer player : players) {
-            appendRaidCombatProfile(message, player);
+        for (RaidCombatRow row : rows) {
+            appendRaidCombatProfile(message, row);
         }
         return message.append("Public Warcraft Logs rankings; unavailable difficulties are shown as —.")
                 .toString();
     }
 
-    private void appendRaidCombatProfile(StringBuilder message, TrackedPlayer player) {
+    private RaidCombatRow loadRaidCombatRow(TrackedPlayer player) {
         try {
             JsonNode character = client.query(RAID_RANKINGS_QUERY, Map.of(
                     NAME_FIELD, player.name(),
@@ -317,24 +324,46 @@ public class WarcraftLogsStatisticsService {
             if (character.isMissingNode() || character.isNull()) {
                 throw new IllegalStateException("character rankings unavailable");
             }
-            message.append("• ").append(player.profileName()).append(" (")
-                    .append(character.path(NAME_FIELD).asText(player.name())).append(")\n")
-                    .append("  Normal: ").append(formatRaidParse(character.path("normal"))).append('\n')
-                    .append("  Heroic: ").append(formatRaidParse(character.path("heroic"))).append('\n')
-                    .append("  Mythic: ").append(formatRaidParse(character.path("mythic"))).append("\n\n");
+            return new RaidCombatRow(player, character, bestRaidParse(character));
         } catch (RuntimeException _) {
-            message.append("• ").append(player.profileName()).append(" (").append(player.name())
-                    .append("): unavailable\n\n");
+            return new RaidCombatRow(player, null, null);
         }
     }
 
-    private static String formatRaidParse(JsonNode rankings) {
+    private static void appendRaidCombatProfile(StringBuilder message, RaidCombatRow row) {
+        TrackedPlayer player = row.player();
+        JsonNode character = row.character();
+        if (character == null) {
+            message.append("• ").append(player.profileName()).append(" (").append(player.name())
+                    .append("): unavailable\n\n");
+            return;
+        }
+        message.append("• ").append(player.profileName()).append(" (")
+                .append(character.path(NAME_FIELD).asText(player.name())).append(")\n")
+                .append("  Normal: ").append(formatRaidParse(character.path("normal"))).append('\n')
+                .append("  Heroic: ").append(formatRaidParse(character.path("heroic"))).append('\n')
+                .append("  Mythic: ").append(formatRaidParse(character.path("mythic"))).append("\n\n");
+    }
+
+    private static BigDecimal bestRaidParse(JsonNode character) {
+        return Stream.of("normal", "heroic", "mythic")
+                .map(difficulty -> raidParseValue(character.path(difficulty)))
+                .filter(Objects::nonNull)
+                .max(BigDecimal::compareTo)
+                .orElse(null);
+    }
+
+    private static BigDecimal raidParseValue(JsonNode rankings) {
         JsonNode average = rankings.path("bestPerformanceAverage");
-        if (!average.isNumber()) {
+        return average.isNumber() ? average.decimalValue() : null;
+    }
+
+    private static String formatRaidParse(JsonNode rankings) {
+        BigDecimal average = raidParseValue(rankings);
+        if (average == null) {
             return "—";
         }
-        BigDecimal roundedAverage = average.decimalValue()
-                .setScale(RAID_PARSE_DECIMAL_PLACES, RoundingMode.HALF_UP);
+        BigDecimal roundedAverage = average.setScale(RAID_PARSE_DECIMAL_PLACES, RoundingMode.HALF_UP);
         return formatPercentMetric(roundedAverage);
     }
 
@@ -1211,6 +1240,9 @@ public class WarcraftLogsStatisticsService {
             BigDecimal averageAvoidableDamage,
             String error
     ) {
+    }
+
+    private record RaidCombatRow(TrackedPlayer player, JsonNode character, BigDecimal bestParse) {
     }
 
     record RankingMetrics(

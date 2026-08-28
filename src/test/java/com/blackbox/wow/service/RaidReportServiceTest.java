@@ -35,6 +35,8 @@ class RaidReportServiceTest {
     private static final Instant RESET = Instant.parse("2026-08-26T04:00:00Z");
     private static final TrackedPlayer BUCO =
             new TrackedPlayer(1L, "Buco", "eu", "stormscale", "Bucothered");
+    private static final TrackedPlayer LINQ =
+            new TrackedPlayer(2L, "Linq", "eu", "draenor", "Thelinq");
 
     @Mock private RaiderIoClient raiderIoClient;
     @Mock private BlizzardApiClient blizzardApiClient;
@@ -68,6 +70,24 @@ class RaidReportServiceTest {
         assertThat(service.progress(List.of(BUCO)))
                 .contains("Raid Progress — The Venomous Abyss")
                 .contains("• Buco (Bucothered)\n  4/8 NM | 1/8 HC | 0/8 M");
+    }
+
+    @Test
+    void sortsRaidProgressByHighestDifficultyAndKillCount() {
+        when(raiderIoClient.getCharacterRaidProgress(
+                "eu", "stormscale", "Bucothered", "the-venomous-abyss"
+        )).thenReturn(new RaiderIoClient.CharacterRaidProgress(
+                "Bucothered", "Stormscale", "eu", "the-venomous-abyss", 8, 8, 2, 0
+        ));
+        when(raiderIoClient.getCharacterRaidProgress(
+                "eu", "draenor", "Thelinq", "the-venomous-abyss"
+        )).thenReturn(new RaiderIoClient.CharacterRaidProgress(
+                "Thelinq", "Draenor", "eu", "the-venomous-abyss", 8, 8, 4, 0
+        ));
+
+        String report = service.progress(List.of(BUCO, LINQ));
+
+        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
     }
 
     @Test
