@@ -40,9 +40,9 @@ class MPlusProgressServiceTest {
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
         when(repository.latestScore(1)).thenReturn(Optional.of(score(1, "season-mn-2", "2000", NOW, "Bucothered")));
         when(repository.latestScore(2)).thenReturn(Optional.of(score(2, "season-mn-2", "2000", NOW, "Thelinq")));
-        when(repository.latestScoreAtOrBefore(1, "season-mn-2", RESET))
+        when(repository.latestScoreAtOrBefore(1, "season-mn-2", RESET, "Bucothered"))
                 .thenReturn(Optional.of(score(1, "season-mn-2", "1900", RESET, "Bucothered")));
-        when(repository.latestScoreAtOrBefore(2, "season-mn-2", RESET))
+        when(repository.latestScoreAtOrBefore(2, "season-mn-2", RESET, "Thelinq"))
                 .thenReturn(Optional.of(score(2, "season-mn-2", "1800", RESET, "Thelinq")));
 
         String message = service().progressMessage("", 123L);
@@ -61,7 +61,7 @@ class MPlusProgressServiceTest {
 
         service().progressMessage("", 123L);
 
-        verify(repository).latestScoreAtOrBefore(1, "season-mn-2", RESET);
+        verify(repository).latestScoreAtOrBefore(1, "season-mn-2", RESET, "Bucothered");
     }
 
     @Test
@@ -70,7 +70,7 @@ class MPlusProgressServiceTest {
         ScorePoint latest = score(1, "season-mn-2", "300", NOW, "Bucothered");
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
         when(repository.latestScore(1)).thenReturn(Optional.of(latest));
-        when(repository.firstScore(1, "season-mn-2")).thenReturn(Optional.of(latest));
+        when(repository.firstScore(1, "season-mn-2", "Bucothered")).thenReturn(Optional.of(latest));
         when(repository.milestones(1, "season-mn-2")).thenReturn(List.of());
 
         String message = service().progressMessage("Buco", 123L);
@@ -83,19 +83,11 @@ class MPlusProgressServiceTest {
     }
 
     @Test
-    void keepsProgressAcrossAMainChangeAndShowsFirstObservedMilestones() {
+    void doesNotCompareScoresAcrossAMainChange() {
         TrackedPlayer buco = player(1, "Buco", "Bucomonk");
         ScorePoint latest = score(1, "season-mn-2", "2100", NOW, "Bucomonk");
-        ScorePoint oldMainBaseline = score(
-                1, "season-mn-2", "1800", NOW.minusSeconds(90_000), "Bucothered"
-        );
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
         when(repository.latestScore(1)).thenReturn(Optional.of(latest));
-        when(repository.latestScoreAtOrBefore(1, "season-mn-2", NOW.minusSeconds(86_400)))
-                .thenReturn(Optional.of(oldMainBaseline));
-        when(repository.latestScoreAtOrBefore(1, "season-mn-2", RESET))
-                .thenReturn(Optional.of(oldMainBaseline));
-        when(repository.firstScore(1, "season-mn-2")).thenReturn(Optional.of(oldMainBaseline));
         when(repository.milestones(1, "season-mn-2")).thenReturn(List.of(
                 new Milestone(new BigDecimal("2000"), new BigDecimal("2100"), NOW,
                         "eu", "Stormscale", "Bucomonk")
@@ -104,8 +96,9 @@ class MPlusProgressServiceTest {
         String message = service().progressMessage("Buco", 123L);
 
         assertThat(message)
-                .contains("Last 24h: +300.0")
-                .contains("Since first observed: +300.0")
+                .contains("Last 24h: unavailable")
+                .contains("This reset: unavailable")
+                .contains("Since first observed: unavailable")
                 .contains("Observed character: Bucomonk-Stormscale")
                 .contains("2000.0 on 2026-08-19");
     }

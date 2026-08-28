@@ -126,7 +126,7 @@ public class MPlusProgressService {
                 continue;
             }
             BigDecimal resetGain = repository.latestScoreAtOrBefore(
-                            player.profileId(), season, resetBoundary
+                            player.profileId(), season, resetBoundary, latest.characterName()
                     )
                     .map(baseline -> latest.score().subtract(baseline.score()))
                     .orElse(null);
@@ -172,12 +172,14 @@ public class MPlusProgressService {
     private String formatProfileMessage(TrackedPlayer player, ScorePoint latest) {
         Instant now = clock.instant();
         Optional<ScorePoint> yesterday = repository.latestScoreAtOrBefore(
-                player.profileId(), latest.season(), now.minus(Duration.ofDays(1))
+                player.profileId(), latest.season(), now.minus(Duration.ofDays(1)), latest.characterName()
         );
         Optional<ScorePoint> reset = repository.latestScoreAtOrBefore(
-                player.profileId(), latest.season(), previousReset(now)
+                player.profileId(), latest.season(), previousReset(now), latest.characterName()
         );
-        Optional<ScorePoint> first = repository.firstScore(player.profileId(), latest.season());
+        Optional<ScorePoint> first = repository.firstScore(
+                player.profileId(), latest.season(), latest.characterName()
+        );
         List<Milestone> milestones = repository.milestones(player.profileId(), latest.season());
 
         StringBuilder message = new StringBuilder("Mythic+ progress — ")

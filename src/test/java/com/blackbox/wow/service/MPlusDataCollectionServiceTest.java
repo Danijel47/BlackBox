@@ -100,6 +100,7 @@ class MPlusDataCollectionServiceTest {
                 "Stormscale",
                 "eu",
                 "season-mn-2",
+                BigDecimal.valueOf(303),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,

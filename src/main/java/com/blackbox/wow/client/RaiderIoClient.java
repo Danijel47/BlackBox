@@ -109,7 +109,10 @@ public class RaiderIoClient {
                         .queryParam(REGION_QUERY_PARAM, region)
                         .queryParam(REALM_QUERY_PARAM, realm)
                         .queryParam(NAME_QUERY_PARAM, name)
-                        .queryParam(FIELDS_QUERY_PARAM, "mythic_plus_scores_by_season:current")
+                        .queryParam(FIELDS_QUERY_PARAM, String.join(",",
+                                "mythic_plus_scores_by_season:current",
+                                "gear"
+                        ))
                         .build())
                 .retrieve()
                 .body(String.class);
@@ -134,6 +137,7 @@ public class RaiderIoClient {
                 profile.path(NAME_QUERY_PARAM).asText(name),
                 profile.path(REALM_QUERY_PARAM).asText(realm),
                 profile.path(REGION_QUERY_PARAM).asText(region),
+                decimalOrNull(profile.path("gear"), "item_level_equipped"),
                 decimalOrNull(scores, ALL_SCORE_FIELD),
                 decimalOrNull(scores, "dps"),
                 decimalOrNull(scores, "healer"),
@@ -201,6 +205,7 @@ public class RaiderIoClient {
                         .queryParam(NAME_QUERY_PARAM, name)
                         .queryParam(FIELDS_QUERY_PARAM, String.join(",",
                                 "mythic_plus_scores_by_season:current",
+                                "gear",
                                 "mythic_plus_recent_runs",
                                 "mythic_plus_best_runs:all",
                                 WEEKLY_RUNS_FIELD,
@@ -268,6 +273,7 @@ public class RaiderIoClient {
                 profile.path(REALM_QUERY_PARAM).asText(requestedRealm),
                 profile.path(REGION_QUERY_PARAM).asText(requestedRegion),
                 season,
+                decimalOrNull(profile.path("gear"), "item_level_equipped"),
                 decimalOrNull(scores, ALL_SCORE_FIELD),
                 decimalOrNull(scores, "dps"),
                 decimalOrNull(scores, "healer"),
@@ -917,6 +923,7 @@ public class RaiderIoClient {
             String name,
             String realm,
             String region,
+            BigDecimal itemLevel,
             BigDecimal all,
             BigDecimal dps,
             BigDecimal healer,

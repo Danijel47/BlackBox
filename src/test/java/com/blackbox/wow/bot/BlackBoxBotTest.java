@@ -447,7 +447,7 @@ class BlackBoxBotTest {
         assertThat(characterKeyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("Raider.IO Score", "Mount Progress", "Back")
+                .containsExactly("Raider.IO Score", "Item Level", "Mount Progress", "Back")
                 .doesNotContain("Weekly Vault");
     }
 
@@ -470,6 +470,75 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void offersAllAndIndividualProfilesForItemLevel() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("wow:character:ilvl:all", "wow:character:ilvl:11");
+    }
+
+    @Test
+    void runsItemLevelForSelectedProfile() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("303.25"),
+                        null, null, null, null, "", Instant.EPOCH
+                ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl:11"));
+
+        assertThat(sentMessage().getText())
+                .contains("Item Level", "Bucothered - Stormscale (eu)", "Equipped item level: 303.25")
+                .doesNotContain("Score:", "DPS:");
+    }
+
+    @Test
+    void runsItemLevelForAllProfiles() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        TrackedPlayer linq = new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("303.25"),
+                        null, null, null, null, "", Instant.EPOCH
+                ));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Thelinq", "Draenor", "eu",
+                        new BigDecimal("306"),
+                        null, null, null, null, "", Instant.EPOCH
+                ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl:all"));
+
+        assertThat(sentMessage().getText())
+                .contains("Item Level — all profiles")
+                .contains("• Buco (Bucothered-Stormscale)", "Item level: 303.25")
+                .contains("• Linq (Thelinq-Draenor)", "Item level: 306")
+                .doesNotContain("Score:", "DPS:");
+    }
+
+    @Test
     void runsRaiderIoScoreForAllProfilesFromTheButton() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -480,12 +549,14 @@ class BlackBoxBotTest {
         when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
                 .thenReturn(new RaiderIoClient.RaiderIoScore(
                         "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("303"),
                         new BigDecimal("3210.5"), new BigDecimal("3210.5"),
                         null, null, "", Instant.EPOCH
                 ));
         when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq"))
                 .thenReturn(new RaiderIoClient.RaiderIoScore(
                         "Thelinq", "Draenor", "eu",
+                        new BigDecimal("306"),
                         new BigDecimal("3100"), null,
                         new BigDecimal("3100"), null, "", Instant.EPOCH
                 ));
@@ -494,8 +565,30 @@ class BlackBoxBotTest {
 
         assertThat(sentMessage().getText())
                 .contains("Raider.IO Score — all profiles")
-                .contains("• Buco (Bucothered-Stormscale)", "Score: 3210.5", "DPS: 3210.5")
-                .contains("• Linq (Thelinq-Draenor)", "Score: 3100", "Healer: 3100");
+                .contains("• Buco (Bucothered-Stormscale)", "Item level: 303", "Score: 3210.5", "DPS: 3210.5")
+                .contains("• Linq (Thelinq-Draenor)", "Item level: 306", "Score: 3100", "Healer: 3100");
+    }
+
+    @Test
+    void includesCurrentItemLevelInIndividualRaiderIoReport() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
+        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
+                .thenReturn(new RaiderIoClient.RaiderIoScore(
+                        "Bucothered", "Stormscale", "eu",
+                        new BigDecimal("303.25"),
+                        new BigDecimal("3210.5"), new BigDecimal("3210.5"),
+                        null, null, "", Instant.EPOCH
+                ));
+
+        bot().consume(callbackUpdate(chatId, userId, "wow:character:rio:11"));
+
+        assertThat(sentMessage().getText())
+                .contains("Raider.IO (current season)", "Bucothered - Stormscale (eu)")
+                .contains("Item level: 303.25", "Score: 3210.5", "DPS: 3210.5");
     }
 
     @Test

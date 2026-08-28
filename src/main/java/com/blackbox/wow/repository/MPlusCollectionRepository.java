@@ -42,17 +42,18 @@ public class MPlusCollectionRepository {
         jdbc.sql("""
                         INSERT INTO mplus_score_snapshot (
                             profile_id, season_key, region, realm, character_name,
-                            score_all, score_dps, score_healer, score_tank,
+                            item_level, score_all, score_dps, score_healer, score_tank,
                             raider_io_crawled_at, captured_period, captured_at
                         ) VALUES (
                             :profileId, :season, :region, :realm, :characterName,
-                            :scoreAll, :scoreDps, :scoreHealer, :scoreTank,
+                            :itemLevel, :scoreAll, :scoreDps, :scoreHealer, :scoreTank,
                             :crawledAt, :capturedPeriod, :capturedAt
                         )
                         ON CONFLICT (profile_id, season_key, captured_period) DO UPDATE SET
                             region = EXCLUDED.region,
                             realm = EXCLUDED.realm,
                             character_name = EXCLUDED.character_name,
+                            item_level = EXCLUDED.item_level,
                             score_all = EXCLUDED.score_all,
                             score_dps = EXCLUDED.score_dps,
                             score_healer = EXCLUDED.score_healer,
@@ -65,6 +66,7 @@ public class MPlusCollectionRepository {
                 .param(PARAM_REGION, observation.region())
                 .param(PARAM_REALM, observation.realm())
                 .param(PARAM_CHARACTER_NAME, observation.name())
+                .param("itemLevel", observation.itemLevel(), Types.NUMERIC)
                 .param("scoreAll", observation.scoreAll(), Types.NUMERIC)
                 .param("scoreDps", observation.scoreDps(), Types.NUMERIC)
                 .param("scoreHealer", observation.scoreHealer(), Types.NUMERIC)

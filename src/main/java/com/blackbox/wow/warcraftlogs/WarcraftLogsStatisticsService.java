@@ -4,6 +4,7 @@ import com.blackbox.wow.entity.WarcraftLogPlayerRunEntity;
 import com.blackbox.wow.entity.WarcraftLogProfileSnapshotEntity;
 import com.blackbox.wow.repository.WarcraftLogPlayerRunRepository;
 import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
+import com.blackbox.wow.repository.WarcraftLogItemLevelRepository;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
@@ -23,6 +24,8 @@ import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
@@ -33,6 +36,7 @@ import java.util.stream.Collectors;
 public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
+    private static final int MAX_REPORT_PAGES = 100;
     private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
     private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
     private static final BigDecimal ONE_THOUSAND = BigDecimal.valueOf(1_000);
@@ -59,11 +63,14 @@ public class WarcraftLogsStatisticsService {
     private static final String AMOUNT_FIELD = "amount";
     private static final String UNAVAILABLE_LABEL = "unavailable";
     private static final String CHARACTER_REPORTS_QUERY = """
-            query CharacterReports($name: String!, $server: String!, $region: String!, $limit: Int!) {
+            query CharacterReports(
+              $name: String!, $server: String!, $region: String!, $limit: Int!, $page: Int!
+            ) {
               characterData {
                 character(name: $name, serverSlug: $server, serverRegion: $region) {
                   name
-                  recentReports(limit: $limit, page: 1) {
+                  recentReports(limit: $limit, page: $page) {
+                    has_more_pages
                     data {
                       code
                       revision
@@ -72,11 +79,13 @@ public class WarcraftLogsStatisticsService {
                       fights {
                         id
                         name
+                        encounterID
                         keystoneLevel
                         keystoneTime
                         startTime
                         endTime
                         friendlyPlayers
+                        friendlyItemLevels
                       }
                       masterData(translate: false) {
                         actors(type: "Player") {
@@ -127,6 +136,7 @@ public class WarcraftLogsStatisticsService {
     private final WarcraftLogProfileSnapshotRepository snapshotRepository;
     private final MPlusRunCorrelationService correlationService;
     private final WarcraftLogsEventPager eventPager;
+    private final WarcraftLogItemLevelRepository itemLevelRepository;
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
 
     public WarcraftLogsStatisticsService(
@@ -136,7 +146,8 @@ public class WarcraftLogsStatisticsService {
             WarcraftLogPlayerRunRepository runRepository,
             WarcraftLogProfileSnapshotRepository snapshotRepository,
             MPlusRunCorrelationService correlationService,
-            WarcraftLogsEventPager eventPager
+            WarcraftLogsEventPager eventPager,
+            WarcraftLogItemLevelRepository itemLevelRepository
     ) {
         this.client = client;
         this.properties = properties;
@@ -145,6 +156,7 @@ public class WarcraftLogsStatisticsService {
         this.snapshotRepository = snapshotRepository;
         this.correlationService = correlationService;
         this.eventPager = eventPager;
+        this.itemLevelRepository = itemLevelRepository;
     }
 
     public List<PlayerStatistics> statistics() {
@@ -474,17 +486,22 @@ public class WarcraftLogsStatisticsService {
         ExistingRunIndex existingRuns = ExistingRunIndex.from(storedRuns);
         Map<ReportFingerprint, ReportWork> reports = new LinkedHashMap<>();
         Map<ReportFingerprint, String> canonicalReportCodes = new LinkedHashMap<>();
+        Map<DailyItemLevelKey, DailyItemLevelCandidate> itemLevelCandidates = new LinkedHashMap<>();
         List<TrackedPlayer> players = trackedPlayerService.activePlayers();
 
         for (TrackedPlayer player : players) {
             try {
-                discoverPlayerReports(player, existingRuns, reports, canonicalReportCodes);
+                discoverPlayerReports(
+                        player, existingRuns, reports, canonicalReportCodes, itemLevelCandidates
+                );
                 saveSnapshot(player, null, null);
             } catch (Exception e) {
                 saveSnapshot(player, null, e.getMessage());
                 log.warn("Could not discover Warcraft Logs reports for {}: {}", player.profileName(), e.getMessage());
             }
         }
+
+        int savedItemLevels = backfillDailyItemLevels(itemLevelCandidates.values());
 
         int savedRuns = 0;
         for (ReportWork report : reports.values()) {
@@ -498,11 +515,44 @@ public class WarcraftLogsStatisticsService {
         }
         savedRuns += backfillStoredRunMetrics(storedRuns, players, existingRuns);
         log.info(
-                "Warcraft Logs season {} refresh: {} profiles, {} new or revised runs saved.",
+                "Warcraft Logs season {} refresh: {} profiles, {} new or revised runs and "
+                        + "{} daily item levels saved.",
                 seasonKey,
                 players.size(),
-                savedRuns
+                savedRuns,
+                savedItemLevels
         );
+    }
+
+    private int backfillDailyItemLevels(Collection<DailyItemLevelCandidate> candidates) {
+        int saved = 0;
+        for (DailyItemLevelCandidate candidate : candidates) {
+            if (itemLevelRepository.hasSnapshot(
+                    candidate.player.profileId(), candidate.player.name(), candidate.observedDate
+            )) {
+                continue;
+            }
+            try {
+                itemLevelRepository.save(
+                        candidate.player.profileId(),
+                        candidate.player.name(),
+                        candidate.observedDate,
+                        candidate.observedAt,
+                        candidate.itemLevel,
+                        candidate.reportCode,
+                        candidate.fightId
+                );
+                saved++;
+            } catch (RuntimeException failure) {
+                log.warn(
+                        "Could not backfill Warcraft Logs item level for profile {} on {} ({})",
+                        candidate.player.profileName(),
+                        candidate.observedDate,
+                        failure.getClass().getSimpleName()
+                );
+            }
+        }
+        return saved;
     }
 
     private int backfillStoredRunMetrics(
@@ -577,13 +627,38 @@ public class WarcraftLogsStatisticsService {
             TrackedPlayer player,
             ExistingRunIndex existingRuns,
             Map<ReportFingerprint, ReportWork> reports,
-            Map<ReportFingerprint, String> canonicalReportCodes
+            Map<ReportFingerprint, String> canonicalReportCodes,
+            Map<DailyItemLevelKey, DailyItemLevelCandidate> itemLevelCandidates
     ) {
+        for (int page = 1; page <= MAX_REPORT_PAGES; page++) {
+            JsonNode character = loadCharacterReportsPage(player, page);
+            JsonNode recentReports = character.path("recentReports");
+            JsonNode reportNodes = recentReports.path("data");
+            for (JsonNode reportNode : reportNodes) {
+                DiscoveredReport discoveredReport = discoverReport(reportNode, player);
+                if (discoveredReport != null
+                        && isCanonicalReport(discoveredReport, canonicalReportCodes)) {
+                    discoverDailyItemLevelCandidate(
+                            reportNode, player, discoveredReport, itemLevelCandidates
+                    );
+                    addReportFights(reportNode, player, discoveredReport, existingRuns, reports);
+                }
+            }
+            if (!recentReports.path("has_more_pages").asBoolean(false)
+                    || containsReportBeforeSeason(reportNodes)) {
+                return;
+            }
+        }
+        throw new IllegalStateException("Warcraft Logs report pagination exceeded the safety limit");
+    }
+
+    private JsonNode loadCharacterReportsPage(TrackedPlayer player, int page) {
         Map<String, Object> variables = Map.of(
                 NAME_FIELD, player.name(),
                 SERVER_FIELD, player.realm().toLowerCase(Locale.ROOT),
                 REGION_FIELD, player.region().toUpperCase(Locale.ROOT),
-                "limit", Math.clamp(properties.recentReportLimit(), 1, 100)
+                "limit", Math.clamp(properties.recentReportLimit(), 1, 100),
+                "page", page
         );
         JsonNode character = client.query(CHARACTER_REPORTS_QUERY, variables)
                 .path(CHARACTER_DATA_FIELD)
@@ -591,13 +666,56 @@ public class WarcraftLogsStatisticsService {
         if (character.isMissingNode() || character.isNull()) {
             throw new IllegalStateException("character not found or has no public logs");
         }
+        return character;
+    }
 
-        for (JsonNode reportNode : character.path("recentReports").path("data")) {
-            DiscoveredReport discoveredReport = discoverReport(reportNode, player);
-            if (discoveredReport != null && isCanonicalReport(discoveredReport, canonicalReportCodes)) {
-                addReportFights(reportNode, player, discoveredReport, existingRuns, reports);
+    private boolean containsReportBeforeSeason(JsonNode reportNodes) {
+        for (JsonNode reportNode : reportNodes) {
+            Instant startedAt = instantFromMilliseconds(reportNode.path("startTime").asLong(0));
+            if (startedAt != null && startedAt.isBefore(properties.seasonStart())) {
+                return true;
             }
         }
+        return false;
+    }
+
+    private static void discoverDailyItemLevelCandidate(
+            JsonNode reportNode,
+            TrackedPlayer player,
+            DiscoveredReport report,
+            Map<DailyItemLevelKey, DailyItemLevelCandidate> candidates
+    ) {
+        for (JsonNode fight : reportNode.path("fights")) {
+            int fightId = fight.path("id").asInt(0);
+            int encounterId = fight.path("encounterID").asInt(0);
+            int keystoneLevel = fight.path("keystoneLevel").asInt(0);
+            long startOffset = fight.path("startTime").asLong(-1);
+            BigDecimal itemLevel = findFriendlyItemLevel(fight, report.actorId());
+            if (fightId <= 0 || startOffset < 0 || itemLevel == null
+                    || (encounterId <= 0 && keystoneLevel <= 0)) {
+                continue;
+            }
+            Instant observedAt = report.startedAt().plusMillis(startOffset);
+            LocalDate observedDate = observedAt.atZone(ZoneOffset.UTC).toLocalDate();
+            DailyItemLevelKey key = new DailyItemLevelKey(player.profileId(), observedDate);
+            DailyItemLevelCandidate candidate = new DailyItemLevelCandidate(
+                    player,
+                    report.code(),
+                    fightId,
+                    report.actorId(),
+                    observedAt,
+                    observedDate,
+                    itemLevel
+            );
+            candidates.merge(key, candidate, WarcraftLogsStatisticsService::earlierCandidate);
+        }
+    }
+
+    private static DailyItemLevelCandidate earlierCandidate(
+            DailyItemLevelCandidate left,
+            DailyItemLevelCandidate right
+    ) {
+        return left.observedAt.isBefore(right.observedAt) ? left : right;
     }
 
     private static boolean isCanonicalReport(
@@ -891,6 +1009,24 @@ public class WarcraftLogsStatisticsService {
         return false;
     }
 
+    static BigDecimal findFriendlyItemLevel(JsonNode fight, int actorId) {
+        JsonNode friendlyPlayers = fight.path("friendlyPlayers");
+        JsonNode friendlyItemLevels = fight.path("friendlyItemLevels");
+        if (!friendlyPlayers.isArray() || !friendlyItemLevels.isArray()
+                || friendlyPlayers.size() != friendlyItemLevels.size()) {
+            return null;
+        }
+        for (int index = 0; index < friendlyPlayers.size(); index++) {
+            JsonNode itemLevel = friendlyItemLevels.path(index);
+            if (friendlyPlayers.path(index).asInt(-1) == actorId
+                    && itemLevel.isNumber()
+                    && itemLevel.decimalValue().signum() > 0) {
+                return itemLevel.decimalValue();
+            }
+        }
+        return null;
+    }
+
     private static int countEventsForActor(Iterable<JsonNode> events, String actorField, int actorId) {
         int count = 0;
         for (JsonNode event : events) {
@@ -1115,6 +1251,20 @@ public class WarcraftLogsStatisticsService {
     }
 
     private record ReportFingerprint(Instant startedAt) {
+    }
+
+    private record DailyItemLevelKey(long profileId, LocalDate observedDate) {
+    }
+
+    private record DailyItemLevelCandidate(
+            TrackedPlayer player,
+            String reportCode,
+            int fightId,
+            int actorId,
+            Instant observedAt,
+            LocalDate observedDate,
+            BigDecimal itemLevel
+    ) {
     }
 
     private record ReportActor(int id, String name, String server) {

@@ -126,6 +126,7 @@ class MPlusCollectionPersistenceServiceTest {
                 "Stormscale",
                 "eu",
                 SEASON,
+                BigDecimal.valueOf(303),
                 BigDecimal.valueOf(2_000),
                 BigDecimal.valueOf(2_000),
                 BigDecimal.ZERO,

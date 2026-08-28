@@ -102,6 +102,7 @@ class MPlusTitleWatchServiceTest {
                 name,
                 realm,
                 REGION,
+                BigDecimal.valueOf(303),
                 score,
                 null,
                 null,

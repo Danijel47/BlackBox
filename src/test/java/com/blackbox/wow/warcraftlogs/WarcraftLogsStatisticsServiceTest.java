@@ -3,6 +3,7 @@ package com.blackbox.wow.warcraftlogs;
 import com.blackbox.wow.entity.WarcraftLogPlayerRunEntity;
 import com.blackbox.wow.repository.WarcraftLogPlayerRunRepository;
 import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
+import com.blackbox.wow.repository.WarcraftLogItemLevelRepository;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
@@ -13,6 +14,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -234,7 +236,8 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogPlayerRunRepository.class),
                 mock(WarcraftLogProfileSnapshotRepository.class),
                 mock(MPlusRunCorrelationService.class),
-                mock(WarcraftLogsEventPager.class)
+                mock(WarcraftLogsEventPager.class),
+                mock(WarcraftLogItemLevelRepository.class)
         );
 
         String message = service.raidCombatMessage(List.of(
@@ -262,6 +265,16 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
+    void matchesHistoricalItemLevelToTheFriendlyPlayer() throws Exception {
+        JsonNode fight = new ObjectMapper().readTree("""
+                {"friendlyPlayers":[7,2,9],"friendlyItemLevels":[305,301,298]}
+                """);
+
+        assertThat(WarcraftLogsStatisticsService.findFriendlyItemLevel(fight, 2))
+                .isEqualByComparingTo("301");
+    }
+
+    @Test
     void collectsDuplicateUploadsOnlyOnce() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
@@ -270,15 +283,18 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         WarcraftLogsEventPager eventPager = mock(WarcraftLogsEventPager.class);
+        WarcraftLogItemLevelRepository itemLevelRepository = mock(WarcraftLogItemLevelRepository.class);
         JsonNode reports = mapper.readTree("""
                 {"characterData":{"character":{"recentReports":{"data":[
                   {"code":"first","revision":1,"startTime":1000,"endTime":5000,
                    "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
-                     "keystoneTime":3000,"startTime":0,"endTime":3000,"friendlyPlayers":[42]}],
+                     "keystoneTime":3000,"startTime":0,"endTime":3000,
+                     "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}},
                   {"code":"duplicate","revision":1,"startTime":1000,"endTime":5000,
                    "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
-                     "keystoneTime":3000,"startTime":0,"endTime":3000,"friendlyPlayers":[42]}],
+                     "keystoneTime":3000,"startTime":0,"endTime":3000,
+                     "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
                 ]}}}}
                 """);
@@ -302,12 +318,22 @@ class WarcraftLogsStatisticsServiceTest {
                 runRepository,
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
-                eventPager
+                eventPager,
+                itemLevelRepository
         );
 
         service.refresh();
 
         verify(runRepository, times(1)).save(any(WarcraftLogPlayerRunEntity.class));
+        verify(itemLevelRepository).save(
+                1L,
+                "Thelinq",
+                LocalDate.of(1970, 1, 1),
+                Instant.ofEpochSecond(1),
+                new BigDecimal("303"),
+                "first",
+                1
+        );
     }
 
     @Test
@@ -357,7 +383,8 @@ class WarcraftLogsStatisticsServiceTest {
                 runRepository,
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
-                eventPager
+                eventPager,
+                mock(WarcraftLogItemLevelRepository.class)
         );
 
         service.refresh();
@@ -414,7 +441,8 @@ class WarcraftLogsStatisticsServiceTest {
                 runRepository,
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
-                mock(WarcraftLogsEventPager.class)
+                mock(WarcraftLogsEventPager.class),
+                mock(WarcraftLogItemLevelRepository.class)
         );
     }
 

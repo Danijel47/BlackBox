@@ -19,6 +19,7 @@ class RaiderIoMPlusParserTest {
                   "realm": "Stormscale",
                   "region": "eu",
                   "last_crawled_at": "2026-08-19T08:30:00Z",
+                  "gear": {"item_level_equipped": 303.5},
                   "mythic_plus_scores_by_season": [{
                     "season": "season-mn-2",
                     "scores": {"all": 1234.5, "dps": 1234.5, "healer": 0, "tank": 0}
@@ -66,6 +67,7 @@ class RaiderIoMPlusParserTest {
         );
 
         assertThat(observation.season()).isEqualTo("season-mn-2");
+        assertThat(observation.itemLevel()).isEqualByComparingTo(new BigDecimal("303.5"));
         assertThat(observation.scoreAll()).isEqualByComparingTo(new BigDecimal("1234.5"));
         assertThat(observation.runs()).hasSize(2);
         assertThat(observation.runs()).filteredOn(run -> run.raiderIoRunId() == 42L).singleElement().satisfies(run -> {

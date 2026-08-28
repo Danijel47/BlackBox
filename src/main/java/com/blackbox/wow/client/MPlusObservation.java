@@ -9,6 +9,7 @@ public record MPlusObservation(
         String realm,
         String region,
         String season,
+        BigDecimal itemLevel,
         BigDecimal scoreAll,
         BigDecimal scoreDps,
         BigDecimal scoreHealer,
