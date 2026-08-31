@@ -209,7 +209,8 @@ public class RaceToWorldFirstService {
     }
 
     private String rankingUrl() {
-        return "https://raider.io/raid-rankings/" + properties.raidSlug() + "/world/mythic";
+        return "https://raider.io/" + properties.raidSlug()
+                + "/progress-rankings/" + properties.bossCount() + "/world/mythic/0";
     }
 
     private void validateConfiguration() {
@@ -223,7 +224,23 @@ public class RaceToWorldFirstService {
     }
 
     private static boolean isSlug(String value) {
-        return value != null && value.matches("[a-z0-9]+(?:-[a-z0-9]+)*");
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        boolean requiresAlphaNumeric = true;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            boolean alphaNumeric = current >= 'a' && current <= 'z'
+                    || current >= '0' && current <= '9';
+            if (alphaNumeric) {
+                requiresAlphaNumeric = false;
+            } else if (current == '-' && !requiresAlphaNumeric) {
+                requiresAlphaNumeric = true;
+            } else {
+                return false;
+            }
+        }
+        return !requiresAlphaNumeric;
     }
 
     private static String displayNameFromSlug(String slug) {

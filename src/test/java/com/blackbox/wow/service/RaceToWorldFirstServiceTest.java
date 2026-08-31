@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
@@ -52,7 +53,7 @@ class RaceToWorldFirstServiceTest {
                 .contains("Race to World First — The Venomous Abyss (Mythic)")
                 .contains("1. Liquid — 2/8 Mythic (US)")
                 .contains("2. Echo — 1/8 Mythic (EU)")
-                .contains("https://raider.io/raid-rankings/the-venomous-abyss/world/mythic");
+                .contains("https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0");
     }
 
     @Test
@@ -98,7 +99,7 @@ class RaceToWorldFirstServiceTest {
         when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 1\n"
                 + "Liquid (US) defeated Nek'zali the Soulcoiler.\n"
                 + "The Venomous Abyss: 1/8 Mythic\n\n"
-                + "Raider.IO: https://raider.io/raid-rankings/the-venomous-abyss/world/mythic"))
+                + "Raider.IO: https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0"))
                 .thenReturn(true);
 
         service().checkForWorldFirstBossKills();
@@ -148,7 +149,7 @@ class RaceToWorldFirstServiceTest {
         when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 2\n"
                 + "xD (EU) defeated The Lost Explorers.\n"
                 + "The Venomous Abyss: 2/8 Mythic\n\n"
-                + "Raider.IO: https://raider.io/raid-rankings/the-venomous-abyss/world/mythic"))
+                + "Raider.IO: https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0"))
                 .thenReturn(true);
 
         service().checkForWorldFirstBossKills();
@@ -186,6 +187,28 @@ class RaceToWorldFirstServiceTest {
         service().checkForWorldFirstBossKills();
 
         verify(notificationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectsALargeMalformedSlugWithoutRecursiveRegexMatching() {
+        String largeMalformedSlug = "a-".repeat(100_000);
+        RaceToWorldFirstService raceToWorldFirstService = new RaceToWorldFirstService(
+                raiderIoClient,
+                notificationRepository,
+                notifier,
+                new RaceToWorldFirstProperties(
+                        true,
+                        123L,
+                        largeMalformedSlug,
+                        "The Venomous Abyss",
+                        8,
+                        11
+                )
+        );
+
+        assertThatThrownBy(raceToWorldFirstService::currentStandingsMessage)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Race to World First configuration is invalid.");
     }
 
     private RaceToWorldFirstService service() {

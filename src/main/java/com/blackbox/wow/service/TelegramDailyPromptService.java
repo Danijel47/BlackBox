@@ -7,12 +7,15 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 @Slf4j
 public class TelegramDailyPromptService {
 
     private static final String PROMPT_KEY_PREFIX = "telegram-user:";
+    private static final int MINIMUM_TRIGGER_MESSAGE = 2;
+    private static final int MAXIMUM_TRIGGER_MESSAGE = 5;
 
     private final TelegramDailyPromptRepository repository;
     private final BlackBoxBotNotifier notifier;
@@ -49,11 +52,19 @@ public class TelegramDailyPromptService {
     private void sendDailyPrompt() {
         LocalDate today = LocalDate.now(clock.withZone(properties.zone()));
         String promptKey = PROMPT_KEY_PREFIX + properties.targetUserId();
-        if (!repository.claimDelivery(promptKey, today)) {
+        int triggerMessageNumber = randomTriggerMessageNumber();
+        if (!repository.recordMessageAndClaimDelivery(promptKey, today, triggerMessageNumber)) {
             return;
         }
         if (!notifier.send(properties.chatId(), properties.message())) {
-            repository.releaseDelivery(promptKey, today);
+            repository.releasePromptDelivery(promptKey, today);
         }
+    }
+
+    private static int randomTriggerMessageNumber() {
+        return ThreadLocalRandom.current().nextInt(
+                MINIMUM_TRIGGER_MESSAGE,
+                MAXIMUM_TRIGGER_MESSAGE + 1
+        );
     }
 }

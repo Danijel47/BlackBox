@@ -4,6 +4,7 @@ import com.blackbox.wow.properties.TelegramDailyPromptProperties;
 import com.blackbox.wow.repository.TelegramDailyPromptRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -12,7 +13,11 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,32 +33,44 @@ class TelegramDailyPromptServiceTest {
     @Mock private BlackBoxBotNotifier notifier;
 
     @Test
-    void sendsOnlyWhenTheDailyDeliveryIsClaimed() {
-        when(repository.claimDelivery(PROMPT_KEY, TODAY)).thenReturn(true, false);
+    void sendsOnTheSelectedMessageNumberOnlyOncePerDay() {
+        when(repository.recordMessageAndClaimDelivery(eq(PROMPT_KEY), eq(TODAY), anyInt()))
+                .thenReturn(false, false, false, true, false);
         when(notifier.send(GROUP_CHAT_ID, "Jope jesi ok?")).thenReturn(true);
         TelegramDailyPromptService service = service();
 
         service.onMessage(TARGET_USER_ID);
         service.onMessage(TARGET_USER_ID);
+        service.onMessage(TARGET_USER_ID);
+        service.onMessage(TARGET_USER_ID);
+        service.onMessage(TARGET_USER_ID);
 
         verify(notifier).send(GROUP_CHAT_ID, "Jope jesi ok?");
+        ArgumentCaptor<Integer> triggerMessageNumber = ArgumentCaptor.forClass(Integer.class);
+        verify(repository, times(5))
+                .recordMessageAndClaimDelivery(eq(PROMPT_KEY), eq(TODAY), triggerMessageNumber.capture());
+        assertThat(triggerMessageNumber.getAllValues()).allMatch(number -> number >= 2 && number <= 5);
     }
 
     @Test
     void releasesTheClaimWhenTelegramDeliveryFails() {
-        when(repository.claimDelivery(PROMPT_KEY, TODAY)).thenReturn(true);
+        when(repository.recordMessageAndClaimDelivery(eq(PROMPT_KEY), eq(TODAY), anyInt())).thenReturn(true);
         when(notifier.send(GROUP_CHAT_ID, "Jope jesi ok?")).thenReturn(false);
 
         service().onMessage(TARGET_USER_ID);
 
-        verify(repository).releaseDelivery(PROMPT_KEY, TODAY);
+        verify(repository).releasePromptDelivery(PROMPT_KEY, TODAY);
     }
 
     @Test
     void ignoresMessagesFromOtherUsers() {
         service().onMessage(123L);
 
-        verify(repository, never()).claimDelivery(PROMPT_KEY, TODAY);
+        verify(repository, never()).recordMessageAndClaimDelivery(
+                eq(PROMPT_KEY),
+                eq(TODAY),
+                anyInt()
+        );
         verify(notifier, never()).send(GROUP_CHAT_ID, "Jope jesi ok?");
     }
 
