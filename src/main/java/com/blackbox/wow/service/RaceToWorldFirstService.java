@@ -26,6 +26,7 @@ public class RaceToWorldFirstService {
 
     private static final int LEADERBOARD_SIZE = 5;
     private static final int MONITOR_RANKING_LIMIT = 200;
+    private static final String RACE_TO_WORLD_FIRST_URL = "https://raider.io/rwf";
 
     private final RaiderIoClient raiderIoClient;
     private final RaceToWorldFirstNotificationRepository notificationRepository;
@@ -209,8 +210,7 @@ public class RaceToWorldFirstService {
     }
 
     private String rankingUrl() {
-        return "https://raider.io/" + properties.raidSlug()
-                + "/progress-rankings/" + properties.bossCount() + "/world/mythic/0";
+        return RACE_TO_WORLD_FIRST_URL;
     }
 
     private void validateConfiguration() {

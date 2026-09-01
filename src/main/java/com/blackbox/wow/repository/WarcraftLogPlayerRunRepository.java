@@ -7,4 +7,9 @@ import java.util.List;
 
 public interface WarcraftLogPlayerRunRepository extends JpaRepository<WarcraftLogPlayerRunEntity, Long> {
     List<WarcraftLogPlayerRunEntity> findBySeasonKey(String seasonKey);
+
+    List<WarcraftLogPlayerRunEntity> findBySeasonKeyAndKeystoneLevelGreaterThanEqual(
+            String seasonKey,
+            int minimumKeystoneLevel
+    );
 }

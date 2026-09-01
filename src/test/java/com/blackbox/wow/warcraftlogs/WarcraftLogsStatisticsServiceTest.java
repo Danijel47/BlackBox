@@ -101,6 +101,33 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
+    void calculatesHighKeyCombatMetricsFromLevelTwelveAndAboveOnly() {
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        when(runRepository.findBySeasonKeyAndKeystoneLevelGreaterThanEqual("midnight-season-2", 12))
+                .thenReturn(List.of(
+                        runAtLevel(12, 1L, "Thelinq", "level-twelve", 4, 0, "80", "200000", "4000")
+                ));
+        when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")
+        ));
+
+        String message = service(trackedPlayerService, runRepository, snapshotRepository)
+                .highKeyCombatMessage("Linq");
+
+        assertThat(message)
+                .contains("Warcraft Logs M+ combat (+12 and above) — midnight-season-2")
+                .contains("Key parse: 80%", "DPS: 200k", "Avoidable damage per run: 4,000")
+                .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
+                .contains("Averages use logged +12 or higher runs only")
+                .doesNotContain("Key parse: 40%", "Interrupts per run: 20");
+        verify(runRepository).findBySeasonKeyAndKeystoneLevelGreaterThanEqual("midnight-season-2", 12);
+    }
+
+    @Test
     void formatsReadableCombatAwardsFromLoggedRuns() {
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
         WarcraftLogProfileSnapshotRepository snapshotRepository =
@@ -512,9 +539,26 @@ class WarcraftLogsStatisticsServiceTest {
             String damagePerSecond,
             String avoidableDamage
     ) {
+        return runAtLevel(
+                10, profileId, characterName, reportCode, interrupts, deaths,
+                keyParse, damagePerSecond, avoidableDamage
+        );
+    }
+
+    private static WarcraftLogPlayerRunEntity runAtLevel(
+            int keystoneLevel,
+            long profileId,
+            String characterName,
+            String reportCode,
+            int interrupts,
+            int deaths,
+            String keyParse,
+            String damagePerSecond,
+            String avoidableDamage
+    ) {
         WarcraftLogPlayerRunEntity run = new WarcraftLogPlayerRunEntity(
                 "midnight-season-2", profileId, characterName, reportCode, 1,
-                Instant.parse("2026-08-19T10:00:00Z"), 7, "King's Rest", 10,
+                Instant.parse("2026-08-19T10:00:00Z"), 7, "King's Rest", keystoneLevel,
                 interrupts, deaths, null,
                 keyParse == null ? null : new BigDecimal(keyParse),
                 new BigDecimal(damagePerSecond)

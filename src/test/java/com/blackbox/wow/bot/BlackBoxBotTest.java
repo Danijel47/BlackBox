@@ -185,7 +185,7 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText())
                 .contains("/profile_main <realm> <character>")
                 .contains("Only the characters registered to your profile can be selected")
-                .contains("/mplus_combat");
+                .contains("/mplus_combat", "/mplus_combat_12");
     }
 
     @Test
@@ -381,6 +381,20 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void runsTheLevelTwelveCombatCommandForTheRequestedProfile() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        Update update = update(chatId, userId, "/mplus_combat_12 Buco");
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(warcraftLogsStatisticsService.highKeyCombatMessage("Buco")).thenReturn("Buco +12 combat");
+
+        bot().consume(update);
+
+        verify(warcraftLogsStatisticsService).highKeyCombatMessage("Buco");
+        assertThat(sentMessage().getText()).isEqualTo("Buco +12 combat");
+    }
+
+    @Test
     void showsMPlusReportsAsInlineButtons() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -395,7 +409,10 @@ class BlackBoxBotTest {
         assertThat(keyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .contains("Progress", "Dungeons", "Vault", "Performance", "Pair", "Awards", "Combat")
+                .contains(
+                        "Progress", "Dungeons", "Vault", "Performance", "Pair", "Awards",
+                        "Combat", "Combat +12"
+                )
                 .doesNotContain("Status");
     }
 
@@ -898,6 +915,37 @@ class BlackBoxBotTest {
                 .flatMap(List::stream)
                 .map(button -> button.getCallbackData()))
                 .contains("mplus:profile:combat:all", "mplus:profile:combat:11");
+    }
+
+    @Test
+    void offersAnAllProfilesOptionForLevelTwelveCombat() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")
+        ));
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:action:combat_12"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .contains("mplus:profile:combat_12:all", "mplus:profile:combat_12:11");
+    }
+
+    @Test
+    void runsTheLevelTwelveCombatReportForAllProfilesFromTheButton() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(warcraftLogsStatisticsService.highKeyCombatMessage("")).thenReturn("All +12 combat profiles");
+
+        bot().consume(callbackUpdate(chatId, userId, "mplus:profile:combat_12:all"));
+
+        verify(warcraftLogsStatisticsService).highKeyCombatMessage("");
+        assertThat(sentMessage().getText()).isEqualTo("All +12 combat profiles");
     }
 
     @Test

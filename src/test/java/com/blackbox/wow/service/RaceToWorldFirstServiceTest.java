@@ -53,7 +53,7 @@ class RaceToWorldFirstServiceTest {
                 .contains("Race to World First — The Venomous Abyss (Mythic)")
                 .contains("1. Liquid — 2/8 Mythic (US)")
                 .contains("2. Echo — 1/8 Mythic (EU)")
-                .contains("https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0");
+                .contains("https://raider.io/rwf");
     }
 
     @Test
@@ -99,7 +99,7 @@ class RaceToWorldFirstServiceTest {
         when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 1\n"
                 + "Liquid (US) defeated Nek'zali the Soulcoiler.\n"
                 + "The Venomous Abyss: 1/8 Mythic\n\n"
-                + "Raider.IO: https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0"))
+                + "Raider.IO: https://raider.io/rwf"))
                 .thenReturn(true);
 
         service().checkForWorldFirstBossKills();
@@ -149,7 +149,7 @@ class RaceToWorldFirstServiceTest {
         when(notifier.send(123L, "🏆 WORLD FIRST — MYTHIC BOSS 2\n"
                 + "xD (EU) defeated The Lost Explorers.\n"
                 + "The Venomous Abyss: 2/8 Mythic\n\n"
-                + "Raider.IO: https://raider.io/the-venomous-abyss/progress-rankings/8/world/mythic/0"))
+                + "Raider.IO: https://raider.io/rwf"))
                 .thenReturn(true);
 
         service().checkForWorldFirstBossKills();

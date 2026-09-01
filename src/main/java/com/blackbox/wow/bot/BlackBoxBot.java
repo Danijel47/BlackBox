@@ -109,6 +109,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String RAID_PROGRESS_CALLBACK = "progress";
     private static final String RAID_VAULT_CALLBACK = "vault";
     private static final String RAID_COMBAT_CALLBACK = "combat";
+    private static final String MPLUS_HIGH_COMBAT_CALLBACK = "combat_12";
     private static final String ALL_PROFILES_CALLBACK = "all";
     private static final String ALL_PROFILES_LABEL = "All Profiles";
     private static final String RAID_PROGRESS_LABEL = "Raid Progress";
@@ -450,6 +451,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     arguments, senderUserId
             );
             case RAID_COMBAT_CALLBACK -> warcraftLogsStatisticsService.combatMessage(arguments);
+            case MPLUS_HIGH_COMBAT_CALLBACK -> warcraftLogsStatisticsService.highKeyCombatMessage(arguments);
             case "status" -> adminMPlusStatus(senderUserId);
             default -> mplusHelpMessage();
         };
@@ -483,6 +485,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /mplus_awards
                 /mplus_coverage [profile]
                 /mplus_combat [profile]
+                /mplus_combat_12 [profile] — +12 and above only
                 """.strip();
     }
 
@@ -2207,7 +2210,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 View all current group mains:
                 /mains
 
-                Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus_combat follows each profile's selected main.
+                Only the characters registered to your profile can be selected. Ask the bot admin to add another character. Both /mplus_combat and /mplus_combat_12 follow each profile's selected main.
                 """.strip();
     }
 
@@ -2680,6 +2683,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         AWARDS("awards", "Awards", false),
         COVERAGE("coverage", "Coverage", true),
         COMBAT(RAID_COMBAT_CALLBACK, "Combat", true),
+        HIGH_COMBAT(MPLUS_HIGH_COMBAT_CALLBACK, "Combat +12", true),
         STATUS("status", "Status", false);
 
         private final String key;
@@ -2705,7 +2709,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
 
         boolean supportsAllProfiles() {
-            return this == PROGRESS || this == TEAM || this == COMBAT;
+            return this == PROGRESS || this == TEAM || this == COMBAT || this == HIGH_COMBAT;
         }
 
         static MPlusMenuAction fromKey(String key) {

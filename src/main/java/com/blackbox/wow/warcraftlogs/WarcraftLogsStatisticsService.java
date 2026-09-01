@@ -38,6 +38,7 @@ public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final int MAX_REPORT_PAGES = 100;
+    private static final int HIGH_KEY_MINIMUM_LEVEL = 12;
     private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
     private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
     private static final BigDecimal ONE_THOUSAND = BigDecimal.valueOf(1_000);
@@ -161,8 +162,18 @@ public class WarcraftLogsStatisticsService {
     }
 
     public List<PlayerStatistics> statistics() {
+        return statistics(0);
+    }
+
+    private List<PlayerStatistics> statistics(int minimumKeystoneLevel) {
         String seasonKey = properties.seasonKey();
-        Map<Long, List<WarcraftLogPlayerRunEntity>> runsByProfile = runRepository.findBySeasonKey(seasonKey)
+        List<WarcraftLogPlayerRunEntity> seasonRuns = minimumKeystoneLevel > 0
+                ? runRepository.findBySeasonKeyAndKeystoneLevelGreaterThanEqual(
+                        seasonKey,
+                        minimumKeystoneLevel
+                )
+                : runRepository.findBySeasonKey(seasonKey);
+        Map<Long, List<WarcraftLogPlayerRunEntity>> runsByProfile = seasonRuns
                 .stream()
                 .collect(Collectors.groupingBy(WarcraftLogPlayerRunEntity::getProfileId));
         Map<Long, WarcraftLogProfileSnapshotEntity> snapshotsByProfile = snapshotRepository
@@ -216,11 +227,19 @@ public class WarcraftLogsStatisticsService {
     }
 
     public String combatMessage(String profileArgument) {
+        return combatMessage(profileArgument, 0);
+    }
+
+    public String highKeyCombatMessage(String profileArgument) {
+        return combatMessage(profileArgument, HIGH_KEY_MINIMUM_LEVEL);
+    }
+
+    private String combatMessage(String profileArgument, int minimumKeystoneLevel) {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
         String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
-        List<PlayerStatistics> selected = statistics().stream()
+        List<PlayerStatistics> selected = statistics(minimumKeystoneLevel).stream()
                 .filter(statistic -> requestedProfile.isBlank()
                         || statistic.profileName().equalsIgnoreCase(requestedProfile))
                 .sorted(combatStatisticComparator())
@@ -233,11 +252,17 @@ public class WarcraftLogsStatisticsService {
                     ? "No Warcraft Logs combat statistics are available."
                     : "Active player profile not found: " + requestedProfile;
         }
-        StringBuilder message = new StringBuilder("Warcraft Logs M+ combat — ")
-                .append(properties.seasonKey()).append("\n\n");
+        StringBuilder message = new StringBuilder("Warcraft Logs M+ combat");
+        if (minimumKeystoneLevel > 0) {
+            message.append(" (+").append(minimumKeystoneLevel).append(" and above)");
+        }
+        message.append(" — ").append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        return message.append("Averages use logged runs only; missing/private logs are unavailable, not zero.")
-                .toString();
+        message.append("Averages use logged");
+        if (minimumKeystoneLevel > 0) {
+            message.append(" +").append(minimumKeystoneLevel).append(" or higher");
+        }
+        return message.append(" runs only; missing/private logs are unavailable, not zero.").toString();
     }
 
     public String awardsMessage() {
