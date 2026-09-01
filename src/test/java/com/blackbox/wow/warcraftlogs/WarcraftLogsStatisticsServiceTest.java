@@ -122,7 +122,7 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("Warcraft Logs M+ combat (timed +12 and above) — midnight-season-2")
                 .contains("Key parse: 80%", "DPS: 200k", "Avoidable damage per run: 4,000")
                 .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
-                .contains("Averages use Raider.IO-matched, logged timed +12 or higher runs only")
+                .contains("Averages use logged timed +12 or higher runs only")
                 .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Key parse: 40%", "Interrupts per run: 20");
         verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
@@ -359,12 +359,12 @@ class WarcraftLogsStatisticsServiceTest {
                 {"characterData":{"character":{"recentReports":{"data":[
                   {"code":"first","revision":1,"startTime":1000,"endTime":5000,
                    "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
-                     "keystoneTime":3000,"startTime":0,"endTime":3000,
+                     "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}},
                   {"code":"duplicate","revision":1,"startTime":1000,"endTime":5000,
                    "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
-                     "keystoneTime":3000,"startTime":0,"endTime":3000,
+                     "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
                 ]}}}}
@@ -408,7 +408,7 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
-    void backfillsAvoidableDamageForAnAlreadyStoredRun() throws Exception {
+    void backfillsTimedStatusAndAvoidableDamageForAnAlreadyStoredRun() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
@@ -419,12 +419,13 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogPlayerRunEntity storedRun = run(
                 1L, "Thelinq", "stored", 9, 1, "80", "150000"
         );
-        ReflectionTestUtils.setField(storedRun, "metricsVersion", 5);
+        ReflectionTestUtils.setField(storedRun, "timed", null);
         JsonNode reports = mapper.readTree("""
                 {"characterData":{"character":{"recentReports":{"data":[]}}}}
                 """);
         JsonNode storedReport = mapper.readTree("""
                 {"reportData":{"report":{"revision":1,
+                  "fights":[{"id":7,"keystoneTime":1800000,"keystoneBonus":1}],
                   "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}
                 }}}
                 """);
@@ -464,6 +465,7 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(storedRun.getAvoidableDamage()).isEqualByComparingTo("325000");
         assertThat(storedRun.getMetricsVersion())
                 .isEqualTo(WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION);
+        assertThat(storedRun.getTimed()).isTrue();
     }
 
     @Test
@@ -498,8 +500,8 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(statistics.averageKeyParsePercentage()).isNull();
         assertThat(statistics.averageDamagePerSecond()).isNull();
         assertThat(service.combatMessage(""))
-                .contains("Key parse: unavailable")
-                .doesNotContain(", Parse ", ", Key unavailable");
+                .isEqualTo("No logged timed +12 or higher Warcraft Logs combat runs are available.")
+                .doesNotContain("Key parse: unavailable");
     }
 
     private static WarcraftLogsStatisticsService service(
@@ -578,7 +580,7 @@ class WarcraftLogsStatisticsServiceTest {
         );
         run.recordAvoidableDamage(avoidableDamage == null ? null : new BigDecimal(avoidableDamage));
         if (keyParse != null) {
-            run.recordCompletion(1_800_000);
+            run.recordCompletion(1_800_000, true);
         }
         return run;
     }

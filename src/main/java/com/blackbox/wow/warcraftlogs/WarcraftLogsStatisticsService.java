@@ -109,6 +109,7 @@ public class WarcraftLogsStatisticsService {
                         encounterID
                         keystoneLevel
                         keystoneTime
+                        keystoneBonus
                         startTime
                         endTime
                         friendlyPlayers
@@ -132,6 +133,11 @@ public class WarcraftLogsStatisticsService {
               reportData {
                 report(code: $code) {
                   revision
+                  fights {
+                    id
+                    keystoneTime
+                    keystoneBonus
+                  }
                   masterData(translate: false) {
                     actors(type: "Player") {
                       id
@@ -257,24 +263,32 @@ public class WarcraftLogsStatisticsService {
         }
         int minimumKeystoneLevel = properties.combatMinimumKeystoneLevel();
         String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
-        List<PlayerStatistics> selected = statistics(minimumKeystoneLevel).stream()
+        List<PlayerStatistics> availableStatistics = statistics(minimumKeystoneLevel);
+        boolean requestedProfileExists = requestedProfile.isBlank()
+                || availableStatistics.stream().anyMatch(statistic ->
+                        statistic.profileName().equalsIgnoreCase(requestedProfile));
+        List<PlayerStatistics> selected = availableStatistics.stream()
                 .filter(statistic -> requestedProfile.isBlank()
                         || statistic.profileName().equalsIgnoreCase(requestedProfile))
+                .filter(statistic -> statistic.dungeonRuns() > 0)
                 .sorted(combatStatisticComparator())
                 .toList();
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
         if (selected.isEmpty()) {
-            return requestedProfile.isBlank()
-                    ? "No Warcraft Logs combat statistics are available."
-                    : "Active player profile not found: " + requestedProfile;
+            if (!requestedProfileExists) {
+                return "Active player profile not found: " + requestedProfile;
+            }
+            String profileSuffix = requestedProfile.isBlank() ? "." : " for " + requestedProfile + ".";
+            return "No logged timed +" + minimumKeystoneLevel
+                    + " or higher Warcraft Logs combat runs are available" + profileSuffix;
         }
         StringBuilder message = new StringBuilder("Warcraft Logs M+ combat");
         message.append(" (timed +").append(minimumKeystoneLevel).append(" and above) — ")
                 .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        return message.append("Averages use Raider.IO-matched, logged timed +")
+        return message.append("Averages use logged timed +")
                 .append(minimumKeystoneLevel)
                 .append(" or higher runs only; depleted, missing, and private logs are excluded.")
                 .toString();
@@ -298,7 +312,7 @@ public class WarcraftLogsStatisticsService {
         StringBuilder message = new StringBuilder("🏆 M+ Awards — timed +")
                 .append(minimumKeystoneLevel).append(" and above — ")
                 .append(properties.seasonKey()).append("\n")
-                .append("Based on Raider.IO-matched logged runs; ties are shown.\n\n");
+                .append("Based on logged timed runs; ties are shown.\n\n");
         appendCombatAwards(message, candidates, AwardDirection.MAXIMUM);
         appendCombatAwards(message, candidates, AwardDirection.MINIMUM);
         return message.append("Timed +").append(minimumKeystoneLevel)
@@ -606,7 +620,7 @@ public class WarcraftLogsStatisticsService {
         Map<Long, TrackedPlayer> playersById = players.stream()
                 .collect(Collectors.toMap(TrackedPlayer::profileId, Function.identity()));
         Map<String, List<WarcraftLogPlayerRunEntity>> staleRunsByReport = storedRuns.stream()
-                .filter(run -> !hasCurrentMetricsVersion(run))
+                .filter(run -> !hasCurrentMetricsVersion(run) || run.getTimed() == null)
                 .filter(run -> playersById.containsKey(run.getProfileId()))
                 .collect(Collectors.groupingBy(
                         WarcraftLogPlayerRunEntity::getReportCode,
@@ -648,7 +662,9 @@ public class WarcraftLogsStatisticsService {
         for (WarcraftLogPlayerRunEntity run : storedRuns) {
             TrackedPlayer player = playersById.get(run.getProfileId());
             Integer actorId = findActorId(actors, player);
-            if (actorId == null || run.getKeystoneTimeMs() == null || run.getKeystoneTimeMs() <= 0) {
+            JsonNode fight = fightById(reportData.path("fights"), run.getFightId());
+            long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
+            if (actorId == null || keystoneTimeMs <= 0) {
                 continue;
             }
             report.revision = Math.max(report.revision, run.getReportRevision());
@@ -659,11 +675,21 @@ public class WarcraftLogsStatisticsService {
                     actorId,
                     run.getDungeonName(),
                     run.getKeystoneLevel(),
-                    run.getKeystoneTimeMs(),
+                    keystoneTimeMs,
+                    fight.path("keystoneBonus").asInt(0) > 0,
                     run
             ));
         }
         return report;
+    }
+
+    private static JsonNode fightById(JsonNode fights, int fightId) {
+        for (JsonNode fight : fights) {
+            if (fight.path("id").asInt(0) == fightId) {
+                return fight;
+            }
+        }
+        return MissingNode.getInstance();
     }
 
     private void discoverPlayerReports(
@@ -814,6 +840,7 @@ public class WarcraftLogsStatisticsService {
         int fightId = fight.path("id").asInt(0);
         int keyLevel = fight.path("keystoneLevel").asInt(0);
         long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
+        boolean timed = fight.path("keystoneBonus").asInt(0) > 0;
         if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())) {
             return;
         }
@@ -845,6 +872,7 @@ public class WarcraftLogsStatisticsService {
                 fight.path(NAME_FIELD).asText("Unknown dungeon"),
                 keyLevel,
                 keystoneTimeMs,
+                timed,
                 existing
         ));
     }
@@ -857,7 +885,10 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static boolean isCurrentRun(WarcraftLogPlayerRunEntity existing, int revision) {
-        return existing != null && existing.getReportRevision() >= revision && hasCompleteMetrics(existing);
+        return existing != null
+                && existing.getReportRevision() >= revision
+                && hasCompleteMetrics(existing)
+                && existing.getTimed() != null;
     }
 
     private void correlateFight(
@@ -950,7 +981,7 @@ public class WarcraftLogsStatisticsService {
                 );
             }
             entity.recordAvoidableDamage(avoidableDamage);
-            entity.recordCompletion(participant.keystoneTimeMs);
+            entity.recordCompletion(participant.keystoneTimeMs, participant.timed);
             entity = runRepository.save(entity);
             existingRuns.remember(entity);
             saved++;
@@ -1239,7 +1270,8 @@ public class WarcraftLogsStatisticsService {
     private static boolean hasCompleteCombatMetrics(WarcraftLogPlayerRunEntity run) {
         return hasCurrentMetricsVersion(run)
                 && run.getKeystoneTimeMs() != null
-                && run.getKeystoneTimeMs() > 0;
+                && run.getKeystoneTimeMs() > 0
+                && Boolean.TRUE.equals(run.getTimed());
     }
 
     public record PlayerStatistics(
@@ -1392,6 +1424,7 @@ public class WarcraftLogsStatisticsService {
             String dungeonName,
             int keystoneLevel,
             long keystoneTimeMs,
+            boolean timed,
             WarcraftLogPlayerRunEntity existing
     ) {
     }

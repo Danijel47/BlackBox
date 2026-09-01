@@ -17,6 +17,7 @@ class WarcraftLogPlayerRunEntityTest {
                 9, 1, new BigDecimal("77"), new BigDecimal("49"), new BigDecimal("124013.3")
         );
         run.recordAvoidableDamage(new BigDecimal("456789.5"));
+        run.recordCompletion(1_800_000, true);
 
         assertThat(run.getMetricsVersion())
                 .isEqualTo(WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION);
@@ -26,5 +27,7 @@ class WarcraftLogPlayerRunEntityTest {
         assertThat(run.getKeyParsePercentage()).isEqualByComparingTo("49");
         assertThat(run.getDamagePerSecond()).isEqualByComparingTo("124013.3");
         assertThat(run.getAvoidableDamage()).isEqualByComparingTo("456789.5");
+        assertThat(run.getKeystoneTimeMs()).isEqualTo(1_800_000);
+        assertThat(run.getTimed()).isTrue();
     }
 }

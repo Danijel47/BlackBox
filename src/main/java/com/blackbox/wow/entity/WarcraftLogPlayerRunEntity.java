@@ -50,6 +50,9 @@ public class WarcraftLogPlayerRunEntity {
     @Column(name = "keystone_time_ms")
     private Long keystoneTimeMs;
 
+    @Column(name = "timed")
+    private Boolean timed;
+
     @Column(name = "interrupts", nullable = false)
     private int interrupts;
 
@@ -132,11 +135,12 @@ public class WarcraftLogPlayerRunEntity {
         this.capturedAt = Instant.now();
     }
 
-    public void recordCompletion(long completionTimeMs) {
+    public void recordCompletion(long completionTimeMs, boolean completedInTime) {
         if (completionTimeMs <= 0) {
             throw new IllegalArgumentException("Keystone completion time must be positive.");
         }
         this.keystoneTimeMs = completionTimeMs;
+        this.timed = completedInTime;
     }
 
     public void recordAvoidableDamage(BigDecimal damage) {
@@ -155,6 +159,7 @@ public class WarcraftLogPlayerRunEntity {
     public String getDungeonName() { return dungeonName; }
     public int getKeystoneLevel() { return keystoneLevel; }
     public Long getKeystoneTimeMs() { return keystoneTimeMs; }
+    public Boolean getTimed() { return timed; }
     public int getInterrupts() { return interrupts; }
     public int getDeaths() { return deaths; }
     public BigDecimal getParsePercentage() { return parsePercentage; }
