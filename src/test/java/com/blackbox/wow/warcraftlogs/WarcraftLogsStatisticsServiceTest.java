@@ -63,12 +63,12 @@ class WarcraftLogsStatisticsServiceTest {
                         • Linq (Thelinq)
                           Key parse: 62%
                           DPS: 140k
-                          Avoidable damage per run: 9,500
                           Interrupts per run: 4
                           Deaths per run: 0
                           Logged runs: 1
                         """.strip())
                 .doesNotContain("N=", "Key-parse runs:")
+                .doesNotContain("Avoidable damage")
                 .doesNotContain("Linqq", "interrupts 13", "deaths 1");
     }
 
@@ -120,11 +120,11 @@ class WarcraftLogsStatisticsServiceTest {
 
         assertThat(message)
                 .contains("Warcraft Logs M+ combat (timed +12 and above) — midnight-season-2")
-                .contains("Key parse: 80%", "DPS: 200k", "Avoidable damage per run: 4,000")
+                .contains("Key parse: 80%", "DPS: 200k")
                 .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
                 .contains("Averages use logged timed +12 or higher runs only")
                 .contains("depleted, missing, and private logs are excluded")
-                .doesNotContain("Key parse: 40%", "Interrupts per run: 20");
+                .doesNotContain("Avoidable damage", "Key parse: 40%", "Interrupts per run: 20");
         verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
     }
 
@@ -155,18 +155,12 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("💀 Floor POV — Most deaths per run", "• Buco (BucoMain)", "Deaths/run: 4")
                 .contains("🛑 CC Machine — Most interrupts per run", "• Linq (LinqMain)", "Interrupts/run: 12")
                 .contains("🔥 Top Pumper — Best average key parse", "• Lazo (LazoMain)", "Key parse: 95%")
-                .contains(
-                        "🔥 Stand in Fire DPS higher — Most average avoidable damage taken",
-                        "• Buco (BucoMain)",
-                        "Avoidable damage/run: 2.8m"
-                )
                 .contains("⬇️ Minimum awards")
                 .contains("🪽 Not Today, Spirit Healer — Fewest deaths per run", "Deaths/run: 0")
                 .contains("💿 My Kick Was on Cooldown — Fewest interrupts per run", "Interrupts/run: 2")
                 .contains("🎮 Are You Pressing Buttons? — Lowest average key parse", "Key parse: 70%")
-                .contains("🔥 Fire Bad — Least average avoidable damage taken")
                 .contains("Timed +12 or higher runs only; depleted, missing, and private logs are excluded")
-                .doesNotContain("formula:", "N=");
+                .doesNotContain("Avoidable damage", "Stand in Fire", "Fire Bad", "formula:", "N=");
         verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
     }
 

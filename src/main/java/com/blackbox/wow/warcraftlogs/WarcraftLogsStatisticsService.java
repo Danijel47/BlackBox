@@ -81,12 +81,6 @@ public class WarcraftLogsStatisticsService {
                     "🎮 Are You Pressing Buttons?", "Lowest average key parse",
                     "Key parse", PlayerStatistics::averageKeyParsePercentage,
                     WarcraftLogsStatisticsService::formatPercentMetric
-            ),
-            new CombatAwardDefinition(
-                    "🔥 Stand in Fire DPS higher", "Most average avoidable damage taken",
-                    "🔥 Fire Bad", "Least average avoidable damage taken",
-                    "Avoidable damage/run", PlayerStatistics::averageAvoidableDamage,
-                    WarcraftLogsStatisticsService::formatDamageAmount
             )
     );
     private static final String CHARACTER_REPORTS_QUERY = """
@@ -456,8 +450,6 @@ public class WarcraftLogsStatisticsService {
                 .append(statistic.characterName()).append(")\n")
                 .append("  Key parse: ").append(formatPercentMetric(statistic.averageKeyParsePercentage())).append('\n')
                 .append("  DPS: ").append(formatDamagePerSecond(statistic.averageDamagePerSecond())).append('\n')
-                .append("  Avoidable damage per run: ")
-                .append(formatDamageAmount(statistic.averageAvoidableDamage())).append('\n')
                 .append("  Interrupts per run: ").append(formatMetric(statistic.averageInterrupts())).append('\n')
                 .append("  Deaths per run: ").append(formatMetric(statistic.averageDeaths())).append('\n')
                 .append("  Logged runs: ").append(statistic.dungeonRuns()).append('\n');
