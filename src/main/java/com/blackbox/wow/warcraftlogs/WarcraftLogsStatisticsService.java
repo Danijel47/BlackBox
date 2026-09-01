@@ -38,7 +38,6 @@ public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final int MAX_REPORT_PAGES = 100;
-    private static final int HIGH_KEY_MINIMUM_LEVEL = 12;
     private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
     private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
     private static final BigDecimal ONE_THOUSAND = BigDecimal.valueOf(1_000);
@@ -64,6 +63,32 @@ public class WarcraftLogsStatisticsService {
     private static final String ABILITY_GAME_ID_FIELD = "abilityGameID";
     private static final String AMOUNT_FIELD = "amount";
     private static final String UNAVAILABLE_LABEL = "unavailable";
+    private static final List<CombatAwardDefinition> COMBAT_AWARDS = List.of(
+            new CombatAwardDefinition(
+                    "💀 Floor POV", "Most deaths per run",
+                    "🪽 Not Today, Spirit Healer", "Fewest deaths per run",
+                    "Deaths/run", PlayerStatistics::averageDeaths,
+                    WarcraftLogsStatisticsService::formatMetric
+            ),
+            new CombatAwardDefinition(
+                    "🛑 CC Machine", "Most interrupts per run",
+                    "💿 My Kick Was on Cooldown", "Fewest interrupts per run",
+                    "Interrupts/run", PlayerStatistics::averageInterrupts,
+                    WarcraftLogsStatisticsService::formatMetric
+            ),
+            new CombatAwardDefinition(
+                    "🔥 Top Pumper", "Best average key parse",
+                    "🎮 Are You Pressing Buttons?", "Lowest average key parse",
+                    "Key parse", PlayerStatistics::averageKeyParsePercentage,
+                    WarcraftLogsStatisticsService::formatPercentMetric
+            ),
+            new CombatAwardDefinition(
+                    "🔥 Stand in Fire DPS higher", "Most average avoidable damage taken",
+                    "🔥 Fire Bad", "Least average avoidable damage taken",
+                    "Avoidable damage/run", PlayerStatistics::averageAvoidableDamage,
+                    WarcraftLogsStatisticsService::formatDamageAmount
+            )
+    );
     private static final String CHARACTER_REPORTS_QUERY = """
             query CharacterReports(
               $name: String!, $server: String!, $region: String!, $limit: Int!, $page: Int!
@@ -168,7 +193,7 @@ public class WarcraftLogsStatisticsService {
     private List<PlayerStatistics> statistics(int minimumKeystoneLevel) {
         String seasonKey = properties.seasonKey();
         List<WarcraftLogPlayerRunEntity> seasonRuns = minimumKeystoneLevel > 0
-                ? runRepository.findBySeasonKeyAndKeystoneLevelGreaterThanEqual(
+                ? runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
                         seasonKey,
                         minimumKeystoneLevel
                 )
@@ -227,17 +252,10 @@ public class WarcraftLogsStatisticsService {
     }
 
     public String combatMessage(String profileArgument) {
-        return combatMessage(profileArgument, 0);
-    }
-
-    public String highKeyCombatMessage(String profileArgument) {
-        return combatMessage(profileArgument, HIGH_KEY_MINIMUM_LEVEL);
-    }
-
-    private String combatMessage(String profileArgument, int minimumKeystoneLevel) {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
+        int minimumKeystoneLevel = properties.combatMinimumKeystoneLevel();
         String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
         List<PlayerStatistics> selected = statistics(minimumKeystoneLevel).stream()
                 .filter(statistic -> requestedProfile.isBlank()
@@ -253,23 +271,21 @@ public class WarcraftLogsStatisticsService {
                     : "Active player profile not found: " + requestedProfile;
         }
         StringBuilder message = new StringBuilder("Warcraft Logs M+ combat");
-        if (minimumKeystoneLevel > 0) {
-            message.append(" (+").append(minimumKeystoneLevel).append(" and above)");
-        }
-        message.append(" — ").append(properties.seasonKey()).append("\n\n");
+        message.append(" (timed +").append(minimumKeystoneLevel).append(" and above) — ")
+                .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        message.append("Averages use logged");
-        if (minimumKeystoneLevel > 0) {
-            message.append(" +").append(minimumKeystoneLevel).append(" or higher");
-        }
-        return message.append(" runs only; missing/private logs are unavailable, not zero.").toString();
+        return message.append("Averages use Raider.IO-matched, logged timed +")
+                .append(minimumKeystoneLevel)
+                .append(" or higher runs only; depleted, missing, and private logs are excluded.")
+                .toString();
     }
 
     public String awardsMessage() {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
-        List<PlayerStatistics> candidates = statistics().stream()
+        int minimumKeystoneLevel = properties.combatMinimumKeystoneLevel();
+        List<PlayerStatistics> candidates = statistics(minimumKeystoneLevel).stream()
                 .filter(statistic -> statistic.dungeonRuns() > 0)
                 .toList();
         if (refreshRunning.get()) {
@@ -279,46 +295,15 @@ public class WarcraftLogsStatisticsService {
             return "M+ awards are unavailable until Warcraft Logs combat data is collected.";
         }
 
-        StringBuilder message = new StringBuilder("🏆 M+ Awards — ")
+        StringBuilder message = new StringBuilder("🏆 M+ Awards — timed +")
+                .append(minimumKeystoneLevel).append(" and above — ")
                 .append(properties.seasonKey()).append("\n")
-                .append("Based on logged dungeon runs; ties are shown.\n\n");
-        appendCombatAward(
-                message,
-                "💀 Floor POV",
-                "Most deaths per run",
-                "Deaths/run",
-                candidates,
-                PlayerStatistics::averageDeaths,
-                WarcraftLogsStatisticsService::formatMetric
-        );
-        appendCombatAward(
-                message,
-                "🛑 CC Machine",
-                "Most interrupts per run",
-                "Interrupts/run",
-                candidates,
-                PlayerStatistics::averageInterrupts,
-                WarcraftLogsStatisticsService::formatMetric
-        );
-        appendCombatAward(
-                message,
-                "🔥 Top Pumper",
-                "Best average key parse",
-                "Key parse",
-                candidates,
-                PlayerStatistics::averageKeyParsePercentage,
-                WarcraftLogsStatisticsService::formatPercentMetric
-        );
-        appendCombatAward(
-                message,
-                "🔥 Stand in Fire DPS higher",
-                "Most average avoidable damage taken",
-                "Avoidable damage/run",
-                candidates,
-                PlayerStatistics::averageAvoidableDamage,
-                WarcraftLogsStatisticsService::formatDamageAmount
-        );
-        return message.append("Logged runs only; missing or private logs are excluded.").toString();
+                .append("Based on Raider.IO-matched logged runs; ties are shown.\n\n");
+        appendCombatAwards(message, candidates, AwardDirection.MAXIMUM);
+        appendCombatAwards(message, candidates, AwardDirection.MINIMUM);
+        return message.append("Timed +").append(minimumKeystoneLevel)
+                .append(" or higher runs only; depleted, missing, and private logs are excluded.")
+                .toString();
     }
 
     public String raidCombatMessage(List<TrackedPlayer> players) {
@@ -392,36 +377,40 @@ public class WarcraftLogsStatisticsService {
         return formatPercentMetric(roundedAverage);
     }
 
+    private static void appendCombatAwards(
+            StringBuilder message,
+            List<PlayerStatistics> candidates,
+            AwardDirection direction
+    ) {
+        message.append(direction.heading()).append("\n\n");
+        COMBAT_AWARDS.forEach(award -> appendCombatAward(message, candidates, award, direction));
+    }
+
     private static void appendCombatAward(
             StringBuilder message,
-            String title,
-            String description,
-            String metricLabel,
             List<PlayerStatistics> candidates,
-            Function<PlayerStatistics, BigDecimal> metric,
-            Function<BigDecimal, String> formatter
+            CombatAwardDefinition award,
+            AwardDirection direction
     ) {
         List<PlayerStatistics> eligible = candidates.stream()
-                .filter(candidate -> metric.apply(candidate) != null)
+                .filter(candidate -> award.metric().apply(candidate) != null)
                 .toList();
-        message.append(title).append(" — ").append(description).append('\n');
+        message.append(direction.title(award)).append(" — ")
+                .append(direction.description(award)).append('\n');
         if (eligible.isEmpty()) {
             message.append("• Unavailable\n\n");
             return;
         }
 
-        BigDecimal winningValue = eligible.stream()
-                .map(metric)
-                .max(BigDecimal::compareTo)
-                .orElseThrow();
+        BigDecimal winningValue = direction.select(eligible.stream().map(award.metric()));
         eligible.stream()
-                .filter(candidate -> metric.apply(candidate).compareTo(winningValue) == 0)
+                .filter(candidate -> award.metric().apply(candidate).compareTo(winningValue) == 0)
                 .forEach(candidate -> appendCombatAwardWinner(
                         message,
                         candidate,
-                        metricLabel,
+                        award.metricLabel(),
                         winningValue,
-                        formatter
+                        award.formatter()
                 ));
         message.append('\n');
     }
@@ -1268,6 +1257,68 @@ public class WarcraftLogsStatisticsService {
     }
 
     private record RaidCombatRow(TrackedPlayer player, JsonNode character, BigDecimal bestParse) {
+    }
+
+    private record CombatAwardDefinition(
+            String maximumTitle,
+            String maximumDescription,
+            String minimumTitle,
+            String minimumDescription,
+            String metricLabel,
+            Function<PlayerStatistics, BigDecimal> metric,
+            Function<BigDecimal, String> formatter
+    ) {
+    }
+
+    private enum AwardDirection {
+        MAXIMUM("⬆️ Maximum awards") {
+            @Override
+            BigDecimal select(Stream<BigDecimal> metrics) {
+                return metrics.max(BigDecimal::compareTo).orElseThrow();
+            }
+
+            @Override
+            String title(CombatAwardDefinition award) {
+                return award.maximumTitle();
+            }
+
+            @Override
+            String description(CombatAwardDefinition award) {
+                return award.maximumDescription();
+            }
+        },
+        MINIMUM("⬇️ Minimum awards") {
+            @Override
+            BigDecimal select(Stream<BigDecimal> metrics) {
+                return metrics.min(BigDecimal::compareTo).orElseThrow();
+            }
+
+            @Override
+            String title(CombatAwardDefinition award) {
+                return award.minimumTitle();
+            }
+
+            @Override
+            String description(CombatAwardDefinition award) {
+                return award.minimumDescription();
+            }
+        };
+
+        private final String heading;
+
+        AwardDirection(String heading) {
+            this.heading = heading;
+        }
+
+        String heading() {
+            return heading;
+        }
+
+        abstract BigDecimal select(Stream<BigDecimal> metrics);
+
+        abstract String title(CombatAwardDefinition award);
+
+        abstract String description(CombatAwardDefinition award);
     }
 
     record RankingMetrics(

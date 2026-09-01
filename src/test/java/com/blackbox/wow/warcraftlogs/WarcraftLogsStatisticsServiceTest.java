@@ -48,7 +48,7 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogPlayerRunEntity partialFight = run(
                 "Thelinq", "partial-fight", 20, 3, null, "250000.0"
         );
-        when(runRepository.findBySeasonKey("midnight-season-2"))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
                 .thenReturn(List.of(previousMainRun, selectedMainRun, partialFight));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -84,7 +84,7 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogPlayerRunEntity higherParse = run(
                 2L, "BravoMain", "bravo-report", 3, 0, "88", "150000"
         );
-        when(runRepository.findBySeasonKey("midnight-season-2"))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
                 .thenReturn(List.of(lowerParse, higherParse));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -101,12 +101,12 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
-    void calculatesHighKeyCombatMetricsFromLevelTwelveAndAboveOnly() {
+    void calculatesCombatMetricsFromConfiguredTimedKeysOnly() {
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
         WarcraftLogProfileSnapshotRepository snapshotRepository =
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
-        when(runRepository.findBySeasonKeyAndKeystoneLevelGreaterThanEqual("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
                 .thenReturn(List.of(
                         runAtLevel(12, 1L, "Thelinq", "level-twelve", 4, 0, "80", "200000", "4000")
                 ));
@@ -116,15 +116,16 @@ class WarcraftLogsStatisticsServiceTest {
         ));
 
         String message = service(trackedPlayerService, runRepository, snapshotRepository)
-                .highKeyCombatMessage("Linq");
+                .combatMessage("Linq");
 
         assertThat(message)
-                .contains("Warcraft Logs M+ combat (+12 and above) — midnight-season-2")
+                .contains("Warcraft Logs M+ combat (timed +12 and above) — midnight-season-2")
                 .contains("Key parse: 80%", "DPS: 200k", "Avoidable damage per run: 4,000")
                 .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
-                .contains("Averages use logged +12 or higher runs only")
+                .contains("Averages use Raider.IO-matched, logged timed +12 or higher runs only")
+                .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Key parse: 40%", "Interrupts per run: 20");
-        verify(runRepository).findBySeasonKeyAndKeystoneLevelGreaterThanEqual("midnight-season-2", 12);
+        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
     }
 
     @Test
@@ -133,11 +134,12 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogProfileSnapshotRepository snapshotRepository =
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
-        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+                .thenReturn(List.of(
                 run(1L, "BucoMain", "buco", 2, 4, "70", "100000", "2800000"),
                 run(2L, "LinqMain", "linq", 12, 1, "80", "120000", "300000"),
                 run(3L, "LazoMain", "lazo", 4, 0, "95", "180000", "200000")
-        ));
+                ));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
                 new TrackedPlayerService.TrackedPlayer(1L, "Buco", "eu", "Stormscale", "BucoMain"),
@@ -148,6 +150,8 @@ class WarcraftLogsStatisticsServiceTest {
         String message = service(trackedPlayerService, runRepository, snapshotRepository).awardsMessage();
 
         assertThat(message)
+                .contains("🏆 M+ Awards — timed +12 and above — midnight-season-2")
+                .contains("⬆️ Maximum awards")
                 .contains("💀 Floor POV — Most deaths per run", "• Buco (BucoMain)", "Deaths/run: 4")
                 .contains("🛑 CC Machine — Most interrupts per run", "• Linq (LinqMain)", "Interrupts/run: 12")
                 .contains("🔥 Top Pumper — Best average key parse", "• Lazo (LazoMain)", "Key parse: 95%")
@@ -156,7 +160,14 @@ class WarcraftLogsStatisticsServiceTest {
                         "• Buco (BucoMain)",
                         "Avoidable damage/run: 2.8m"
                 )
+                .contains("⬇️ Minimum awards")
+                .contains("🪽 Not Today, Spirit Healer — Fewest deaths per run", "Deaths/run: 0")
+                .contains("💿 My Kick Was on Cooldown — Fewest interrupts per run", "Interrupts/run: 2")
+                .contains("🎮 Are You Pressing Buttons? — Lowest average key parse", "Key parse: 70%")
+                .contains("🔥 Fire Bad — Least average avoidable damage taken")
+                .contains("Timed +12 or higher runs only; depleted, missing, and private logs are excluded")
                 .doesNotContain("formula:", "N=");
+        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
     }
 
     @Test
@@ -468,6 +479,8 @@ class WarcraftLogsStatisticsServiceTest {
         );
         ReflectionTestUtils.setField(incompleteRun, "metricsVersion", 4);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(incompleteRun));
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+                .thenReturn(List.of(incompleteRun));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
                 new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Linqq")
@@ -572,7 +585,7 @@ class WarcraftLogsStatisticsServiceTest {
 
     private static WarcraftLogsProperties properties() {
         return new WarcraftLogsProperties(
-                "", "", "", "", 10, true, "midnight-season-2", Instant.EPOCH, 80
+                "", "", "", "", 10, true, "midnight-season-2", Instant.EPOCH, 80, 12
         );
     }
 }

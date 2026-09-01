@@ -14,6 +14,12 @@ public record WarcraftLogsProperties(
         boolean collectionEnabled,
         String seasonKey,
         Instant seasonStart,
-        int rateLimitMaxPercent
+        int rateLimitMaxPercent,
+        int combatMinimumKeystoneLevel
 ) {
+    public WarcraftLogsProperties {
+        if (combatMinimumKeystoneLevel <= 0) {
+            throw new IllegalArgumentException("combatMinimumKeystoneLevel must be positive");
+        }
+    }
 }
