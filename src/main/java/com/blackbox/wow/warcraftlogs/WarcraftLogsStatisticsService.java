@@ -38,6 +38,7 @@ public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final int MAX_REPORT_PAGES = 100;
+    private static final BigDecimal MAX_PERCENTILE = BigDecimal.valueOf(100);
     private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
     private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
     private static final BigDecimal ONE_THOUSAND = BigDecimal.valueOf(1_000);
@@ -193,7 +194,7 @@ public class WarcraftLogsStatisticsService {
     private List<PlayerStatistics> statistics(int minimumKeystoneLevel) {
         String seasonKey = properties.seasonKey();
         List<WarcraftLogPlayerRunEntity> seasonRuns = minimumKeystoneLevel > 0
-                ? runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                ? runRepository.findCanonicalTimedBySeasonKeyAndMinimumKeystoneLevel(
                         seasonKey,
                         minimumKeystoneLevel
                 )
@@ -219,7 +220,7 @@ public class WarcraftLogsStatisticsService {
             int deaths = completeRuns.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
             List<BigDecimal> keyParses = nonNullMetrics(
                     completeRuns, WarcraftLogPlayerRunEntity::getKeyParsePercentage
-            );
+            ).stream().filter(WarcraftLogsStatisticsService::isValidPercentile).toList();
             List<BigDecimal> damagePerSecond = nonNullMetrics(
                     completeRuns, WarcraftLogPlayerRunEntity::getDamagePerSecond
             );
@@ -275,16 +276,16 @@ public class WarcraftLogsStatisticsService {
                 return "Active player profile not found: " + requestedProfile;
             }
             String profileSuffix = requestedProfile.isBlank() ? "." : " for " + requestedProfile + ".";
-            return "No logged timed +" + minimumKeystoneLevel
+            return "No uniquely matched logged timed +" + minimumKeystoneLevel
                     + " or higher Warcraft Logs combat runs are available" + profileSuffix;
         }
         StringBuilder message = new StringBuilder("Warcraft Logs M+ combat");
         message.append(" (timed +").append(minimumKeystoneLevel).append(" and above) — ")
                 .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        return message.append("Averages use logged timed +")
+        return message.append("Averages use one log per Raider.IO-matched timed +")
                 .append(minimumKeystoneLevel)
-                .append(" or higher runs only; depleted, missing, and private logs are excluded.")
+                .append(" or higher run; depleted, missing, ambiguous, and private logs are excluded.")
                 .toString();
     }
 
@@ -306,11 +307,11 @@ public class WarcraftLogsStatisticsService {
         StringBuilder message = new StringBuilder("🏆 M+ Awards — timed +")
                 .append(minimumKeystoneLevel).append(" and above — ")
                 .append(properties.seasonKey()).append("\n")
-                .append("Based on logged timed runs; ties are shown.\n\n");
+                .append("Based on one log per Raider.IO-matched timed run; ties are shown.\n\n");
         appendCombatAwards(message, candidates, AwardDirection.MAXIMUM);
         appendCombatAwards(message, candidates, AwardDirection.MINIMUM);
-        return message.append("Timed +").append(minimumKeystoneLevel)
-                .append(" or higher runs only; depleted, missing, and private logs are excluded.")
+        return message.append("Matched timed +").append(minimumKeystoneLevel)
+                .append(" or higher runs only; depleted, missing, ambiguous, and private logs are excluded.")
                 .toString();
     }
 
@@ -1176,7 +1177,9 @@ public class WarcraftLogsStatisticsService {
         JsonNode rankPercent = node.path("rankPercent");
         JsonNode bracketPercent = node.path("bracketPercent");
         if (!rankingBelongsToPlayer(node, actorId, characterName)
-                || !rankPercent.isNumber() || !bracketPercent.isNumber()) {
+                || !rankPercent.isNumber() || !bracketPercent.isNumber()
+                || !isValidPercentile(rankPercent.decimalValue())
+                || !isValidPercentile(bracketPercent.decimalValue())) {
             return RankingPercentiles.unavailable();
         }
         return new RankingPercentiles(rankPercent.decimalValue(), bracketPercent.decimalValue());
@@ -1255,8 +1258,15 @@ public class WarcraftLogsStatisticsService {
 
     private static boolean hasCompleteMetrics(WarcraftLogPlayerRunEntity run) {
         return hasCurrentMetricsVersion(run)
-                && run.getKeyParsePercentage() != null
+                && isValidPercentile(run.getParsePercentage())
+                && isValidPercentile(run.getKeyParsePercentage())
                 && run.getDamagePerSecond() != null;
+    }
+
+    private static boolean isValidPercentile(BigDecimal percentile) {
+        return percentile != null
+                && percentile.signum() > 0
+                && percentile.compareTo(MAX_PERCENTILE) <= 0;
     }
 
     private static boolean hasCompleteCombatMetrics(WarcraftLogPlayerRunEntity run) {

@@ -60,6 +60,30 @@ class WarcraftLogsRankingParserTest {
     }
 
     @Test
+    void treatsZeroPercentilesAsPendingRankings() throws Exception {
+        JsonNode rankings = jsonMapper.readTree("""
+                {
+                  "characters": [
+                    {
+                      "id": 42,
+                      "name": "Bucothered",
+                      "rankPercent": 0,
+                      "bracketPercent": 0
+                    }
+                  ]
+                }
+                """);
+
+        WarcraftLogsStatisticsService.RankingPercentiles result =
+                WarcraftLogsStatisticsService.findRankingPercentiles(
+                        rankings, 42, "Bucothered"
+                );
+
+        assertThat(result.parsePercentage()).isNull();
+        assertThat(result.keyParsePercentage()).isNull();
+    }
+
+    @Test
     void ignoresAnotherPlayersKeyParse() throws Exception {
         JsonNode rankings = jsonMapper.readTree("""
                 {
