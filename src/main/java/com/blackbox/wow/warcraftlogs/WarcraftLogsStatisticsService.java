@@ -194,7 +194,7 @@ public class WarcraftLogsStatisticsService {
     private List<PlayerStatistics> statistics(int minimumKeystoneLevel) {
         String seasonKey = properties.seasonKey();
         List<WarcraftLogPlayerRunEntity> seasonRuns = minimumKeystoneLevel > 0
-                ? runRepository.findCanonicalTimedBySeasonKeyAndMinimumKeystoneLevel(
+                ? runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
                         seasonKey,
                         minimumKeystoneLevel
                 )
@@ -276,16 +276,16 @@ public class WarcraftLogsStatisticsService {
                 return "Active player profile not found: " + requestedProfile;
             }
             String profileSuffix = requestedProfile.isBlank() ? "." : " for " + requestedProfile + ".";
-            return "No uniquely matched logged timed +" + minimumKeystoneLevel
+            return "No logged timed +" + minimumKeystoneLevel
                     + " or higher Warcraft Logs combat runs are available" + profileSuffix;
         }
         StringBuilder message = new StringBuilder("Warcraft Logs M+ combat");
         message.append(" (timed +").append(minimumKeystoneLevel).append(" and above) — ")
                 .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        return message.append("Averages use one log per Raider.IO-matched timed +")
+        return message.append("Averages use logged timed +")
                 .append(minimumKeystoneLevel)
-                .append(" or higher run; depleted, missing, ambiguous, and private logs are excluded.")
+                .append(" or higher runs; depleted, missing, and private logs are excluded.")
                 .toString();
     }
 
@@ -307,11 +307,11 @@ public class WarcraftLogsStatisticsService {
         StringBuilder message = new StringBuilder("🏆 M+ Awards — timed +")
                 .append(minimumKeystoneLevel).append(" and above — ")
                 .append(properties.seasonKey()).append("\n")
-                .append("Based on one log per Raider.IO-matched timed run; ties are shown.\n\n");
+                .append("Based on logged timed runs; ties are shown.\n\n");
         appendCombatAwards(message, candidates, AwardDirection.MAXIMUM);
         appendCombatAwards(message, candidates, AwardDirection.MINIMUM);
-        return message.append("Matched timed +").append(minimumKeystoneLevel)
-                .append(" or higher runs only; depleted, missing, ambiguous, and private logs are excluded.")
+        return message.append("Timed +").append(minimumKeystoneLevel)
+                .append(" or higher runs only; depleted, missing, and private logs are excluded.")
                 .toString();
     }
 
