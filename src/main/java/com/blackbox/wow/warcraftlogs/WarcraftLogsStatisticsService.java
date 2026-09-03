@@ -23,6 +23,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -38,6 +39,8 @@ public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final int MAX_REPORT_PAGES = 100;
+    private static final Duration DUPLICATE_FIGHT_TIME_TOLERANCE = Duration.ofMinutes(3);
+    private static final long DUPLICATE_KEYSTONE_TIME_TOLERANCE_MS = 30_000;
     private static final BigDecimal MAX_PERCENTILE = BigDecimal.valueOf(100);
     private static final BigDecimal COMPACT_THOUSAND_THRESHOLD = BigDecimal.valueOf(10_000);
     private static final BigDecimal COMPACT_MILLION_THRESHOLD = BigDecimal.valueOf(1_000_000);
@@ -47,6 +50,8 @@ public class WarcraftLogsStatisticsService {
     private static final String REFRESH_IN_PROGRESS_MESSAGE =
             "⛏️ Work, work! A peon is refreshing Warcraft Logs data. "
                     + "Please wait and try again shortly.";
+    private static final String DUPLICATE_UPLOAD_EXPLANATION =
+            " Duplicate uploads are identified by Warcraft Logs fight time and duration.";
     private static final String NAME_FIELD = "name";
     private static final String SERVER_FIELD = "server";
     private static final String REGION_FIELD = "region";
@@ -132,6 +137,8 @@ public class WarcraftLogsStatisticsService {
                     id
                     keystoneTime
                     keystoneBonus
+                    startTime
+                    endTime
                   }
                   masterData(translate: false) {
                     actors(type: "Player") {
@@ -213,9 +220,11 @@ public class WarcraftLogsStatisticsService {
                     .stream()
                     .filter(run -> run.getCharacterName().equalsIgnoreCase(player.name()))
                     .toList();
-            List<WarcraftLogPlayerRunEntity> completeRuns = runs.stream()
+            List<WarcraftLogPlayerRunEntity> eligibleRuns = runs.stream()
                     .filter(WarcraftLogsStatisticsService::hasCompleteCombatMetrics)
                     .toList();
+            List<WarcraftLogPlayerRunEntity> completeRuns = distinctDungeonRuns(eligibleRuns);
+            int duplicateUploads = eligibleRuns.size() - completeRuns.size();
             int interrupts = completeRuns.stream().mapToInt(WarcraftLogPlayerRunEntity::getInterrupts).sum();
             int deaths = completeRuns.stream().mapToInt(WarcraftLogPlayerRunEntity::getDeaths).sum();
             List<BigDecimal> keyParses = nonNullMetrics(
@@ -232,6 +241,7 @@ public class WarcraftLogsStatisticsService {
                     player.profileName(),
                     player.name(),
                     completeRuns.size(),
+                    duplicateUploads,
                     keyParses.size(),
                     average(interrupts, completeRuns.size()),
                     average(deaths, completeRuns.size()),
@@ -283,9 +293,10 @@ public class WarcraftLogsStatisticsService {
         message.append(" (timed +").append(minimumKeystoneLevel).append(" and above) — ")
                 .append(properties.seasonKey()).append("\n\n");
         selected.forEach(statistic -> appendCombatStatistic(message, statistic));
-        return message.append("Averages use logged timed +")
+        return message.append("Averages use distinct logged timed +")
                 .append(minimumKeystoneLevel)
                 .append(" or higher runs; depleted, missing, and private logs are excluded.")
+                .append(DUPLICATE_UPLOAD_EXPLANATION)
                 .toString();
     }
 
@@ -307,11 +318,12 @@ public class WarcraftLogsStatisticsService {
         StringBuilder message = new StringBuilder("🏆 M+ Awards — timed +")
                 .append(minimumKeystoneLevel).append(" and above — ")
                 .append(properties.seasonKey()).append("\n")
-                .append("Based on logged timed runs; ties are shown.\n\n");
+                .append("Based on distinct logged timed runs; ties are shown.\n\n");
         appendCombatAwards(message, candidates, AwardDirection.MAXIMUM);
         appendCombatAwards(message, candidates, AwardDirection.MINIMUM);
         return message.append("Timed +").append(minimumKeystoneLevel)
                 .append(" or higher runs only; depleted, missing, and private logs are excluded.")
+                .append(DUPLICATE_UPLOAD_EXPLANATION)
                 .toString();
     }
 
@@ -435,6 +447,7 @@ public class WarcraftLogsStatisticsService {
                 .append(winner.characterName()).append(")\n  ")
                 .append(metricLabel).append(": ").append(formatter.apply(metric));
         message.append("\n  Logged runs: ").append(winner.dungeonRuns()).append('\n');
+        appendDuplicateUploadCount(message, winner);
     }
 
     private static Comparator<PlayerStatistics> combatStatisticComparator() {
@@ -454,10 +467,18 @@ public class WarcraftLogsStatisticsService {
                 .append("  Interrupts per run: ").append(formatMetric(statistic.averageInterrupts())).append('\n')
                 .append("  Deaths per run: ").append(formatMetric(statistic.averageDeaths())).append('\n')
                 .append("  Logged runs: ").append(statistic.dungeonRuns()).append('\n');
+        appendDuplicateUploadCount(message, statistic);
         if (statistic.keyParsedDungeonRuns() != statistic.dungeonRuns()) {
             message.append("  Key-parse runs: ").append(statistic.keyParsedDungeonRuns()).append('\n');
         }
         message.append('\n');
+    }
+
+    private static void appendDuplicateUploadCount(StringBuilder message, PlayerStatistics statistic) {
+        if (statistic.duplicateUploads() > 0) {
+            message.append("  Duplicate uploads excluded: ")
+                    .append(statistic.duplicateUploads()).append('\n');
+        }
     }
 
     private static String formatMetric(BigDecimal value) {
@@ -563,6 +584,7 @@ public class WarcraftLogsStatisticsService {
                 log.warn("Could not load Warcraft Logs report {}: {}", report.code, e.getMessage());
             }
         }
+        savedRuns += backfillStoredFightWindows(storedRuns, players, existingRuns);
         savedRuns += backfillStoredRunMetrics(storedRuns, players, existingRuns);
         log.info(
                 "Warcraft Logs season {} refresh: {} profiles, {} new or revised runs and "
@@ -632,17 +654,72 @@ public class WarcraftLogsStatisticsService {
         return savedRuns;
     }
 
+    private int backfillStoredFightWindows(
+            List<WarcraftLogPlayerRunEntity> storedRuns,
+            List<TrackedPlayer> players,
+            ExistingRunIndex existingRuns
+    ) {
+        Set<Long> activeProfileIds = players.stream()
+                .map(TrackedPlayer::profileId)
+                .collect(Collectors.toSet());
+        Map<String, List<WarcraftLogPlayerRunEntity>> runsByReport = storedRuns.stream()
+                .filter(WarcraftLogsStatisticsService::needsOnlyFightWindowBackfill)
+                .filter(run -> activeProfileIds.contains(run.getProfileId()))
+                .collect(Collectors.groupingBy(
+                        WarcraftLogPlayerRunEntity::getReportCode,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+        int savedRuns = 0;
+        for (Map.Entry<String, List<WarcraftLogPlayerRunEntity>> entry : runsByReport.entrySet()) {
+            try {
+                JsonNode reportData = loadStoredReport(entry.getKey());
+                savedRuns += saveStoredFightWindows(
+                        reportData.path("fights"), entry.getValue(), existingRuns
+                );
+            } catch (RuntimeException exception) {
+                log.warn(
+                        "Could not backfill Warcraft Logs fight times for report {}: {}",
+                        entry.getKey(), exception.getMessage()
+                );
+            }
+        }
+        return savedRuns;
+    }
+
+    private int saveStoredFightWindows(
+            JsonNode fights,
+            List<WarcraftLogPlayerRunEntity> runs,
+            ExistingRunIndex existingRuns
+    ) {
+        int savedRuns = 0;
+        for (WarcraftLogPlayerRunEntity run : runs) {
+            FightWindow fightWindow = fightWindow(
+                    fightById(fights, run.getFightId()), run.getReportStartedAt()
+            );
+            if (fightWindow == null) {
+                continue;
+            }
+            run.recordFightWindow(fightWindow.startedAt(), fightWindow.endedAt());
+            WarcraftLogPlayerRunEntity savedRun = runRepository.save(run);
+            existingRuns.remember(savedRun);
+            savedRuns++;
+        }
+        return savedRuns;
+    }
+
+    private static boolean needsOnlyFightWindowBackfill(WarcraftLogPlayerRunEntity run) {
+        return hasCurrentMetricsVersion(run)
+                && run.getTimed() != null
+                && (run.getFightStartedAt() == null || run.getFightEndedAt() == null);
+    }
+
     private ReportWork storedReportWork(
             String reportCode,
             List<WarcraftLogPlayerRunEntity> storedRuns,
             Map<Long, TrackedPlayer> playersById
     ) {
-        JsonNode reportData = client.query(STORED_REPORT_QUERY, Map.of(REPORT_CODE_FIELD, reportCode))
-                .path(REPORT_DATA_FIELD)
-                .path(REPORT_FIELD);
-        if (reportData.isMissingNode() || reportData.isNull()) {
-            throw new IllegalStateException("stored report is unavailable");
-        }
+        JsonNode reportData = loadStoredReport(reportCode);
         Map<Integer, ReportActor> actors = reportActors(
                 reportData.path(MASTER_DATA_FIELD).path(ACTORS_FIELD)
         );
@@ -657,7 +734,8 @@ public class WarcraftLogsStatisticsService {
             Integer actorId = findActorId(actors, player);
             JsonNode fight = fightById(reportData.path("fights"), run.getFightId());
             long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
-            if (actorId == null || keystoneTimeMs <= 0) {
+            FightWindow fightWindow = fightWindow(fight, run.getReportStartedAt());
+            if (actorId == null || keystoneTimeMs <= 0 || fightWindow == null) {
                 continue;
             }
             report.revision = Math.max(report.revision, run.getReportRevision());
@@ -670,10 +748,22 @@ public class WarcraftLogsStatisticsService {
                     run.getKeystoneLevel(),
                     keystoneTimeMs,
                     fight.path("keystoneBonus").asInt(0) > 0,
+                    fightWindow.startedAt(),
+                    fightWindow.endedAt(),
                     run
             ));
         }
         return report;
+    }
+
+    private JsonNode loadStoredReport(String reportCode) {
+        JsonNode reportData = client.query(STORED_REPORT_QUERY, Map.of(REPORT_CODE_FIELD, reportCode))
+                .path(REPORT_DATA_FIELD)
+                .path(REPORT_FIELD);
+        if (reportData.isMissingNode() || reportData.isNull()) {
+            throw new IllegalStateException("stored report is unavailable");
+        }
+        return reportData;
     }
 
     private static JsonNode fightById(JsonNode fights, int fightId) {
@@ -834,11 +924,13 @@ public class WarcraftLogsStatisticsService {
         int keyLevel = fight.path("keystoneLevel").asInt(0);
         long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
         boolean timed = fight.path("keystoneBonus").asInt(0) > 0;
-        if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())) {
+        FightWindow fightWindow = fightWindow(fight, discoveredReport.startedAt());
+        if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())
+                || fightWindow == null) {
             return;
         }
 
-        correlateFight(fight, player, discoveredReport, fightId, keyLevel);
+        correlateFight(fight, player, discoveredReport, fightId, keyLevel, fightWindow);
 
         WarcraftLogPlayerRunEntity existing = existingRuns.find(player, discoveredReport, fightId);
         if (isCurrentRun(existing, discoveredReport.revision())) {
@@ -866,6 +958,8 @@ public class WarcraftLogsStatisticsService {
                 keyLevel,
                 keystoneTimeMs,
                 timed,
+                fightWindow.startedAt(),
+                fightWindow.endedAt(),
                 existing
         ));
     }
@@ -889,21 +983,16 @@ public class WarcraftLogsStatisticsService {
             TrackedPlayer player,
             DiscoveredReport report,
             int fightId,
-            int keyLevel
+            int keyLevel,
+            FightWindow fightWindow
     ) {
-        long startOffset = fight.path("startTime").asLong(-1);
-        long endOffset = fight.path("endTime").asLong(-1);
-        if (startOffset < 0 || endOffset <= startOffset) {
-            return;
-        }
         Set<PlayerIdentity> roster = friendlyRoster(
                 fight.path("friendlyPlayers"), report.actors(), player.region()
         );
         correlationService.correlate(new LogFight(
                 properties.seasonKey(), report.code(), report.revision(), fightId,
                 fight.path(NAME_FIELD).asText(""), keyLevel,
-                report.startedAt().plusMillis(startOffset), report.startedAt().plusMillis(endOffset),
-                endOffset - startOffset, roster
+                fightWindow.startedAt(), fightWindow.endedAt(), fightWindow.durationMs(), roster
         ));
     }
 
@@ -975,6 +1064,7 @@ public class WarcraftLogsStatisticsService {
             }
             entity.recordAvoidableDamage(avoidableDamage);
             entity.recordCompletion(participant.keystoneTimeMs, participant.timed);
+            entity.recordFightWindow(participant.fightStartedAt, participant.fightEndedAt);
             entity = runRepository.save(entity);
             existingRuns.remember(entity);
             saved++;
@@ -1026,6 +1116,19 @@ public class WarcraftLogsStatisticsService {
         return milliseconds <= 0 ? null : Instant.ofEpochMilli(milliseconds);
     }
 
+    private static FightWindow fightWindow(JsonNode fight, Instant reportStartedAt) {
+        long startOffset = fight.path("startTime").asLong(-1);
+        long endOffset = fight.path("endTime").asLong(-1);
+        if (reportStartedAt == null || startOffset < 0 || endOffset <= startOffset) {
+            return null;
+        }
+        return new FightWindow(
+                reportStartedAt.plusMillis(startOffset),
+                reportStartedAt.plusMillis(endOffset),
+                endOffset - startOffset
+        );
+    }
+
     private static Integer findActorId(Map<Integer, ReportActor> actors, TrackedPlayer player) {
         String expectedServer = normalizeServer(player.realm());
         for (ReportActor actor : actors.values()) {
@@ -1066,7 +1169,11 @@ public class WarcraftLogsStatisticsService {
     }
 
     private static String normalizeServer(String server) {
-        return server == null ? "" : server.replaceAll("[^\\p{L}\\p{N}]", "").toLowerCase(Locale.ROOT);
+        return normalizeIdentifier(server);
+    }
+
+    private static String normalizeIdentifier(String value) {
+        return value == null ? "" : value.replaceAll("[^\\p{L}\\p{N}]", "").toLowerCase(Locale.ROOT);
     }
 
     private static boolean containsInt(JsonNode array, int expected) {
@@ -1252,6 +1359,79 @@ public class WarcraftLogsStatisticsService {
         return runs.stream().map(metric).filter(Objects::nonNull).toList();
     }
 
+    static List<WarcraftLogPlayerRunEntity> distinctDungeonRuns(
+            List<WarcraftLogPlayerRunEntity> uploadedRuns
+    ) {
+        List<WarcraftLogPlayerRunEntity> orderedRuns = uploadedRuns.stream()
+                .sorted(Comparator
+                        .comparing(
+                                WarcraftLogPlayerRunEntity::getFightEndedAt,
+                                Comparator.nullsLast(Comparator.naturalOrder())
+                        )
+                        .thenComparing(WarcraftLogPlayerRunEntity::getReportStartedAt)
+                        .thenComparing(WarcraftLogPlayerRunEntity::getReportCode)
+                        .thenComparingInt(WarcraftLogPlayerRunEntity::getFightId))
+                .toList();
+        List<WarcraftLogPlayerRunEntity> distinctRuns = new ArrayList<>();
+        for (WarcraftLogPlayerRunEntity candidate : orderedRuns) {
+            int duplicateIndex = findDuplicateRunIndex(distinctRuns, candidate);
+            if (duplicateIndex < 0) {
+                distinctRuns.add(candidate);
+            } else if (isPreferredUpload(candidate, distinctRuns.get(duplicateIndex))) {
+                distinctRuns.set(duplicateIndex, candidate);
+            }
+        }
+        return List.copyOf(distinctRuns);
+    }
+
+    private static int findDuplicateRunIndex(
+            List<WarcraftLogPlayerRunEntity> distinctRuns,
+            WarcraftLogPlayerRunEntity candidate
+    ) {
+        for (int index = 0; index < distinctRuns.size(); index++) {
+            if (isDuplicateRun(distinctRuns.get(index), candidate)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isDuplicateRun(
+            WarcraftLogPlayerRunEntity first,
+            WarcraftLogPlayerRunEntity second
+    ) {
+        if (first.getFightEndedAt() == null || second.getFightEndedAt() == null
+                || first.getKeystoneTimeMs() == null || second.getKeystoneTimeMs() == null) {
+            return false;
+        }
+        return first.getProfileId().equals(second.getProfileId())
+                && first.getCharacterName().equalsIgnoreCase(second.getCharacterName())
+                && first.getKeystoneLevel() == second.getKeystoneLevel()
+                && normalizeIdentifier(first.getDungeonName())
+                        .equals(normalizeIdentifier(second.getDungeonName()))
+                && Duration.between(first.getFightEndedAt(), second.getFightEndedAt()).abs()
+                        .compareTo(DUPLICATE_FIGHT_TIME_TOLERANCE) <= 0
+                && Math.abs(first.getKeystoneTimeMs() - second.getKeystoneTimeMs())
+                        <= DUPLICATE_KEYSTONE_TIME_TOLERANCE_MS;
+    }
+
+    private static boolean isPreferredUpload(
+            WarcraftLogPlayerRunEntity candidate,
+            WarcraftLogPlayerRunEntity existing
+    ) {
+        int qualityComparison = Integer.compare(metricQuality(candidate), metricQuality(existing));
+        if (qualityComparison != 0) {
+            return qualityComparison > 0;
+        }
+        return candidate.getReportRevision() > existing.getReportRevision();
+    }
+
+    private static int metricQuality(WarcraftLogPlayerRunEntity run) {
+        int quality = isValidPercentile(run.getKeyParsePercentage()) ? 4 : 0;
+        quality += isValidPercentile(run.getParsePercentage()) ? 2 : 0;
+        return run.getDamagePerSecond() == null ? quality : quality + 1;
+    }
+
     private static boolean hasCurrentMetricsVersion(WarcraftLogPlayerRunEntity run) {
         return run.getMetricsVersion() >= WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION;
     }
@@ -1280,6 +1460,7 @@ public class WarcraftLogsStatisticsService {
             String profileName,
             String characterName,
             int dungeonRuns,
+            int duplicateUploads,
             int keyParsedDungeonRuns,
             BigDecimal averageInterrupts,
             BigDecimal averageDeaths,
@@ -1419,6 +1600,9 @@ public class WarcraftLogsStatisticsService {
     ) {
     }
 
+    private record FightWindow(Instant startedAt, Instant endedAt, long durationMs) {
+    }
+
     private record Participant(
             TrackedPlayer player,
             int fightId,
@@ -1427,6 +1611,8 @@ public class WarcraftLogsStatisticsService {
             int keystoneLevel,
             long keystoneTimeMs,
             boolean timed,
+            Instant fightStartedAt,
+            Instant fightEndedAt,
             WarcraftLogPlayerRunEntity existing
     ) {
     }

@@ -18,6 +18,9 @@ class WarcraftLogPlayerRunEntityTest {
         );
         run.recordAvoidableDamage(new BigDecimal("456789.5"));
         run.recordCompletion(1_800_000, true);
+        Instant fightStartedAt = Instant.parse("2026-08-19T10:05:00Z");
+        Instant fightEndedAt = Instant.parse("2026-08-19T10:35:00Z");
+        run.recordFightWindow(fightStartedAt, fightEndedAt);
 
         assertThat(run.getMetricsVersion())
                 .isEqualTo(WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION);
@@ -29,5 +32,7 @@ class WarcraftLogPlayerRunEntityTest {
         assertThat(run.getAvoidableDamage()).isEqualByComparingTo("456789.5");
         assertThat(run.getKeystoneTimeMs()).isEqualTo(1_800_000);
         assertThat(run.getTimed()).isTrue();
+        assertThat(run.getFightStartedAt()).isEqualTo(fightStartedAt);
+        assertThat(run.getFightEndedAt()).isEqualTo(fightEndedAt);
     }
 }

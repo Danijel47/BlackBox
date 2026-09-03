@@ -41,6 +41,12 @@ public class WarcraftLogPlayerRunEntity {
     @Column(name = "fight_id", nullable = false)
     private int fightId;
 
+    @Column(name = "fight_started_at")
+    private Instant fightStartedAt;
+
+    @Column(name = "fight_ended_at")
+    private Instant fightEndedAt;
+
     @Column(name = "dungeon_name", nullable = false, length = 128)
     private String dungeonName;
 
@@ -143,6 +149,14 @@ public class WarcraftLogPlayerRunEntity {
         this.timed = completedInTime;
     }
 
+    public void recordFightWindow(Instant startedAt, Instant endedAt) {
+        if (startedAt == null || endedAt == null || !endedAt.isAfter(startedAt)) {
+            throw new IllegalArgumentException("Fight end time must be after its start time.");
+        }
+        this.fightStartedAt = startedAt;
+        this.fightEndedAt = endedAt;
+    }
+
     public void recordAvoidableDamage(BigDecimal damage) {
         if (damage != null && damage.signum() < 0) {
             throw new IllegalArgumentException("Avoidable damage cannot be negative.");
@@ -156,6 +170,8 @@ public class WarcraftLogPlayerRunEntity {
     public int getReportRevision() { return reportRevision; }
     public Instant getReportStartedAt() { return reportStartedAt; }
     public int getFightId() { return fightId; }
+    public Instant getFightStartedAt() { return fightStartedAt; }
+    public Instant getFightEndedAt() { return fightEndedAt; }
     public String getDungeonName() { return dungeonName; }
     public int getKeystoneLevel() { return keystoneLevel; }
     public Long getKeystoneTimeMs() { return keystoneTimeMs; }

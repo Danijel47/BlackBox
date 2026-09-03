@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class WarcraftLogsStatisticsServiceTest {
@@ -122,7 +123,8 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("Warcraft Logs M+ combat (timed +12 and above) — midnight-season-2")
                 .contains("Key parse: 80%", "DPS: 200k")
                 .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
-                .contains("Averages use logged timed +12 or higher runs")
+                .contains("Averages use distinct logged timed +12 or higher runs")
+                .contains("Duplicate uploads are identified by Warcraft Logs fight time and duration")
                 .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Avoidable damage", "Key parse: 40%", "Interrupts per run: 20");
         verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
@@ -152,6 +154,47 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("Interrupts per run: 3", "Deaths per run: 1")
                 .contains("Logged runs: 2", "Key-parse runs: 1")
                 .doesNotContain("Key parse: 40%");
+    }
+
+    @Test
+    void excludesDuplicateUploadsUsingTheAbsoluteFightWindow() {
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        WarcraftLogPlayerRunEntity original = runAtLevel(
+                14, 1L, "Linqq", "original", 4, 0, "80", "200000", null
+        );
+        original.recordFightWindow(
+                Instant.parse("2026-08-31T10:05:00Z"), Instant.parse("2026-08-31T10:35:00Z")
+        );
+        WarcraftLogPlayerRunEntity duplicate = runAtLevel(
+                14, 1L, "Linqq", "duplicate", 30, 10, "80", "200000", null
+        );
+        duplicate.recordFightWindow(
+                Instant.parse("2026-08-31T10:06:00Z"), Instant.parse("2026-08-31T10:36:00Z")
+        );
+        WarcraftLogPlayerRunEntity separateRun = runAtLevel(
+                14, 1L, "Linqq", "separate", 8, 2, "90", "300000", null
+        );
+        separateRun.recordFightWindow(
+                Instant.parse("2026-08-31T10:30:00Z"), Instant.parse("2026-08-31T11:00:00Z")
+        );
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+                .thenReturn(List.of(original, duplicate, separateRun));
+        when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Linqq")
+        ));
+
+        String message = service(trackedPlayerService, runRepository, snapshotRepository)
+                .combatMessage("Linq");
+
+        assertThat(message)
+                .contains("Key parse: 85%", "DPS: 250k")
+                .contains("Interrupts per run: 6", "Deaths per run: 1")
+                .contains("Logged runs: 2", "Duplicate uploads excluded: 1")
+                .doesNotContain("Interrupts per run: 14");
     }
 
     @Test
@@ -186,6 +229,7 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("💿 My Kick Was on Cooldown — Fewest interrupts per run", "Interrupts/run: 2")
                 .contains("🎮 Are You Pressing Buttons? — Lowest average key parse", "Key parse: 70%")
                 .contains("Timed +12 or higher runs only")
+                .contains("Duplicate uploads are identified by Warcraft Logs fight time and duration")
                 .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Avoidable damage", "Stand in Fire", "Fire Bad", "formula:", "N=");
         verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
@@ -508,7 +552,8 @@ class WarcraftLogsStatisticsServiceTest {
                 """);
         JsonNode storedReport = mapper.readTree("""
                 {"reportData":{"report":{"revision":1,
-                  "fights":[{"id":7,"keystoneTime":1800000,"keystoneBonus":1}],
+                  "fights":[{"id":7,"keystoneTime":1800000,"keystoneBonus":1,
+                    "startTime":300000,"endTime":2100000}],
                   "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}
                 }}}
                 """);
@@ -549,6 +594,58 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(storedRun.getMetricsVersion())
                 .isEqualTo(WarcraftLogPlayerRunEntity.CURRENT_METRICS_VERSION);
         assertThat(storedRun.getTimed()).isTrue();
+        assertThat(storedRun.getFightStartedAt()).isEqualTo("2026-08-19T10:05:00Z");
+        assertThat(storedRun.getFightEndedAt()).isEqualTo("2026-08-19T10:35:00Z");
+    }
+
+    @Test
+    void backfillsHistoricalFightTimesWithoutReloadingCombatEvents() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        WarcraftLogsEventPager eventPager = mock(WarcraftLogsEventPager.class);
+        WarcraftLogPlayerRunEntity storedRun = runAtLevel(
+                14, 1L, "Linqq", "historical", 9, 1, "90", "250000", null
+        );
+        JsonNode reports = mapper.readTree("""
+                {"characterData":{"character":{"recentReports":{"data":[]}}}}
+                """);
+        JsonNode storedReport = mapper.readTree("""
+                {"reportData":{"report":{"revision":1,
+                  "fights":[{"id":7,"keystoneTime":1800000,"keystoneBonus":1,
+                    "startTime":300000,"endTime":2100000}]
+                }}}
+                """);
+        when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
+        when(client.query(anyString(), anyMap())).thenReturn(reports, storedReport);
+        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(storedRun));
+        when(runRepository.save(any(WarcraftLogPlayerRunEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(snapshotRepository.findBySeasonKeyAndProfileId("midnight-season-2", 1))
+                .thenReturn(Optional.empty());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Linqq")
+        ));
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                runRepository,
+                snapshotRepository,
+                mock(MPlusRunCorrelationService.class),
+                eventPager,
+                mock(WarcraftLogItemLevelRepository.class)
+        );
+
+        service.refresh();
+
+        assertThat(storedRun.getFightStartedAt()).isEqualTo("2026-08-19T10:05:00Z");
+        assertThat(storedRun.getFightEndedAt()).isEqualTo("2026-08-19T10:35:00Z");
+        verify(runRepository).save(storedRun);
+        verifyNoInteractions(eventPager);
     }
 
     @Test
