@@ -29,6 +29,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -173,6 +174,7 @@ public class WarcraftLogsStatisticsService {
     private final WarcraftLogsEventPager eventPager;
     private final WarcraftLogItemLevelRepository itemLevelRepository;
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
+    private final AtomicReference<Instant> lastRefreshCompletedAt = new AtomicReference<>();
 
     public WarcraftLogsStatisticsService(
             WarcraftLogsClient client,
@@ -263,8 +265,17 @@ public class WarcraftLogsStatisticsService {
     }
 
     public String refreshAndBuildCombatMessage(String profileArgument) {
-        refresh();
+        refreshOnDemand();
         return combatMessage(profileArgument);
+    }
+
+    private void refreshOnDemand() {
+        Instant lastCompletedAt = lastRefreshCompletedAt.get();
+        if (lastCompletedAt == null
+                || Duration.between(lastCompletedAt, Instant.now())
+                .compareTo(properties.onDemandRefreshCooldown()) >= 0) {
+            refresh();
+        }
     }
 
     public String combatMessage(String profileArgument) {
@@ -550,8 +561,9 @@ public class WarcraftLogsStatisticsService {
             }
             collectIncrementalRuns();
         } catch (Exception e) {
-            log.warn("Warcraft Logs hourly refresh failed: {}", e.getMessage());
+            log.warn("Warcraft Logs refresh failed: {}", e.getMessage());
         } finally {
+            lastRefreshCompletedAt.set(Instant.now());
             refreshRunning.set(false);
         }
     }
@@ -640,6 +652,7 @@ public class WarcraftLogsStatisticsService {
         Map<Long, TrackedPlayer> playersById = players.stream()
                 .collect(Collectors.toMap(TrackedPlayer::profileId, Function.identity()));
         Map<String, List<WarcraftLogPlayerRunEntity>> staleRunsByReport = storedRuns.stream()
+                .filter(run -> run.getKeystoneLevel() >= properties.combatMinimumKeystoneLevel())
                 .filter(run -> !hasCurrentMetricsVersion(run) || run.getTimed() == null)
                 .filter(run -> playersById.containsKey(run.getProfileId()))
                 .collect(Collectors.groupingBy(
@@ -668,6 +681,7 @@ public class WarcraftLogsStatisticsService {
                 .map(TrackedPlayer::profileId)
                 .collect(Collectors.toSet());
         Map<String, List<WarcraftLogPlayerRunEntity>> runsByReport = storedRuns.stream()
+                .filter(run -> run.getKeystoneLevel() >= properties.combatMinimumKeystoneLevel())
                 .filter(WarcraftLogsStatisticsService::needsOnlyFightWindowBackfill)
                 .filter(run -> activeProfileIds.contains(run.getProfileId()))
                 .collect(Collectors.groupingBy(
@@ -930,7 +944,13 @@ public class WarcraftLogsStatisticsService {
         long keystoneTimeMs = fight.path("keystoneTime").asLong(0);
         boolean timed = fight.path("keystoneBonus").asInt(0) > 0;
         FightWindow fightWindow = fightWindow(fight, discoveredReport.startedAt());
-        if (!isEligibleFight(fight, fightId, keyLevel, discoveredReport.actorId())
+        if (!isEligibleFight(
+                fight,
+                fightId,
+                keyLevel,
+                discoveredReport.actorId(),
+                properties.combatMinimumKeystoneLevel()
+        )
                 || fightWindow == null) {
             return;
         }
@@ -969,9 +989,15 @@ public class WarcraftLogsStatisticsService {
         ));
     }
 
-    static boolean isEligibleFight(JsonNode fight, int fightId, int keyLevel, int actorId) {
+    static boolean isEligibleFight(
+            JsonNode fight,
+            int fightId,
+            int keyLevel,
+            int actorId,
+            int minimumKeystoneLevel
+    ) {
         return fightId > 0
-                && keyLevel > 0
+                && keyLevel >= minimumKeystoneLevel
                 && fight.path("keystoneTime").asLong(0) > 0
                 && containsInt(fight.path("friendlyPlayers"), actorId);
     }

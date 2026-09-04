@@ -2,6 +2,7 @@ package com.blackbox.wow.warcraftlogs;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
 import java.time.Instant;
 
 @ConfigurationProperties(prefix = "warcraft-logs")
@@ -15,11 +16,15 @@ public record WarcraftLogsProperties(
         String seasonKey,
         Instant seasonStart,
         int rateLimitMaxPercent,
-        int combatMinimumKeystoneLevel
+        int combatMinimumKeystoneLevel,
+        Duration onDemandRefreshCooldown
 ) {
     public WarcraftLogsProperties {
         if (combatMinimumKeystoneLevel <= 0) {
             throw new IllegalArgumentException("combatMinimumKeystoneLevel must be positive");
+        }
+        if (onDemandRefreshCooldown == null || onDemandRefreshCooldown.isNegative()) {
+            throw new IllegalArgumentException("onDemandRefreshCooldown must not be negative");
         }
     }
 }

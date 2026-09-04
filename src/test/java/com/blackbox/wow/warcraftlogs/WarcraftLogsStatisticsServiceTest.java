@@ -14,6 +14,7 @@ import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -34,10 +35,11 @@ import static org.mockito.Mockito.when;
 
 class WarcraftLogsStatisticsServiceTest {
 
+    private static final int MINIMUM_KEYSTONE_LEVEL = 13;
     private static final String RUBY_LIFE_POOLS = "Ruby Life Pools";
 
     @Test
-    void refreshesWarcraftLogsBeforeBuildingAnOnDemandCombatMessage() {
+    void refreshesWarcraftLogsOnceWithinTheOnDemandCooldown() {
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
         WarcraftLogProfileSnapshotRepository snapshotRepository =
@@ -45,7 +47,9 @@ class WarcraftLogsStatisticsServiceTest {
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of());
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of());
@@ -61,13 +65,19 @@ class WarcraftLogsStatisticsServiceTest {
         );
 
         assertThat(service.refreshAndBuildCombatMessage(""))
-                .isEqualTo("No logged timed +12 or higher Warcraft Logs combat runs are available.");
+                .isEqualTo("No logged timed +13 or higher Warcraft Logs combat runs are available.");
+        assertThat(service.refreshAndBuildCombatMessage(""))
+                .isEqualTo("No logged timed +13 or higher Warcraft Logs combat runs are available.");
 
         InOrder refreshBeforeRead = inOrder(client, runRepository);
         refreshBeforeRead.verify(client).rateLimit();
         refreshBeforeRead.verify(runRepository).findBySeasonKey("midnight-season-2");
-        refreshBeforeRead.verify(runRepository)
-                .findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
+        refreshBeforeRead.verify(runRepository, times(2))
+                .findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                        "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+                );
+        verify(client, times(1)).rateLimit();
+        verify(runRepository, times(1)).findBySeasonKey("midnight-season-2");
     }
 
     @Test
@@ -85,7 +95,9 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogPlayerRunEntity partialFight = run(
                 "Thelinq", "partial-fight", 20, 3, null, "250000.0"
         );
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(previousMainRun, selectedMainRun, partialFight));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -121,7 +133,9 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogPlayerRunEntity higherParse = run(
                 2L, "BravoMain", "bravo-report", 3, 0, "88", "150000"
         );
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(lowerParse, higherParse));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -143,9 +157,14 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogProfileSnapshotRepository snapshotRepository =
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(
-                        runAtLevel(12, 1L, "Thelinq", "level-twelve", 4, 0, "80", "200000", "4000")
+                        runAtLevel(
+                                MINIMUM_KEYSTONE_LEVEL, 1L, "Thelinq", "level-thirteen",
+                                4, 0, "80", "200000", "4000"
+                        )
                 ));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -156,14 +175,16 @@ class WarcraftLogsStatisticsServiceTest {
                 .combatMessage("Linq");
 
         assertThat(message)
-                .contains("Warcraft Logs M+ combat (timed +12 and above) — midnight-season-2")
+                .contains("Warcraft Logs M+ combat (timed +13 and above) — midnight-season-2")
                 .contains("Key parse: 80%", "DPS: 200k")
                 .contains("Interrupts per run: 4", "Deaths per run: 0", "Logged runs: 1")
-                .contains("Averages use distinct logged timed +12 or higher runs")
+                .contains("Averages use distinct logged timed +13 or higher runs")
                 .contains("Duplicate uploads are identified by Warcraft Logs fight time and duration")
                 .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Avoidable damage", "Key parse: 40%", "Interrupts per run: 20");
-        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
+        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        );
     }
 
     @Test
@@ -172,7 +193,9 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogProfileSnapshotRepository snapshotRepository =
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(
                         runAtLevel(14, 1L, "Bucothered", "ranked", 4, 0, "80", "200000", null),
                         runAtLevel(14, 1L, "Bucothered", "pending", 2, 2, "0", "180000", null)
@@ -216,7 +239,9 @@ class WarcraftLogsStatisticsServiceTest {
         separateRun.recordFightWindow(
                 Instant.parse("2026-08-31T10:30:00Z"), Instant.parse("2026-08-31T11:00:00Z")
         );
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(original, duplicate, separateRun));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -239,7 +264,9 @@ class WarcraftLogsStatisticsServiceTest {
         WarcraftLogProfileSnapshotRepository snapshotRepository =
                 mock(WarcraftLogProfileSnapshotRepository.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(
                 run(1L, "BucoMain", "buco", 2, 4, "70", "100000", "2800000"),
                 run(2L, "LinqMain", "linq", 12, 1, "80", "120000", "300000"),
@@ -255,7 +282,7 @@ class WarcraftLogsStatisticsServiceTest {
         String message = service(trackedPlayerService, runRepository, snapshotRepository).awardsMessage();
 
         assertThat(message)
-                .contains("🏆 M+ Awards — timed +12 and above — midnight-season-2")
+                .contains("🏆 M+ Awards — timed +13 and above — midnight-season-2")
                 .contains("⬆️ Maximum awards")
                 .contains("💀 Floor POV — Most deaths per run", "• Buco (BucoMain)", "Deaths/run: 4")
                 .contains("🛑 CC Machine — Most interrupts per run", "• Linq (LinqMain)", "Interrupts/run: 12")
@@ -264,11 +291,13 @@ class WarcraftLogsStatisticsServiceTest {
                 .contains("🪽 Not Today, Spirit Healer — Fewest deaths per run", "Deaths/run: 0")
                 .contains("💿 My Kick Was on Cooldown — Fewest interrupts per run", "Interrupts/run: 2")
                 .contains("🎮 Are You Pressing Buttons? — Lowest average key parse", "Key parse: 70%")
-                .contains("Timed +12 or higher runs only")
+                .contains("Timed +13 or higher runs only")
                 .contains("Duplicate uploads are identified by Warcraft Logs fight time and duration")
                 .contains("depleted, missing, and private logs are excluded")
                 .doesNotContain("Avoidable damage", "Stand in Fire", "Fire Bad", "formula:", "N=");
-        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
+        verify(runRepository).findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        );
     }
 
     @Test
@@ -432,8 +461,71 @@ class WarcraftLogsStatisticsServiceTest {
                 {"keystoneTime": null, "friendlyPlayers": [42]}
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.isEligibleFight(completed, 3, 9, 42)).isTrue();
-        assertThat(WarcraftLogsStatisticsService.isEligibleFight(partial, 1, 9, 42)).isFalse();
+        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+                completed, 3, MINIMUM_KEYSTONE_LEVEL, 42, MINIMUM_KEYSTONE_LEVEL
+        )).isTrue();
+        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+                completed, 3, MINIMUM_KEYSTONE_LEVEL - 1, 42, MINIMUM_KEYSTONE_LEVEL
+        )).isFalse();
+        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+                partial, 1, MINIMUM_KEYSTONE_LEVEL, 42, MINIMUM_KEYSTONE_LEVEL
+        )).isFalse();
+    }
+
+    @Test
+    void skipsCombatCollectionAndBackfillsBelowTheConfiguredKeyLevel() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        WarcraftLogsEventPager eventPager = mock(WarcraftLogsEventPager.class);
+        WarcraftLogPlayerRunEntity storedRun = runAtLevel(
+                MINIMUM_KEYSTONE_LEVEL - 1,
+                1L,
+                "Thelinq",
+                "below-minimum",
+                0,
+                0,
+                "80",
+                "150000",
+                null
+        );
+        ReflectionTestUtils.setField(storedRun, "timed", null);
+        JsonNode reports = mapper.readTree("""
+                {"characterData":{"character":{"recentReports":{"data":[
+                  {"code":"below-minimum","revision":1,"startTime":1000,"endTime":5000,
+                   "fights":[{"id":7,"name":"Ruby Life Pools","keystoneLevel":%d,
+                     "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
+                     "friendlyPlayers":[42]}],
+                   "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
+                ]}}}}
+                """.formatted(MINIMUM_KEYSTONE_LEVEL - 1));
+        when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
+        when(client.query(anyString(), anyMap())).thenReturn(reports);
+        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(storedRun));
+        when(snapshotRepository.findBySeasonKeyAndProfileId("midnight-season-2", 1))
+                .thenReturn(Optional.empty());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")
+        ));
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                runRepository,
+                snapshotRepository,
+                mock(MPlusRunCorrelationService.class),
+                eventPager,
+                mock(WarcraftLogItemLevelRepository.class)
+        );
+
+        service.refresh();
+
+        verify(client, times(1)).query(anyString(), anyMap());
+        verify(runRepository, times(0)).save(any(WarcraftLogPlayerRunEntity.class));
+        verifyNoInteractions(eventPager);
     }
 
     @Test
@@ -459,12 +551,12 @@ class WarcraftLogsStatisticsServiceTest {
         JsonNode reports = mapper.readTree("""
                 {"characterData":{"character":{"recentReports":{"data":[
                   {"code":"first","revision":1,"startTime":1000,"endTime":5000,
-                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
+                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":13,
                      "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}},
                   {"code":"duplicate","revision":1,"startTime":1000,"endTime":5000,
-                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":9,
+                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":13,
                      "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
@@ -697,7 +789,9 @@ class WarcraftLogsStatisticsServiceTest {
         );
         ReflectionTestUtils.setField(incompleteRun, "metricsVersion", 4);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(incompleteRun));
-        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel(
+                "midnight-season-2", MINIMUM_KEYSTONE_LEVEL
+        ))
                 .thenReturn(List.of(incompleteRun));
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
@@ -716,7 +810,7 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(statistics.averageKeyParsePercentage()).isNull();
         assertThat(statistics.averageDamagePerSecond()).isNull();
         assertThat(service.combatMessage(""))
-                .isEqualTo("No logged timed +12 or higher Warcraft Logs combat runs are available.")
+                .isEqualTo("No logged timed +13 or higher Warcraft Logs combat runs are available.")
                 .doesNotContain("Key parse: unavailable");
     }
 
@@ -771,7 +865,7 @@ class WarcraftLogsStatisticsServiceTest {
             String avoidableDamage
     ) {
         return runAtLevel(
-                10, profileId, characterName, reportCode, interrupts, deaths,
+                MINIMUM_KEYSTONE_LEVEL, profileId, characterName, reportCode, interrupts, deaths,
                 keyParse, damagePerSecond, avoidableDamage
         );
     }
@@ -829,7 +923,9 @@ class WarcraftLogsStatisticsServiceTest {
 
     private static WarcraftLogsProperties properties() {
         return new WarcraftLogsProperties(
-                "", "", "", "", 10, true, "midnight-season-2", Instant.EPOCH, 80, 12
+                "", "", "", "", 10, true, "midnight-season-2", Instant.EPOCH, 80,
+                MINIMUM_KEYSTONE_LEVEL,
+                Duration.ofMinutes(5)
         );
     }
 }
