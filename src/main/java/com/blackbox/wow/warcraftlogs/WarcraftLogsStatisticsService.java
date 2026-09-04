@@ -14,8 +14,6 @@ import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +38,7 @@ public class WarcraftLogsStatisticsService {
 
     private static final int RAID_PARSE_DECIMAL_PLACES = 2;
     private static final int MAX_REPORT_PAGES = 100;
+    private static final Duration DEFAULT_RATE_LIMIT_BACKOFF = Duration.ofHours(1);
     private static final Duration DUPLICATE_FIGHT_TIME_TOLERANCE = Duration.ofMinutes(3);
     private static final long DUPLICATE_KEYSTONE_TIME_TOLERANCE_MS = 30_000;
     private static final BigDecimal MAX_PERCENTILE = BigDecimal.valueOf(100);
@@ -174,7 +173,7 @@ public class WarcraftLogsStatisticsService {
     private final WarcraftLogsEventPager eventPager;
     private final WarcraftLogItemLevelRepository itemLevelRepository;
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
-    private final AtomicReference<Instant> lastRefreshCompletedAt = new AtomicReference<>();
+    private final AtomicReference<Instant> rateLimitBlockedUntil = new AtomicReference<>();
 
     public WarcraftLogsStatisticsService(
             WarcraftLogsClient client,
@@ -262,20 +261,6 @@ public class WarcraftLogsStatisticsService {
 
     public Instant seasonStart() {
         return properties.seasonStart();
-    }
-
-    public String refreshAndBuildCombatMessage(String profileArgument) {
-        refreshOnDemand();
-        return combatMessage(profileArgument);
-    }
-
-    private void refreshOnDemand() {
-        Instant lastCompletedAt = lastRefreshCompletedAt.get();
-        if (lastCompletedAt == null
-                || Duration.between(lastCompletedAt, Instant.now())
-                .compareTo(properties.onDemandRefreshCooldown()) >= 0) {
-            refresh();
-        }
     }
 
     public String combatMessage(String profileArgument) {
@@ -527,13 +512,8 @@ public class WarcraftLogsStatisticsService {
         return formatter.format(value);
     }
 
-    @EventListener(ApplicationReadyEvent.class)
-    public void refreshAfterStartup() {
-        refresh();
-    }
-
     @Scheduled(
-            cron = "${warcraft-logs.refresh-cron:0 5 * * * *}",
+            cron = "${warcraft-logs.refresh-cron:0 0,30 * * * *}",
             zone = "${warcraft-logs.refresh-zone:Europe/Zagreb}"
     )
     public void refreshScheduled() {
@@ -541,7 +521,13 @@ public class WarcraftLogsStatisticsService {
     }
 
     public void refresh() {
-        if (!properties.collectionEnabled() || Instant.now().isBefore(properties.seasonStart())) {
+        Instant refreshStartedAt = Instant.now();
+        if (!properties.collectionEnabled() || refreshStartedAt.isBefore(properties.seasonStart())) {
+            return;
+        }
+        Instant blockedUntil = rateLimitBlockedUntil.get();
+        if (blockedUntil != null && refreshStartedAt.isBefore(blockedUntil)) {
+            log.info("Warcraft Logs refresh deferred until {} after rate limiting.", blockedUntil);
             return;
         }
         if (!refreshRunning.compareAndSet(false, true)) {
@@ -552,20 +538,34 @@ public class WarcraftLogsStatisticsService {
         try {
             WarcraftLogsClient.RateLimit rateLimit = client.rateLimit();
             if (rateLimit.usedPercentage() >= Math.clamp(properties.rateLimitMaxPercent(), 1, 100)) {
+                Instant retryAt = blockRefreshes(rateLimitResetDelay(rateLimit.pointsResetIn()));
                 log.warn(
-                        "Warcraft Logs refresh skipped at {}% rate-limit usage; reset in {} seconds.",
+                        "Warcraft Logs refresh skipped at {}% rate-limit usage; retry after {}.",
                         BigDecimal.valueOf(rateLimit.usedPercentage()).setScale(1, RoundingMode.HALF_UP),
-                        rateLimit.pointsResetIn()
+                        retryAt
                 );
                 return;
             }
+            rateLimitBlockedUntil.set(null);
             collectIncrementalRuns();
+        } catch (WarcraftLogsClient.RateLimitExceededException rateLimited) {
+            Instant retryAt = blockRefreshes(rateLimited.retryAfter());
+            log.warn("Warcraft Logs refresh paused until {} after a 429 response.", retryAt);
         } catch (Exception e) {
             log.warn("Warcraft Logs refresh failed: {}", e.getMessage());
         } finally {
-            lastRefreshCompletedAt.set(Instant.now());
             refreshRunning.set(false);
         }
+    }
+
+    private Instant blockRefreshes(Duration delay) {
+        Instant blockedUntil = Instant.now().plus(delay);
+        rateLimitBlockedUntil.set(blockedUntil);
+        return blockedUntil;
+    }
+
+    private static Duration rateLimitResetDelay(int pointsResetIn) {
+        return pointsResetIn > 0 ? Duration.ofSeconds(pointsResetIn) : DEFAULT_RATE_LIMIT_BACKOFF;
     }
 
     private void collectIncrementalRuns() {
@@ -584,6 +584,7 @@ public class WarcraftLogsStatisticsService {
                 );
                 saveSnapshot(player, null, null);
             } catch (Exception e) {
+                rethrowIfRateLimited(e);
                 saveSnapshot(player, null, e.getMessage());
                 log.warn("Could not discover Warcraft Logs reports for {}: {}", player.profileName(), e.getMessage());
             }
@@ -596,6 +597,7 @@ public class WarcraftLogsStatisticsService {
             try {
                 savedRuns += loadAndSaveReportEvents(report, existingRuns);
             } catch (Exception e) {
+                rethrowIfRateLimited(e);
                 report.participants.forEach(participant ->
                         saveSnapshot(participant.player, null, "report " + report.code + " could not be read"));
                 log.warn("Could not load Warcraft Logs report {}: {}", report.code, e.getMessage());
@@ -666,6 +668,7 @@ public class WarcraftLogsStatisticsService {
                 ReportWork report = storedReportWork(entry.getKey(), entry.getValue(), playersById);
                 savedRuns += loadAndSaveReportEvents(report, existingRuns);
             } catch (RuntimeException exception) {
+                rethrowIfRateLimited(exception);
                 log.warn("Could not backfill Warcraft Logs report {}: {}", entry.getKey(), exception.getMessage());
             }
         }
@@ -697,6 +700,7 @@ public class WarcraftLogsStatisticsService {
                         reportData.path("fights"), entry.getValue(), existingRuns
                 );
             } catch (RuntimeException exception) {
+                rethrowIfRateLimited(exception);
                 log.warn(
                         "Could not backfill Warcraft Logs fight times for report {}: {}",
                         entry.getKey(), exception.getMessage()
@@ -704,6 +708,12 @@ public class WarcraftLogsStatisticsService {
             }
         }
         return savedRuns;
+    }
+
+    private static void rethrowIfRateLimited(Exception failure) {
+        if (failure instanceof WarcraftLogsClient.RateLimitExceededException rateLimited) {
+            throw rateLimited;
+        }
     }
 
     private int saveStoredFightWindows(
