@@ -74,6 +74,12 @@ public class BlizzardApiClient {
         return Map.copyOf(query);
     }
 
+    public Map<String, String> staticQuery() {
+        Map<String, String> query = new HashMap<>(defaultQuery());
+        query.put(NAMESPACE_QUERY_PARAM, toStaticNamespace(query.get(NAMESPACE_QUERY_PARAM)));
+        return Map.copyOf(query);
+    }
+
     private static String toProfileNamespace(String namespace) {
         if (namespace == null || namespace.isBlank()) {
             return PROFILE_NAMESPACE_PREFIX + "eu";
@@ -83,6 +89,19 @@ public class BlizzardApiClient {
         }
         if (namespace.startsWith(STATIC_NAMESPACE_PREFIX)) {
             return PROFILE_NAMESPACE_PREFIX + namespace.substring(STATIC_NAMESPACE_PREFIX.length());
+        }
+        return namespace;
+    }
+
+    private static String toStaticNamespace(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            return STATIC_NAMESPACE_PREFIX + "eu";
+        }
+        if (namespace.startsWith(DYNAMIC_NAMESPACE_PREFIX)) {
+            return STATIC_NAMESPACE_PREFIX + namespace.substring(DYNAMIC_NAMESPACE_PREFIX.length());
+        }
+        if (namespace.startsWith(PROFILE_NAMESPACE_PREFIX)) {
+            return STATIC_NAMESPACE_PREFIX + namespace.substring(PROFILE_NAMESPACE_PREFIX.length());
         }
         return namespace;
     }

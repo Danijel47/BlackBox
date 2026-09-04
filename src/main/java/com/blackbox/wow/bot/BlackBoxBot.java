@@ -18,6 +18,7 @@ import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.MPlusSeasonReportService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
+import com.blackbox.wow.service.HousingSalesReportService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
@@ -127,6 +128,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String ADMIN_ALTS_CALLBACK = "alts";
     private static final String ADMIN_ALT_CALLBACK = "alt";
     private static final String ADMIN_ALT_ADD_CALLBACK = "alt_add";
+    private static final String HOUSING_TOP_ACTION = "housing_top";
+    private static final String HOUSING_TOP_LABEL = "Housing Sales";
+    private static final String HOUSING_DATA_UNAVAILABLE_MESSAGE =
+            "Housing sales data is temporarily unavailable. Please try again later.";
     private static final String ENABLE_LABEL_PREFIX = "Enable ";
     private static final String DISABLE_LABEL_PREFIX = "Disable ";
     private static final String ENABLED_STATUS_SUFFIX = " enabled.";
@@ -191,6 +196,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TelegramAccessPolicy telegramAccessPolicy;
     private final TelegramBotUserService telegramBotUserService;
     private final TelegramDailyPromptService telegramDailyPromptService;
+    private final HousingSalesReportService housingSalesReportService;
     private final List<CommandHandler> commandHandlers;
     private final Map<PendingAltKey, PendingAltAddition> pendingAltAdditions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService workingMessageScheduler = Executors.newSingleThreadScheduledExecutor(
@@ -228,7 +234,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             WarcraftLogsStatisticsService warcraftLogsStatisticsService,
             TelegramAccessPolicy telegramAccessPolicy,
             TelegramBotUserService telegramBotUserService,
-            TelegramDailyPromptService telegramDailyPromptService
+            TelegramDailyPromptService telegramDailyPromptService,
+            HousingSalesReportService housingSalesReportService
     ) {
         this.token = token;
         this.adminUserId = adminUserId;
@@ -258,6 +265,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.telegramAccessPolicy = telegramAccessPolicy;
         this.telegramBotUserService = telegramBotUserService;
         this.telegramDailyPromptService = telegramDailyPromptService;
+        this.housingSalesReportService = housingSalesReportService;
         this.commandHandlers = List.of(
                 this::handleUserAdministrationCommand,
                 this::handlePlayerProfileCommand,
@@ -341,6 +349,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/users", "/userlist" -> () -> send(context.chatId(), formatTelegramUsers());
             case "/useradd" -> () -> addTelegramUser(context);
             case "/userdisable", "/userenable" -> () -> changeTelegramUserStatus(context);
+            case "/housingtop" -> () -> sendHousingTop(context.chatId());
             default -> null;
         };
         if (adminAction == null) {
@@ -348,6 +357,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
         runAdminCommand(context, adminAction);
         return true;
+    }
+
+    private void sendHousingTop(long chatId) {
+        sendHousingTop(chatId, null);
+    }
+
+    private void sendHousingTop(long chatId, InlineKeyboardMarkup replyMarkup) {
+        try {
+            send(chatId, housingSalesReportService.topSellingMessage(), replyMarkup);
+        } catch (RuntimeException _) {
+            send(chatId, HOUSING_DATA_UNAVAILABLE_MESSAGE, replyMarkup);
+        }
     }
 
     private void addTelegramUser(CommandContext context) {
@@ -1156,6 +1177,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 adminCommandButton("Vault Reminder", "vault_reminder"),
                 adminCommandButton("Travel Import", "travel_import"),
                 adminCommandButton("Import Status", "import_status"),
+                adminCommandButton(HOUSING_TOP_LABEL, HOUSING_TOP_ACTION),
                 adminCommandButton("Group ID", "group_id"),
                 inlineButton("Public WoW Menu", WOW_ADMIN_CALLBACK_PREFIX + ADMIN_PUBLIC_CALLBACK)
         )));
@@ -1254,6 +1276,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "vault_reminder" -> send(chatId, vaultReminderService.checkNowMessage(), adminBackKeyboard());
             case "travel_import" -> send(chatId, timeToGoCommands.submitHistoricalImport(), adminBackKeyboard());
             case "import_status" -> send(chatId, timeToGoCommands.refreshHistoricalImport(), adminBackKeyboard());
+            case HOUSING_TOP_ACTION -> sendHousingTop(chatId, adminBackKeyboard());
             case "group_id" -> send(chatId, "Chat ID: " + chatId, adminBackKeyboard());
             default -> send(chatId, "That admin action is unavailable. Use /wow_admin to refresh the menu.");
         }

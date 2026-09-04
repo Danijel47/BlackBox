@@ -113,9 +113,7 @@ public class BlizzardItemService {
     }
 
     private Map<String, String> defaultStaticQuery() {
-        Map<String, String> query = new HashMap<>(api.defaultQuery());
-        query.put("namespace", toStaticNamespace(query.get("namespace")));
-        return query;
+        return api.staticQuery();
     }
 
     private String extractName(JsonNode data) {
@@ -134,14 +132,6 @@ public class BlizzardItemService {
         }
 
         return "";
-    }
-
-    private static String toStaticNamespace(String namespace) {
-        if (namespace == null || namespace.isBlank()) return "static-eu";
-        if (namespace.startsWith("dynamic-")) {
-            return "static-" + namespace.substring("dynamic-".length());
-        }
-        return namespace;
     }
 
     private static String normalize(String value) {

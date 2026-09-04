@@ -15,6 +15,7 @@ public class RestClientConfig {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(15);
+    private static final String TSM_PUBLIC_DATA_BASE_URL = "https://public-data.tradeskillmaster.com";
 
     @Bean
     @Primary
@@ -53,6 +54,11 @@ public class RestClientConfig {
             @Value("${wow.token-history.backfill-base-url:https://data.wowtoken.app}") String baseUrl
     ) {
         return restClientWithTimeouts(baseUrl);
+    }
+
+    @Bean("tsmPublicDataRestClient")
+    public RestClient tsmPublicDataRestClient() {
+        return restClientWithTimeouts(TSM_PUBLIC_DATA_BASE_URL);
     }
 
     private static RestClient restClientWithTimeouts(String baseUrl) {

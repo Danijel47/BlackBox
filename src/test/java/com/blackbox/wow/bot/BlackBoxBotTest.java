@@ -15,6 +15,7 @@ import com.blackbox.wow.service.MPlusDungeonVaultService;
 import com.blackbox.wow.service.MPlusPerformanceService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
+import com.blackbox.wow.service.HousingSalesReportService;
 import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.MPlusSeasonReportService;
@@ -86,6 +87,7 @@ class BlackBoxBotTest {
     @Mock private TelegramAccessPolicy accessPolicy;
     @Mock private TelegramBotUserService telegramBotUserService;
     @Mock private TelegramDailyPromptService telegramDailyPromptService;
+    @Mock private HousingSalesReportService housingSalesReportService;
 
     private BlackBoxBot bot;
 
@@ -122,6 +124,31 @@ class BlackBoxBotTest {
         bot().consume(update);
 
         verify(telegramClient, never()).execute(org.mockito.ArgumentMatchers.any(SendMessage.class));
+    }
+
+    @Test
+    void allowsOnlyTheAdminToRequestHousingSales() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(housingSalesReportService.topSellingMessage()).thenReturn("Housing sales report");
+
+        bot().consume(update(chatId, adminId, "/housing_top"));
+
+        verify(housingSalesReportService).topSellingMessage();
+        assertThat(sentMessage().getText()).isEqualTo("Housing sales report");
+    }
+
+    @Test
+    void rejectsHousingSalesForAnAllowedNonAdminUser() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, "/housing_top"));
+
+        verify(housingSalesReportService, never()).topSellingMessage();
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
     }
 
     @Test
@@ -788,7 +815,7 @@ class BlackBoxBotTest {
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
                 .contains("Users", "User Access", "Profiles", "Profile Access", "Manage Alts",
-                        "M+ Status", "Vault Reminder")
+                        "M+ Status", "Vault Reminder", "Housing Sales")
                 .doesNotContain("Mythic+", "Tokens");
     }
 
@@ -1080,7 +1107,8 @@ class BlackBoxBotTest {
                 warcraftLogsStatisticsService,
                 accessPolicy,
                 telegramBotUserService,
-                telegramDailyPromptService
+                telegramDailyPromptService,
+                housingSalesReportService
         );
         return bot;
     }
