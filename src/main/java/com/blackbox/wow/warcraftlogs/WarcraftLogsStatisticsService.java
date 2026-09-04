@@ -262,6 +262,11 @@ public class WarcraftLogsStatisticsService {
         return properties.seasonStart();
     }
 
+    public String refreshAndBuildCombatMessage(String profileArgument) {
+        refresh();
+        return combatMessage(profileArgument);
+    }
+
     public String combatMessage(String profileArgument) {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;

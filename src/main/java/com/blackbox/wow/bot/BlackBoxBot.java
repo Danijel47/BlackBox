@@ -449,7 +449,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "coverage" -> mplusRunCorrelationService.coverageMessage(
                     arguments, senderUserId
             );
-            case RAID_COMBAT_CALLBACK -> warcraftLogsStatisticsService.combatMessage(arguments);
+            case RAID_COMBAT_CALLBACK ->
+                    warcraftLogsStatisticsService.refreshAndBuildCombatMessage(arguments);
             case "status" -> adminMPlusStatus(senderUserId);
             default -> mplusHelpMessage();
         };

@@ -10,6 +10,7 @@ import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -24,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -33,6 +35,40 @@ import static org.mockito.Mockito.when;
 class WarcraftLogsStatisticsServiceTest {
 
     private static final String RUBY_LIFE_POOLS = "Ruby Life Pools";
+
+    @Test
+    void refreshesWarcraftLogsBeforeBuildingAnOnDemandCombatMessage() {
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
+        WarcraftLogProfileSnapshotRepository snapshotRepository =
+                mock(WarcraftLogProfileSnapshotRepository.class);
+        TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
+        when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
+        when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(runRepository.findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12))
+                .thenReturn(List.of());
+        when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of());
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client,
+                properties(),
+                trackedPlayerService,
+                runRepository,
+                snapshotRepository,
+                mock(MPlusRunCorrelationService.class),
+                mock(WarcraftLogsEventPager.class),
+                mock(WarcraftLogItemLevelRepository.class)
+        );
+
+        assertThat(service.refreshAndBuildCombatMessage(""))
+                .isEqualTo("No logged timed +12 or higher Warcraft Logs combat runs are available.");
+
+        InOrder refreshBeforeRead = inOrder(client, runRepository);
+        refreshBeforeRead.verify(client).rateLimit();
+        refreshBeforeRead.verify(runRepository).findBySeasonKey("midnight-season-2");
+        refreshBeforeRead.verify(runRepository)
+                .findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
+    }
 
     @Test
     void reportsOnlyRunsForTheCurrentlySelectedMain() {

@@ -387,11 +387,12 @@ class BlackBoxBotTest {
         long userId = 456L;
         Update update = update(chatId, userId, "/mplus_combat Buco");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(warcraftLogsStatisticsService.combatMessage("Buco")).thenReturn("Buco configured combat");
+        when(warcraftLogsStatisticsService.refreshAndBuildCombatMessage("Buco"))
+                .thenReturn("Buco configured combat");
 
         bot().consume(update);
 
-        verify(warcraftLogsStatisticsService).combatMessage("Buco");
+        verify(warcraftLogsStatisticsService).refreshAndBuildCombatMessage("Buco");
         assertThat(sentMessage().getText()).isEqualTo("Buco configured combat");
     }
 
@@ -942,11 +943,12 @@ class BlackBoxBotTest {
         long chatId = 123L;
         long userId = 456L;
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(warcraftLogsStatisticsService.combatMessage("")).thenReturn("All combat profiles");
+        when(warcraftLogsStatisticsService.refreshAndBuildCombatMessage(""))
+                .thenReturn("All combat profiles");
 
         bot().consume(callbackUpdate(chatId, userId, "mplus:profile:combat:all"));
 
-        verify(warcraftLogsStatisticsService).combatMessage("");
+        verify(warcraftLogsStatisticsService).refreshAndBuildCombatMessage("");
         assertThat(sentMessage().getText()).isEqualTo("All combat profiles");
     }
 
