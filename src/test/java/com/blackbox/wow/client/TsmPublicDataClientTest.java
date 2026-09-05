@@ -1,14 +1,48 @@
 package com.blackbox.wow.client;
 
+import com.blackbox.wow.properties.HousingMarketProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class TsmPublicDataClientTest {
+
+    private static final String REGION_ITEMS_URL =
+            "https://public-data.tradeskillmaster.com/retail/eu/region/items.csv";
+
+    @Test
+    void identifiesTheApplicationWhenRequestingPublicData() {
+        RestClient.Builder builder = RestClient.builder()
+                .baseUrl("https://public-data.tradeskillmaster.com");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(once(), requestTo(REGION_ITEMS_URL))
+                .andExpect(header(HttpHeaders.USER_AGENT,
+                        "BlackBox-WoW-Market (+https://github.com/Danijel47/TelegramBot)"))
+                .andExpect(header(HttpHeaders.ACCEPT, "text/csv"))
+                .andRespond(withSuccess(csv("""
+                        itemId,name,marketValue,historical,avgSalePrice,saleRate,soldPerDay,updatedAt
+                        264710,Dalaran Sun Sconce,142516963,145906850,66660900,0.015,0.06,2026-09-03T01:35:57Z
+                        """), MediaType.parseMediaType("text/csv")));
+        TsmPublicDataClient client = new TsmPublicDataClient(
+                builder.build(),
+                new HousingMarketProperties(10, 12, 24)
+        );
+
+        assertThat(client.getEuRetailRegionItems()).hasSize(1);
+        server.verify();
+    }
 
     @Test
     void parsesRegionalSalesDataAndQuotedItemNames() {

@@ -19,6 +19,7 @@ import com.blackbox.wow.service.MPlusSeasonReportService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
+import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
@@ -366,6 +367,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private void sendHousingTop(long chatId, InlineKeyboardMarkup replyMarkup) {
         try {
             send(chatId, housingSalesReportService.topSellingMessage(), replyMarkup);
+        } catch (HousingMarketUnavailableException e) {
+            send(chatId, e.adminMessage(), replyMarkup);
         } catch (RuntimeException _) {
             send(chatId, HOUSING_DATA_UNAVAILABLE_MESSAGE, replyMarkup);
         }

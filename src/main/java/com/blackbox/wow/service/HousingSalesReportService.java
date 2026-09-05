@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.BLIZZARD_DECOR;
+import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.TSM_EU;
+
 @Service
 public class HousingSalesReportService {
 
@@ -38,8 +41,8 @@ public class HousingSalesReportService {
     }
 
     public String topSellingMessage() {
-        Set<Long> decorItemIds = decorService.getDecorAuctionItemIds();
-        List<RegionItem> rankedItems = tsmClient.getEuRetailRegionItems().stream()
+        Set<Long> decorItemIds = loadDecorItemIds();
+        List<RegionItem> rankedItems = loadTsmRegionItems().stream()
                 .filter(item -> decorItemIds.contains(item.itemId()))
                 .filter(HousingSalesReportService::hasSalesData)
                 .sorted(Comparator.comparingDouble(RegionItem::soldPerDay)
@@ -64,6 +67,22 @@ public class HousingSalesReportService {
                 .append(UPDATED_DATE_FORMAT.format(updatedAt))
                 .append(" UTC. TSM regional estimates; realm sales are not guaranteed.")
                 .toString();
+    }
+
+    private Set<Long> loadDecorItemIds() {
+        try {
+            return decorService.getDecorAuctionItemIds();
+        } catch (RuntimeException e) {
+            throw HousingMarketUnavailableException.from(BLIZZARD_DECOR, e);
+        }
+    }
+
+    private List<RegionItem> loadTsmRegionItems() {
+        try {
+            return tsmClient.getEuRetailRegionItems();
+        } catch (RuntimeException e) {
+            throw HousingMarketUnavailableException.from(TSM_EU, e);
+        }
     }
 
     private static boolean hasSalesData(RegionItem item) {

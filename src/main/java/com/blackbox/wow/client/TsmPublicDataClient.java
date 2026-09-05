@@ -8,6 +8,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -27,6 +29,9 @@ public class TsmPublicDataClient {
 
     private static final String EU_RETAIL_REGION_ITEMS_PATH = "/retail/eu/region/items.csv";
     private static final String REGION_ITEMS_CACHE_KEY = "retail-eu-region-items";
+    private static final String USER_AGENT =
+            "BlackBox-WoW-Market (+https://github.com/Danijel47/TelegramBot)";
+    private static final MediaType CSV_MEDIA_TYPE = MediaType.parseMediaType("text/csv");
     private static final int MAXIMUM_RESPONSE_BYTES = 10 * 1024 * 1024;
     private static final int MAXIMUM_ROWS = 100_000;
     private static final int MAXIMUM_ITEM_NAME_LENGTH = 250;
@@ -57,6 +62,8 @@ public class TsmPublicDataClient {
         try {
             response = restClient.get()
                     .uri(EU_RETAIL_REGION_ITEMS_PATH)
+                    .header(HttpHeaders.USER_AGENT, USER_AGENT)
+                    .accept(CSV_MEDIA_TYPE)
                     .retrieve()
                     .body(byte[].class);
         } catch (RestClientResponseException e) {

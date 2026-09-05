@@ -16,6 +16,7 @@ import com.blackbox.wow.service.MPlusPerformanceService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
+import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.MPlusSeasonReportService;
@@ -35,6 +36,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
@@ -50,6 +53,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.TSM_EU;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -149,6 +153,24 @@ class BlackBoxBotTest {
 
         verify(housingSalesReportService, never()).topSellingMessage();
         assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+    }
+
+    @Test
+    void reportsTheUnavailableHousingDataSourceToTheAdmin() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(housingSalesReportService.topSellingMessage()).thenThrow(
+                HousingMarketUnavailableException.from(
+                        TSM_EU,
+                        HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null)
+                )
+        );
+
+        bot().consume(update(chatId, adminId, "/housing_top"));
+
+        assertThat(sentMessage().getText())
+                .isEqualTo("Housing sales data is temporarily unavailable: TSM EU market data returned HTTP 403.");
     }
 
     @Test

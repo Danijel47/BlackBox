@@ -5,12 +5,15 @@ import com.blackbox.wow.client.TsmPublicDataClient;
 import com.blackbox.wow.client.TsmPublicDataClient.RegionItem;
 import com.blackbox.wow.properties.HousingMarketProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +64,27 @@ class HousingSalesReportServiceTest {
 
         assertThat(service.topSellingMessage())
                 .isEqualTo("No auctionable housing decor with EU sales data is currently available.");
+    }
+
+    @Test
+    void identifiesTsmHttpFailuresWithoutExposingTheResponse() {
+        BlizzardDecorService decorService = mock(BlizzardDecorService.class);
+        TsmPublicDataClient tsmClient = mock(TsmPublicDataClient.class);
+        when(decorService.getDecorAuctionItemIds()).thenReturn(Set.of(10L));
+        when(tsmClient.getEuRetailRegionItems()).thenThrow(
+                HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null)
+        );
+        HousingSalesReportService service = new HousingSalesReportService(
+                decorService,
+                tsmClient,
+                new HousingMarketProperties(10, 12, 24)
+        );
+
+        assertThatThrownBy(service::topSellingMessage)
+                .isInstanceOfSatisfying(HousingMarketUnavailableException.class, exception ->
+                        assertThat(exception.adminMessage())
+                                .isEqualTo("Housing sales data is temporarily unavailable: "
+                                        + "TSM EU market data returned HTTP 403."));
     }
 
     private static RegionItem item(long itemId, String name, double saleRate, double soldPerDay) {
