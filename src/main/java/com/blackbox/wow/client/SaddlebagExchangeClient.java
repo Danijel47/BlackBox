@@ -32,6 +32,8 @@ public class SaddlebagExchangeClient {
     private static final String USER_AGENT =
             "BlackBox-WoW-Market (+https://github.com/Danijel47/TelegramBot)";
     private static final String RESPONSE_ERROR_PREFIX = "Saddlebag Exchange returned ";
+    private static final String RESPONSE_REJECTED_LOG_MESSAGE =
+            "Saddlebag Exchange TSM response was rejected ({})";
     private static final String DATA_FIELD = "data";
     private static final String ITEM_ID_FIELD = "itemID";
     private static final String ITEM_NAME_FIELD = "itemName";
@@ -77,6 +79,7 @@ public class SaddlebagExchangeClient {
 
     private List<RegionItem> fetchEuRetailItems(List<Long> itemIds) {
         byte[] response;
+        log.info("Requesting Saddlebag Exchange TSM stats for {} housing item(s)", itemIds.size());
         try {
             response = restClient.post()
                     .uri(TSM_STATS_PATH)
@@ -93,8 +96,23 @@ public class SaddlebagExchangeClient {
             log.warn("Saddlebag Exchange TSM request failed ({})", e.getClass().getSimpleName());
             throw e;
         }
-        validateResponseSize(response);
-        return parseRegionItems(response, Set.copyOf(itemIds), Instant.now(clock));
+        try {
+            validateResponseSize(response);
+            List<RegionItem> items = parseRegionItems(
+                    response,
+                    Set.copyOf(itemIds),
+                    Instant.now(clock)
+            );
+            log.info(
+                    "Loaded Saddlebag Exchange TSM stats for {} of {} housing item(s)",
+                    items.size(),
+                    itemIds.size()
+            );
+            return items;
+        } catch (IllegalStateException e) {
+            log.warn(RESPONSE_REJECTED_LOG_MESSAGE, e.getMessage());
+            throw e;
+        }
     }
 
     private static List<Long> validateAndSortItemIds(Set<Long> itemIds) {
@@ -126,15 +144,32 @@ public class SaddlebagExchangeClient {
         } catch (IOException e) {
             throw new IllegalStateException(RESPONSE_ERROR_PREFIX + "invalid JSON data.", e);
         }
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException(RESPONSE_ERROR_PREFIX + "an invalid root object.");
+        }
         JsonNode data = root.get(DATA_FIELD);
         if (data == null || !data.isArray()) {
             throw new IllegalStateException("Saddlebag Exchange response has no data array.");
         }
+        if (data.size() > requestedIds.size()) {
+            throw new IllegalStateException(RESPONSE_ERROR_PREFIX + "too many item rows.");
+        }
 
         List<RegionItem> items = new ArrayList<>(data.size());
         Set<Long> seenItemIds = new HashSet<>();
+        int skippedRows = 0;
+        IllegalStateException firstRowFailure = null;
         for (JsonNode row : data) {
-            RegionItem item = parseRegionItem(row, fetchedAt);
+            RegionItem item;
+            try {
+                item = parseRegionItem(row, fetchedAt);
+            } catch (IllegalStateException e) {
+                skippedRows++;
+                if (firstRowFailure == null) {
+                    firstRowFailure = e;
+                }
+                continue;
+            }
             if (!requestedIds.contains(item.itemId())) {
                 throw new IllegalStateException(RESPONSE_ERROR_PREFIX + "an unexpected item ID.");
             }
@@ -142,6 +177,15 @@ public class SaddlebagExchangeClient {
                 throw new IllegalStateException(RESPONSE_ERROR_PREFIX + "a duplicate item ID.");
             }
             items.add(item);
+        }
+        if (items.isEmpty() && !data.isEmpty()) {
+            throw new IllegalStateException(
+                    RESPONSE_ERROR_PREFIX + "no usable item rows.",
+                    firstRowFailure
+            );
+        }
+        if (skippedRows > 0) {
+            log.warn("Saddlebag Exchange TSM response contained {} unusable item row(s)", skippedRows);
         }
         return List.copyOf(items);
     }

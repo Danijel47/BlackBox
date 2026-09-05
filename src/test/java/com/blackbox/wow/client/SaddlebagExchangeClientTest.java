@@ -96,7 +96,30 @@ class SaddlebagExchangeClientTest {
     }
 
     @Test
-    void rejectsOutOfRangeSaleMetrics() {
+    void skipsAnIncompleteItemWithoutDiscardingUsableMarketData() {
+        RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(once(), requestTo(STATS_URL))
+                .andRespond(withSuccess("""
+                        {"data":[
+                          {"itemID":264710,"itemName":"Incomplete Sconce",
+                           "eu_market_value":null,"eu_historical":14590,"eu_average_price":4750,
+                           "eu_sale_rate":0.02,"eu_sold_per_day":0.08},
+                          {"itemID":264711,"itemName":"Usable Chair",
+                           "eu_market_value":5000,"eu_historical":4900,"eu_average_price":4200,
+                           "eu_sale_rate":0.125,"eu_sold_per_day":1.75}
+                        ]}
+                        """, MediaType.APPLICATION_JSON));
+        SaddlebagExchangeClient client = client(builder);
+
+        assertThat(client.getEuRetailItems(Set.of(264710L, 264711L)))
+                .extracting(SaddlebagExchangeClient.RegionItem::itemId)
+                .containsExactly(264711L);
+        server.verify();
+    }
+
+    @Test
+    void rejectsTheResponseWhenEveryReturnedItemIsInvalid() {
         RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(once(), requestTo(STATS_URL))
@@ -105,6 +128,8 @@ class SaddlebagExchangeClientTest {
 
         assertThatThrownBy(() -> client.getEuRetailItems(Set.of(264710L)))
                 .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no usable item rows")
+                .rootCause()
                 .hasMessageContaining("invalid sale rate");
         server.verify();
     }
