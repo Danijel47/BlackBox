@@ -54,6 +54,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.SADDLEBAG_TSM;
+import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.AVERAGE_PRICE;
+import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.SALES;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -135,12 +137,22 @@ class BlackBoxBotTest {
         long chatId = 123L;
         long adminId = 999L;
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
-        when(housingSalesReportService.topSellingMessage()).thenReturn("Housing sales report");
+        when(housingSalesReportService.rankedMessage(SALES)).thenReturn("Housing sales report");
 
         bot().consume(update(chatId, adminId, "/housing_top"));
 
-        verify(housingSalesReportService).topSellingMessage();
-        assertThat(sentMessage().getText()).isEqualTo("Housing sales report");
+        verify(housingSalesReportService).rankedMessage(SALES);
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo("Housing sales report");
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getText()))
+                .containsExactly("Sales/day", "Avg price", "Market price", "Back");
+        assertThat(keyboard.getKeyboard().stream()
+                .flatMap(List::stream)
+                .map(button -> button.getCallbackData()))
+                .containsExactly("admin:housing:sale", "admin:housing:avg", "admin:housing:price", "admin:menu");
     }
 
     @Test
@@ -151,7 +163,7 @@ class BlackBoxBotTest {
 
         bot().consume(update(chatId, userId, "/housing_top"));
 
-        verify(housingSalesReportService, never()).topSellingMessage();
+        verify(housingSalesReportService, never()).rankedMessage(any());
         assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
     }
 
@@ -160,7 +172,7 @@ class BlackBoxBotTest {
         long chatId = 123L;
         long adminId = 999L;
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
-        when(housingSalesReportService.topSellingMessage()).thenThrow(
+        when(housingSalesReportService.rankedMessage(SALES)).thenThrow(
                 HousingMarketUnavailableException.from(
                         SADDLEBAG_TSM,
                         HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null)
@@ -172,6 +184,34 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText())
                 .isEqualTo("Housing sales data is temporarily unavailable: "
                         + "Saddlebag Exchange TSM data returned HTTP 403.");
+    }
+
+    @Test
+    void letsTheAdminFilterHousingByAveragePrice() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(housingSalesReportService.rankedMessage(AVERAGE_PRICE))
+                .thenReturn("Housing average-price report");
+
+        bot().consume(callbackUpdate(chatId, adminId, "admin:housing:avg"));
+
+        verify(housingSalesReportService).rankedMessage(AVERAGE_PRICE);
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo("Housing average-price report");
+        assertThat(message.getReplyMarkup()).isInstanceOf(InlineKeyboardMarkup.class);
+    }
+
+    @Test
+    void preventsARegularUserFromUsingHousingFilters() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(chatId, userId, "admin:housing:price"));
+
+        verify(housingSalesReportService, never()).rankedMessage(any());
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
     }
 
     @Test

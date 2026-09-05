@@ -16,6 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.AVERAGE_PRICE;
+import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.MARKET_PRICE;
+import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.SALES;
 
 class HousingSalesReportServiceTest {
 
@@ -38,7 +41,7 @@ class HousingSalesReportServiceTest {
                 new HousingMarketProperties(2, 12, 24)
         );
 
-        String report = service.topSellingMessage();
+        String report = service.rankedMessage(SALES);
 
         assertThat(report)
                 .startsWith("Housing decor — top EU sellers")
@@ -65,7 +68,7 @@ class HousingSalesReportServiceTest {
                 new HousingMarketProperties(10, 12, 24)
         );
 
-        assertThat(service.topSellingMessage())
+        assertThat(service.rankedMessage(SALES))
                 .isEqualTo("No auctionable housing decor with EU sales data is currently available.");
     }
 
@@ -83,20 +86,67 @@ class HousingSalesReportServiceTest {
                 new HousingMarketProperties(10, 12, 24)
         );
 
-        assertThatThrownBy(service::topSellingMessage)
+        assertThatThrownBy(() -> service.rankedMessage(SALES))
                 .isInstanceOfSatisfying(HousingMarketUnavailableException.class, exception ->
                         assertThat(exception.adminMessage())
                                 .isEqualTo("Housing sales data is temporarily unavailable: "
                                         + "Saddlebag Exchange TSM data returned HTTP 403."));
     }
 
+    @Test
+    void ranksHousingByAverageOrMarketPrice() {
+        BlizzardDecorService decorService = mock(BlizzardDecorService.class);
+        SaddlebagExchangeClient marketClient = mock(SaddlebagExchangeClient.class);
+        Set<Long> decorItemIds = Set.of(10L, 20L);
+        when(decorService.getDecorAuctionItemIds()).thenReturn(decorItemIds);
+        when(marketClient.getEuRetailItems(decorItemIds)).thenReturn(List.of(
+                item(10L, "High Average", 200_000_000L, 50_000_000L),
+                item(20L, "High Market", 80_000_000L, 300_000_000L)
+        ));
+        HousingSalesReportService service = new HousingSalesReportService(
+                decorService,
+                marketClient,
+                new HousingMarketProperties(2, 12, 24)
+        );
+
+        String averageReport = service.rankedMessage(AVERAGE_PRICE);
+        String marketReport = service.rankedMessage(MARKET_PRICE);
+
+        assertThat(averageReport)
+                .startsWith("Housing decor — highest EU average prices")
+                .containsSubsequence("1. High Average", "2. High Market");
+        assertThat(marketReport)
+                .startsWith("Housing decor — highest EU market prices")
+                .containsSubsequence("1. High Market", "2. High Average");
+    }
+
     private static RegionItem item(long itemId, String name, double saleRate, double soldPerDay) {
+        return item(itemId, name, 80_000_000L, 100_000_000L, saleRate, soldPerDay);
+    }
+
+    private static RegionItem item(
+            long itemId,
+            String name,
+            long averageSalePriceCopper,
+            long marketValueCopper
+    ) {
+        return item(itemId, name, averageSalePriceCopper, marketValueCopper, 0.1D, 1D);
+    }
+
+    private static RegionItem item(
+            long itemId,
+            String name,
+            long averageSalePriceCopper,
+            long marketValueCopper,
+            double saleRate,
+            double soldPerDay
+    ) {
         return new RegionItem(
                 itemId,
                 name,
-                100_000_000L,
+                marketValueCopper,
                 90_000_000L,
-                80_000_000L,
+                averageSalePriceCopper,
                 saleRate,
                 soldPerDay,
                 UPDATED_AT

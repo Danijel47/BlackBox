@@ -12,6 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.BLIZZARD_DECOR;
@@ -40,22 +41,20 @@ public class HousingSalesReportService {
         this.resultLimit = properties.resultLimit();
     }
 
-    public String topSellingMessage() {
+    public String rankedMessage(HousingRanking ranking) {
+        Objects.requireNonNull(ranking, "Housing ranking is required.");
         Set<Long> decorItemIds = loadDecorItemIds();
         List<RegionItem> rankedItems = loadMarketItems(decorItemIds).stream()
                 .filter(item -> decorItemIds.contains(item.itemId()))
-                .filter(HousingSalesReportService::hasSalesData)
-                .sorted(Comparator.comparingDouble(RegionItem::soldPerDay)
-                        .reversed()
-                        .thenComparing(Comparator.comparingDouble(RegionItem::saleRate).reversed())
-                        .thenComparing(RegionItem::name))
+                .filter(item -> hasRankingData(item, ranking))
+                .sorted(comparatorFor(ranking))
                 .limit(resultLimit)
                 .toList();
         if (rankedItems.isEmpty()) {
             return "No auctionable housing decor with EU sales data is currently available.";
         }
 
-        StringBuilder message = new StringBuilder("Housing decor — top EU sellers\n");
+        StringBuilder message = new StringBuilder(ranking.title()).append('\n');
         for (int index = 0; index < rankedItems.size(); index++) {
             appendItem(message, index + 1, rankedItems.get(index));
         }
@@ -85,9 +84,26 @@ public class HousingSalesReportService {
         }
     }
 
-    private static boolean hasSalesData(RegionItem item) {
-        return item.averageSalePriceCopper() > 0
-                && (item.soldPerDay() > 0D || item.saleRate() > 0D);
+    private static boolean hasRankingData(RegionItem item, HousingRanking ranking) {
+        if (item.soldPerDay() <= 0D && item.saleRate() <= 0D) {
+            return false;
+        }
+        return switch (ranking) {
+            case SALES, AVERAGE_PRICE -> item.averageSalePriceCopper() > 0;
+            case MARKET_PRICE -> item.marketValueCopper() > 0;
+        };
+    }
+
+    private static Comparator<RegionItem> comparatorFor(HousingRanking ranking) {
+        Comparator<RegionItem> comparator = switch (ranking) {
+            case SALES -> Comparator.comparingDouble(RegionItem::soldPerDay)
+                    .thenComparingDouble(RegionItem::saleRate);
+            case AVERAGE_PRICE -> Comparator.comparingLong(RegionItem::averageSalePriceCopper)
+                    .thenComparingDouble(RegionItem::soldPerDay);
+            case MARKET_PRICE -> Comparator.comparingLong(RegionItem::marketValueCopper)
+                    .thenComparingDouble(RegionItem::soldPerDay);
+        };
+        return comparator.reversed().thenComparing(RegionItem::name);
     }
 
     private static void appendItem(StringBuilder message, int rank, RegionItem item) {
@@ -120,5 +136,36 @@ public class HousingSalesReportService {
             return UNAVAILABLE_PRICE;
         }
         return String.format(Locale.ROOT, "%,dg", copper / COPPER_PER_GOLD);
+    }
+
+    public enum HousingRanking {
+        SALES("sale", "Housing decor — top EU sellers"),
+        AVERAGE_PRICE("avg", "Housing decor — highest EU average prices"),
+        MARKET_PRICE("price", "Housing decor — highest EU market prices");
+
+        private final String key;
+        private final String title;
+
+        HousingRanking(String key, String title) {
+            this.key = key;
+            this.title = title;
+        }
+
+        public String key() {
+            return key;
+        }
+
+        private String title() {
+            return title;
+        }
+
+        public static HousingRanking fromKey(String key) {
+            for (HousingRanking ranking : values()) {
+                if (ranking.key.equals(key)) {
+                    return ranking;
+                }
+            }
+            return null;
+        }
     }
 }

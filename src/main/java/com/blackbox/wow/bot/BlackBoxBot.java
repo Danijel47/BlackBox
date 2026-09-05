@@ -19,6 +19,7 @@ import com.blackbox.wow.service.MPlusSeasonReportService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
+import com.blackbox.wow.service.HousingSalesReportService.HousingRanking;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
@@ -131,6 +132,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String ADMIN_ALT_ADD_CALLBACK = "alt_add";
     private static final String HOUSING_TOP_ACTION = "housing_top";
     private static final String HOUSING_TOP_LABEL = "Housing Sales";
+    private static final String ADMIN_HOUSING_CALLBACK = "housing";
+    private static final String HOUSING_SALES_LABEL = "Sales/day";
+    private static final String HOUSING_AVERAGE_LABEL = "Avg price";
+    private static final String HOUSING_PRICE_LABEL = "Market price";
     private static final String HOUSING_DATA_UNAVAILABLE_MESSAGE =
             "Housing sales data is temporarily unavailable. Please try again later.";
     private static final String ENABLE_LABEL_PREFIX = "Enable ";
@@ -361,12 +366,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     }
 
     private void sendHousingTop(long chatId) {
-        sendHousingTop(chatId, null);
+        sendHousingReport(chatId, HousingRanking.SALES);
     }
 
-    private void sendHousingTop(long chatId, InlineKeyboardMarkup replyMarkup) {
+    private void sendHousingReport(long chatId, HousingRanking ranking) {
+        InlineKeyboardMarkup replyMarkup = housingRankingKeyboard();
         try {
-            send(chatId, housingSalesReportService.topSellingMessage(), replyMarkup);
+            send(chatId, housingSalesReportService.rankedMessage(ranking), replyMarkup);
         } catch (HousingMarketUnavailableException e) {
             send(chatId, e.adminMessage(), replyMarkup);
         } catch (RuntimeException _) {
@@ -1242,6 +1248,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return switch (action) {
             case ADMIN_ALTS_CALLBACK -> handled(() -> sendAdminAltManagementMenu(chatId, value, null));
             case ADMIN_ALT_ADD_CALLBACK -> handled(() -> startAltAddition(chatId, senderUserId, value));
+            case ADMIN_HOUSING_CALLBACK -> routeHousingRankingCallback(chatId, value);
             case WOW_COMMAND_CALLBACK -> handled(() -> runWowAdminAction(chatId, senderUserId, value));
             default -> false;
         };
@@ -1273,13 +1280,38 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return inlineKeyboard(List.of(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)));
     }
 
+    private InlineKeyboardMarkup housingRankingKeyboard() {
+        return inlineKeyboard(List.of(
+                housingRankingButton(HOUSING_SALES_LABEL, HousingRanking.SALES),
+                housingRankingButton(HOUSING_AVERAGE_LABEL, HousingRanking.AVERAGE_PRICE),
+                housingRankingButton(HOUSING_PRICE_LABEL, HousingRanking.MARKET_PRICE),
+                inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
+        ));
+    }
+
+    private static InlineKeyboardButton housingRankingButton(String label, HousingRanking ranking) {
+        return inlineButton(
+                label,
+                WOW_ADMIN_CALLBACK_PREFIX + ADMIN_HOUSING_CALLBACK + ":" + ranking.key()
+        );
+    }
+
+    private boolean routeHousingRankingCallback(long chatId, String rankingKey) {
+        HousingRanking ranking = HousingRanking.fromKey(rankingKey);
+        if (ranking == null) {
+            return false;
+        }
+        sendHousingReport(chatId, ranking);
+        return true;
+    }
+
     private void runWowAdminAction(long chatId, long senderUserId, String actionKey) {
         switch (actionKey) {
             case "mplus_status" -> send(chatId, adminMPlusStatus(senderUserId), adminBackKeyboard());
             case "vault_reminder" -> send(chatId, vaultReminderService.checkNowMessage(), adminBackKeyboard());
             case "travel_import" -> send(chatId, timeToGoCommands.submitHistoricalImport(), adminBackKeyboard());
             case "import_status" -> send(chatId, timeToGoCommands.refreshHistoricalImport(), adminBackKeyboard());
-            case HOUSING_TOP_ACTION -> sendHousingTop(chatId, adminBackKeyboard());
+            case HOUSING_TOP_ACTION -> sendHousingTop(chatId);
             case "group_id" -> send(chatId, "Chat ID: " + chatId, adminBackKeyboard());
             default -> send(chatId, "That admin action is unavailable. Use /wow_admin to refresh the menu.");
         }
