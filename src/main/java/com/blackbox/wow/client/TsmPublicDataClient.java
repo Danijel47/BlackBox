@@ -6,9 +6,12 @@ import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -18,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Component
 public class TsmPublicDataClient {
 
@@ -49,10 +53,19 @@ public class TsmPublicDataClient {
     }
 
     private List<RegionItem> fetchEuRetailRegionItems() {
-        byte[] response = restClient.get()
-                .uri(EU_RETAIL_REGION_ITEMS_PATH)
-                .retrieve()
-                .body(byte[].class);
+        byte[] response;
+        try {
+            response = restClient.get()
+                    .uri(EU_RETAIL_REGION_ITEMS_PATH)
+                    .retrieve()
+                    .body(byte[].class);
+        } catch (RestClientResponseException e) {
+            log.warn("TSM EU regional data request failed with HTTP {}", e.getStatusCode().value());
+            throw e;
+        } catch (RestClientException e) {
+            log.warn("TSM EU regional data request failed ({})", e.getClass().getSimpleName());
+            throw e;
+        }
         if (response == null || response.length == 0) {
             throw new IllegalStateException("TSM public data returned an empty response.");
         }

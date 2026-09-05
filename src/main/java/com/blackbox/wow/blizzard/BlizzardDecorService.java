@@ -4,7 +4,10 @@ import com.blackbox.wow.properties.HousingMarketProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -12,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 @Service
 public class BlizzardDecorService {
 
@@ -19,7 +23,7 @@ public class BlizzardDecorService {
     private static final String DECOR_CACHE_KEY = "decor-auction-item-ids";
     private static final String PAGE_QUERY_PARAM = "_page";
     private static final String ORDER_BY_QUERY_PARAM = "orderby";
-    private static final String DECOR_ID_ORDER = "id:asc";
+    private static final String DECOR_ID_ORDER = "id";
     private static final int FIRST_PAGE = 1;
     private static final int MAXIMUM_PAGES = 50;
     private static final int MAXIMUM_DECOR_ITEMS = 10_000;
@@ -58,10 +62,18 @@ public class BlizzardDecorService {
     }
 
     private JsonNode fetchPage(int page) {
-        Map<String, Object> query = new HashMap<>(api.staticQuery());
+        Map<String, Object> query = new HashMap<>(api.staticSearchQuery());
         query.put(PAGE_QUERY_PARAM, page);
         query.put(ORDER_BY_QUERY_PARAM, DECOR_ID_ORDER);
-        return api.get(DECOR_SEARCH_PATH, null, query);
+        try {
+            return api.get(DECOR_SEARCH_PATH, null, query);
+        } catch (RestClientResponseException e) {
+            log.warn("Blizzard decor catalog page {} failed with HTTP {}", page, e.getStatusCode().value());
+            throw e;
+        } catch (RestClientException e) {
+            log.warn("Blizzard decor catalog page {} failed ({})", page, e.getClass().getSimpleName());
+            throw e;
+        }
     }
 
     private static int validatedPageCount(JsonNode payload) {

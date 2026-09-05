@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
@@ -31,5 +33,7 @@ class BlizzardApiClientTest {
         assertThat(client.staticQuery())
                 .containsEntry("namespace", "static-us")
                 .containsEntry("locale", "en_US");
+        assertThat(client.staticSearchQuery())
+                .containsExactlyEntriesOf(Map.of("namespace", "static-us"));
     }
 }

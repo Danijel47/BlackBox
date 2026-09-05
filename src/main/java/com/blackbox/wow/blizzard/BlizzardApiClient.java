@@ -80,6 +80,10 @@ public class BlizzardApiClient {
         return Map.copyOf(query);
     }
 
+    public Map<String, String> staticSearchQuery() {
+        return Map.of(NAMESPACE_QUERY_PARAM, toStaticNamespace(props.namespace()));
+    }
+
     private static String toProfileNamespace(String namespace) {
         if (namespace == null || namespace.isBlank()) {
             return PROFILE_NAMESPACE_PREFIX + "eu";

@@ -24,9 +24,13 @@ class BlizzardDecorServiceTest {
     @Test
     void loadsEveryDecorSearchPageAndCachesTheItemIds() throws Exception {
         BlizzardApiClient api = mock(BlizzardApiClient.class);
-        when(api.staticQuery()).thenReturn(Map.of("namespace", "static-eu", "locale", "en_GB"));
+        when(api.staticSearchQuery()).thenReturn(Map.of("namespace", "static-eu"));
         when(api.get(eq(DECOR_SEARCH_PATH), isNull(), anyMap())).thenAnswer(invocation -> {
             Map<String, Object> query = invocation.getArgument(2);
+            assertThat(query)
+                    .containsEntry("namespace", "static-eu")
+                    .containsEntry("orderby", "id")
+                    .doesNotContainKey("locale");
             int page = (int) query.get("_page");
             return page == 1
                     ? payload(2, 264710L, 264711L)
@@ -42,7 +46,7 @@ class BlizzardDecorServiceTest {
     @Test
     void rejectsAnUnboundedPageCount() throws Exception {
         BlizzardApiClient api = mock(BlizzardApiClient.class);
-        when(api.staticQuery()).thenReturn(Map.of("namespace", "static-eu", "locale", "en_GB"));
+        when(api.staticSearchQuery()).thenReturn(Map.of("namespace", "static-eu"));
         when(api.get(eq(DECOR_SEARCH_PATH), isNull(), anyMap())).thenReturn(payload(51, 264710L));
 
         assertThatThrownBy(() -> service(api).getDecorAuctionItemIds())
@@ -53,7 +57,7 @@ class BlizzardDecorServiceTest {
     @Test
     void rejectsAChangingPageCount() throws Exception {
         BlizzardApiClient api = mock(BlizzardApiClient.class);
-        when(api.staticQuery()).thenReturn(Map.of("namespace", "static-eu", "locale", "en_GB"));
+        when(api.staticSearchQuery()).thenReturn(Map.of("namespace", "static-eu"));
         when(api.get(eq(DECOR_SEARCH_PATH), isNull(), anyMap()))
                 .thenReturn(payload(2, 264710L), payload(3, 264711L));
 
