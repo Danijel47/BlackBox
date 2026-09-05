@@ -1,8 +1,8 @@
 package com.blackbox.wow.service;
 
 import com.blackbox.wow.blizzard.BlizzardDecorService;
-import com.blackbox.wow.client.TsmPublicDataClient;
-import com.blackbox.wow.client.TsmPublicDataClient.RegionItem;
+import com.blackbox.wow.client.SaddlebagExchangeClient;
+import com.blackbox.wow.client.SaddlebagExchangeClient.RegionItem;
 import com.blackbox.wow.properties.HousingMarketProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -24,9 +24,9 @@ class HousingSalesReportServiceTest {
     @Test
     void ranksOnlyHousingItemsByRegionalDailySales() {
         BlizzardDecorService decorService = mock(BlizzardDecorService.class);
-        TsmPublicDataClient tsmClient = mock(TsmPublicDataClient.class);
+        SaddlebagExchangeClient marketClient = mock(SaddlebagExchangeClient.class);
         when(decorService.getDecorAuctionItemIds()).thenReturn(Set.of(10L, 20L, 30L));
-        when(tsmClient.getEuRetailRegionItems()).thenReturn(List.of(
+        when(marketClient.getEuRetailItems(Set.of(10L, 20L, 30L))).thenReturn(List.of(
                 item(10L, "Slow Sconce", 0.02D, 0.06D),
                 item(20L, "Popular Chair", 0.15D, 1.75D),
                 item(999L, "Popular Non-Decor", 0.90D, 500D),
@@ -34,7 +34,7 @@ class HousingSalesReportServiceTest {
         ));
         HousingSalesReportService service = new HousingSalesReportService(
                 decorService,
-                tsmClient,
+                marketClient,
                 new HousingMarketProperties(2, 12, 24)
         );
 
@@ -46,6 +46,7 @@ class HousingSalesReportServiceTest {
                 .contains("1.750/day | 15.0% sale")
                 .contains("2. Slow Sconce [10]")
                 .contains("Updated 2026-09-03 UTC")
+                .contains("Saddlebag Exchange/TSM EU estimates")
                 .doesNotContain("Popular Non-Decor", "No Recorded Sales");
         assertThat(report.indexOf("Popular Chair")).isLessThan(report.indexOf("Slow Sconce"));
     }
@@ -53,12 +54,14 @@ class HousingSalesReportServiceTest {
     @Test
     void reportsWhenNoHousingItemsHaveSalesData() {
         BlizzardDecorService decorService = mock(BlizzardDecorService.class);
-        TsmPublicDataClient tsmClient = mock(TsmPublicDataClient.class);
+        SaddlebagExchangeClient marketClient = mock(SaddlebagExchangeClient.class);
         when(decorService.getDecorAuctionItemIds()).thenReturn(Set.of(10L));
-        when(tsmClient.getEuRetailRegionItems()).thenReturn(List.of(item(20L, "Other Item", 0.2D, 2D)));
+        when(marketClient.getEuRetailItems(Set.of(10L))).thenReturn(List.of(
+                item(20L, "Other Item", 0.2D, 2D)
+        ));
         HousingSalesReportService service = new HousingSalesReportService(
                 decorService,
-                tsmClient,
+                marketClient,
                 new HousingMarketProperties(10, 12, 24)
         );
 
@@ -67,16 +70,16 @@ class HousingSalesReportServiceTest {
     }
 
     @Test
-    void identifiesTsmHttpFailuresWithoutExposingTheResponse() {
+    void identifiesSaddlebagHttpFailuresWithoutExposingTheResponse() {
         BlizzardDecorService decorService = mock(BlizzardDecorService.class);
-        TsmPublicDataClient tsmClient = mock(TsmPublicDataClient.class);
+        SaddlebagExchangeClient marketClient = mock(SaddlebagExchangeClient.class);
         when(decorService.getDecorAuctionItemIds()).thenReturn(Set.of(10L));
-        when(tsmClient.getEuRetailRegionItems()).thenThrow(
+        when(marketClient.getEuRetailItems(Set.of(10L))).thenThrow(
                 HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null)
         );
         HousingSalesReportService service = new HousingSalesReportService(
                 decorService,
-                tsmClient,
+                marketClient,
                 new HousingMarketProperties(10, 12, 24)
         );
 
@@ -84,7 +87,7 @@ class HousingSalesReportServiceTest {
                 .isInstanceOfSatisfying(HousingMarketUnavailableException.class, exception ->
                         assertThat(exception.adminMessage())
                                 .isEqualTo("Housing sales data is temporarily unavailable: "
-                                        + "TSM EU market data returned HTTP 403."));
+                                        + "Saddlebag Exchange TSM data returned HTTP 403."));
     }
 
     private static RegionItem item(long itemId, String name, double saleRate, double soldPerDay) {

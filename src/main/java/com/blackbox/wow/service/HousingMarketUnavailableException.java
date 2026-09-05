@@ -42,7 +42,7 @@ public final class HousingMarketUnavailableException extends RuntimeException {
 
     public enum DataSource {
         BLIZZARD_DECOR("Blizzard decor catalog"),
-        TSM_EU("TSM EU market data");
+        SADDLEBAG_TSM("Saddlebag Exchange TSM data");
 
         private final String displayName;
 

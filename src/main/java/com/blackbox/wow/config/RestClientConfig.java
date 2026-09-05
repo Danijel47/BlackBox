@@ -15,7 +15,7 @@ public class RestClientConfig {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(15);
-    private static final String TSM_PUBLIC_DATA_BASE_URL = "https://public-data.tradeskillmaster.com";
+    private static final String SADDLEBAG_EXCHANGE_BASE_URL = "https://api.saddlebagexchange.com";
 
     @Bean
     @Primary
@@ -56,9 +56,9 @@ public class RestClientConfig {
         return restClientWithTimeouts(baseUrl);
     }
 
-    @Bean("tsmPublicDataRestClient")
-    public RestClient tsmPublicDataRestClient() {
-        return restClientWithTimeouts(TSM_PUBLIC_DATA_BASE_URL);
+    @Bean("saddlebagExchangeRestClient")
+    public RestClient saddlebagExchangeRestClient() {
+        return restClientWithTimeouts(SADDLEBAG_EXCHANGE_BASE_URL);
     }
 
     private static RestClient restClientWithTimeouts(String baseUrl) {

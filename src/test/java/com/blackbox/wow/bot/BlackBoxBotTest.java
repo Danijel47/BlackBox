@@ -53,7 +53,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.TSM_EU;
+import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.SADDLEBAG_TSM;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -162,7 +162,7 @@ class BlackBoxBotTest {
         when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
         when(housingSalesReportService.topSellingMessage()).thenThrow(
                 HousingMarketUnavailableException.from(
-                        TSM_EU,
+                        SADDLEBAG_TSM,
                         HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null)
                 )
         );
@@ -170,7 +170,8 @@ class BlackBoxBotTest {
         bot().consume(update(chatId, adminId, "/housing_top"));
 
         assertThat(sentMessage().getText())
-                .isEqualTo("Housing sales data is temporarily unavailable: TSM EU market data returned HTTP 403.");
+                .isEqualTo("Housing sales data is temporarily unavailable: "
+                        + "Saddlebag Exchange TSM data returned HTTP 403.");
     }
 
     @Test

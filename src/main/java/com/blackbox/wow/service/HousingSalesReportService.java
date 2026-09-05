@@ -1,8 +1,8 @@
 package com.blackbox.wow.service;
 
 import com.blackbox.wow.blizzard.BlizzardDecorService;
-import com.blackbox.wow.client.TsmPublicDataClient;
-import com.blackbox.wow.client.TsmPublicDataClient.RegionItem;
+import com.blackbox.wow.client.SaddlebagExchangeClient;
+import com.blackbox.wow.client.SaddlebagExchangeClient.RegionItem;
 import com.blackbox.wow.properties.HousingMarketProperties;
 import org.springframework.stereotype.Service;
 
@@ -15,7 +15,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.BLIZZARD_DECOR;
-import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.TSM_EU;
+import static com.blackbox.wow.service.HousingMarketUnavailableException.DataSource.SADDLEBAG_TSM;
 
 @Service
 public class HousingSalesReportService {
@@ -27,22 +27,22 @@ public class HousingSalesReportService {
             .withZone(ZoneOffset.UTC);
 
     private final BlizzardDecorService decorService;
-    private final TsmPublicDataClient tsmClient;
+    private final SaddlebagExchangeClient marketClient;
     private final int resultLimit;
 
     public HousingSalesReportService(
             BlizzardDecorService decorService,
-            TsmPublicDataClient tsmClient,
+            SaddlebagExchangeClient marketClient,
             HousingMarketProperties properties
     ) {
         this.decorService = decorService;
-        this.tsmClient = tsmClient;
+        this.marketClient = marketClient;
         this.resultLimit = properties.resultLimit();
     }
 
     public String topSellingMessage() {
         Set<Long> decorItemIds = loadDecorItemIds();
-        List<RegionItem> rankedItems = loadTsmRegionItems().stream()
+        List<RegionItem> rankedItems = loadMarketItems(decorItemIds).stream()
                 .filter(item -> decorItemIds.contains(item.itemId()))
                 .filter(HousingSalesReportService::hasSalesData)
                 .sorted(Comparator.comparingDouble(RegionItem::soldPerDay)
@@ -65,7 +65,7 @@ public class HousingSalesReportService {
                 .orElseThrow();
         return message.append("\nUpdated ")
                 .append(UPDATED_DATE_FORMAT.format(updatedAt))
-                .append(" UTC. TSM regional estimates; realm sales are not guaranteed.")
+                .append(" UTC. Saddlebag Exchange/TSM EU estimates; realm sales are not guaranteed.")
                 .toString();
     }
 
@@ -77,11 +77,11 @@ public class HousingSalesReportService {
         }
     }
 
-    private List<RegionItem> loadTsmRegionItems() {
+    private List<RegionItem> loadMarketItems(Set<Long> decorItemIds) {
         try {
-            return tsmClient.getEuRetailRegionItems();
+            return marketClient.getEuRetailItems(decorItemIds);
         } catch (RuntimeException e) {
-            throw HousingMarketUnavailableException.from(TSM_EU, e);
+            throw HousingMarketUnavailableException.from(SADDLEBAG_TSM, e);
         }
     }
 
