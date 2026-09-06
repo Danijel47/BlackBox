@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -37,8 +39,12 @@ public class BlizzardApiClient {
     }
 
     public JsonNode get(String path, Map<String, ?> uriVars, Map<String, ?> query) {
+        return getSnapshot(path, uriVars, query).data();
+    }
+
+    public ApiSnapshot getSnapshot(String path, Map<String, ?> uriVars, Map<String, ?> query) {
         String token = authService.getAccessToken();
-        String body = apiClient.get()
+        ResponseEntity<String> response = apiClient.get()
                 .uri(uriBuilder -> {
                     var builder = uriBuilder.path(path);
                     if (query != null) {
@@ -48,8 +54,12 @@ public class BlizzardApiClient {
                 })
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .retrieve()
-                .body(String.class);
+                .toEntity(String.class);
 
+        return new ApiSnapshot(parseBody(response.getBody()), sourceUpdatedAt(response.getHeaders()), Instant.now());
+    }
+
+    private JsonNode parseBody(String body) {
         if (body == null || body.isBlank()) {
             return json.createObjectNode();
         }
@@ -60,6 +70,17 @@ public class BlizzardApiClient {
             throw new IllegalStateException("Failed to parse Blizzard API response", e);
         }
     }
+
+    private static Instant sourceUpdatedAt(HttpHeaders headers) {
+        try {
+            long lastModified = headers.getLastModified();
+            return lastModified < 0 ? null : Instant.ofEpochMilli(lastModified);
+        } catch (IllegalArgumentException _) {
+            return null;
+        }
+    }
+
+    public record ApiSnapshot(JsonNode data, Instant sourceUpdatedAt, Instant fetchedAt) {}
 
     public Map<String, String> defaultQuery() {
         return Map.of(

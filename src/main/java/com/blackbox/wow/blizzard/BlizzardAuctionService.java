@@ -8,15 +8,18 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class BlizzardAuctionService {
+
+    private static final int MAXIMUM_COMMODITY_ITEMS = 150;
 
     private final BlizzardApiClient api;
     private final BlizzardApiProperties props;
 
     private final BlizzardCache<JsonNode> auctionsCache;
-    private final BlizzardCache<JsonNode> commoditiesCache;
+    private final BlizzardCache<BlizzardApiClient.ApiSnapshot> commoditiesCache;
     private final BlizzardCache<Long> realmCache;
 
     public BlizzardAuctionService(BlizzardApiClient api, BlizzardApiProperties props) {
@@ -24,7 +27,7 @@ public class BlizzardAuctionService {
         this.props = props;
         long maximumAuctionRows = Math.max(1, props.cache().maxAuctionRows());
         this.auctionsCache = new BlizzardCache<>(maximumAuctionRows, BlizzardAuctionService::auctionRowWeight);
-        this.commoditiesCache = new BlizzardCache<>(maximumAuctionRows, BlizzardAuctionService::auctionRowWeight);
+        this.commoditiesCache = new BlizzardCache<>(maximumAuctionRows, snapshot -> auctionRowWeight(snapshot.data()));
         this.realmCache = new BlizzardCache<>(Math.max(1, props.cache().maxRealmEntries()), value -> 1);
     }
 
@@ -58,9 +61,23 @@ public class BlizzardAuctionService {
     }
 
     private JsonNode getRegionCommodities() {
+        return getRegionCommoditySnapshot().data();
+    }
+
+    private BlizzardApiClient.ApiSnapshot getRegionCommoditySnapshot() {
         Duration ttl = Duration.ofSeconds(props.cache().commoditiesTtlSeconds());
         return commoditiesCache.getOrCompute("commodities", ttl,
-                () -> api.get("/data/wow/auctions/commodities", null, api.defaultQuery()));
+                () -> api.getSnapshot("/data/wow/auctions/commodities", null, api.defaultQuery()));
+    }
+
+    public CommodityMarket getCommodityMarket(Set<Long> itemIds) {
+        if (itemIds == null || itemIds.isEmpty() || itemIds.size() > MAXIMUM_COMMODITY_ITEMS
+                || itemIds.stream().anyMatch(id -> id == null || id <= 0)) {
+            throw new IllegalArgumentException(
+                    "Request between 1 and " + MAXIMUM_COMMODITY_ITEMS + " positive commodity item IDs."
+            );
+        }
+        return CommodityMarket.fromSnapshot(getRegionCommoditySnapshot(), itemIds);
     }
 
     static PriceResult lowestUnitPrice(JsonNode data, long itemId) {

@@ -19,6 +19,9 @@ import com.blackbox.wow.service.MPlusSeasonReportService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
+import com.blackbox.wow.service.ProspectingReportService;
+import com.blackbox.wow.service.ProspectingBatch;
+import com.blackbox.wow.service.ProspectingOre;
 import com.blackbox.wow.service.HousingSalesReportService.HousingRanking;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
@@ -30,6 +33,8 @@ import com.blackbox.wow.service.VaultReminderService;
 import com.blackbox.wow.service.WowTokenReportService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
 import com.blackbox.wow.blizzard.BlizzardItemService;
@@ -39,6 +44,7 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
 import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
 import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
@@ -54,6 +60,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -131,6 +138,15 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String ADMIN_ALT_CALLBACK = "alt";
     private static final String ADMIN_ALT_ADD_CALLBACK = "alt_add";
     private static final String HOUSING_TOP_ACTION = "housing_top";
+    private static final String PROSPECT_ACTION = "prospect";
+    private static final String PROSPECT_LABEL = "Prospecting";
+    private static final String PROSPECT_ALL = "all";
+    private static final String PROSPECT_ALL_LABEL = "All ores";
+    private static final String PROSPECT_SAMPLE_CALLBACK = "prospectsample";
+    private static final String CANCEL_COMMAND = "/cancel";
+    private static final String PROSPECT_BATCH_FORMAT = "<ore used> <outputID>:<quantity> ...";
+    private static final Duration PROSPECT_SELECTION_TTL = Duration.ofMinutes(10);
+    private static final int MAX_PROSPECT_SELECTIONS = 100;
     private static final String HOUSING_TOP_LABEL = "Housing Sales";
     private static final String ADMIN_HOUSING_CALLBACK = "housing";
     private static final String HOUSING_SALES_LABEL = "Sales/day";
@@ -203,8 +219,13 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TelegramBotUserService telegramBotUserService;
     private final TelegramDailyPromptService telegramDailyPromptService;
     private final HousingSalesReportService housingSalesReportService;
+    private final ProspectingReportService prospectingReportService;
     private final List<CommandHandler> commandHandlers;
     private final Map<PendingAltKey, PendingAltAddition> pendingAltAdditions = new ConcurrentHashMap<>();
+    private final Cache<PendingProspectingKey, PendingProspectingSelection> pendingProspecting = Caffeine.newBuilder()
+            .maximumSize(MAX_PROSPECT_SELECTIONS)
+            .expireAfterWrite(PROSPECT_SELECTION_TTL)
+            .build();
     private final ScheduledExecutorService workingMessageScheduler = Executors.newSingleThreadScheduledExecutor(
             runnable -> Thread.ofPlatform()
                     .daemon(true)
@@ -241,7 +262,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TelegramAccessPolicy telegramAccessPolicy,
             TelegramBotUserService telegramBotUserService,
             TelegramDailyPromptService telegramDailyPromptService,
-            HousingSalesReportService housingSalesReportService
+            HousingSalesReportService housingSalesReportService,
+            ProspectingReportService prospectingReportService
     ) {
         this.token = token;
         this.adminUserId = adminUserId;
@@ -272,6 +294,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.telegramBotUserService = telegramBotUserService;
         this.telegramDailyPromptService = telegramDailyPromptService;
         this.housingSalesReportService = housingSalesReportService;
+        this.prospectingReportService = prospectingReportService;
         this.commandHandlers = List.of(
                 this::handleUserAdministrationCommand,
                 this::handlePlayerProfileCommand,
@@ -298,6 +321,9 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     public void consume(Update update) {
         if (update != null && update.hasMessage()) {
             telegramDailyPromptService.onMessage(senderUserId(update));
+            if (handlePendingProspecting(update)) {
+                return;
+            }
             if (handlePendingAltAddition(update)) {
                 return;
             }
@@ -356,6 +382,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/useradd" -> () -> addTelegramUser(context);
             case "/userdisable", "/userenable" -> () -> changeTelegramUserStatus(context);
             case "/housingtop" -> () -> sendHousingTop(context.chatId());
+            case ProspectingReportService.COMMAND -> () -> handleProspectingCommand(context);
             default -> null;
         };
         if (adminAction == null) {
@@ -367,6 +394,162 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void sendHousingTop(long chatId) {
         sendHousingReport(chatId, HousingRanking.SALES);
+    }
+
+    private void handleProspectingCommand(CommandContext context) {
+        String arguments = commandArguments(context);
+        if (arguments.isBlank()) {
+            sendProspectingMenu(context.chatId(), context.senderUserId());
+        } else if (PROSPECT_ALL.equalsIgnoreCase(arguments)) {
+            send(context.chatId(), prospectingReportService.compareSaved(context.senderUserId()), prospectingKeyboard(null));
+        } else {
+            send(context.chatId(), prospectingReportService.saveAndReport(context.senderUserId(), arguments),
+                    prospectingKeyboard(null));
+        }
+    }
+
+    private void sendProspectingMenu(long chatId, long senderUserId) {
+        pendingProspecting.invalidate(new PendingProspectingKey(chatId, senderUserId));
+        pendingAltAdditions.remove(new PendingAltKey(chatId, senderUserId));
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        buttons.add(allProspectingOresButton());
+        for (ProspectingOre ore : ProspectingOre.values()) {
+            buttons.add(inlineButton(ore.label(), WOW_ADMIN_CALLBACK_PREFIX + PROSPECT_ACTION + ":" + ore.alias()));
+        }
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        send(chatId, "Choose a Midnight ore and quality for prospecting on Stormscale EU, or All ores to compare.\n"
+                + "Q1/Q2 are the ore quality ranks. Add a recorded batch once for each ore you want to check; "
+                + "later checks reuse your saved sample with current prices.",
+                inlineKeyboard(buttons));
+    }
+
+    private static InlineKeyboardButton allProspectingOresButton() {
+        return inlineButton(PROSPECT_ALL_LABEL, WOW_ADMIN_CALLBACK_PREFIX + PROSPECT_ACTION + ":" + PROSPECT_ALL);
+    }
+
+    private InlineKeyboardMarkup prospectingKeyboard(ProspectingOre ore) {
+        List<InlineKeyboardButton> buttons = new ArrayList<>();
+        if (ore != null) {
+            buttons.add(inlineButton("Update recorded batch",
+                    WOW_ADMIN_CALLBACK_PREFIX + PROSPECT_SAMPLE_CALLBACK + ":" + ore.alias()));
+        }
+        buttons.add(allProspectingOresButton());
+        buttons.add(adminCommandButton("Choose another ore", PROSPECT_ACTION));
+        buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+        return inlineKeyboard(buttons);
+    }
+
+    private boolean selectProspectingOre(long chatId, long senderUserId, String alias) {
+        pendingAltAdditions.remove(new PendingAltKey(chatId, senderUserId));
+        if (PROSPECT_ALL.equals(alias)) {
+            send(chatId, prospectingReportService.compareSaved(senderUserId), prospectingKeyboard(null));
+            return true;
+        }
+        var ore = ProspectingOre.fromAlias(alias);
+        if (ore.isEmpty()) {
+            return false;
+        }
+        var saved = prospectingReportService.savedReport(senderUserId, ore.get());
+        if (saved.isPresent()) {
+            send(chatId, saved.get(), prospectingKeyboard(ore.get()));
+        } else {
+            sendProspectingPrompt(chatId, senderUserId, ore.get(), "");
+        }
+        return true;
+    }
+
+    private boolean startProspectingSample(long chatId, long senderUserId, String alias) {
+        var ore = ProspectingOre.fromAlias(alias);
+        if (ore.isEmpty()) {
+            return false;
+        }
+        pendingAltAdditions.remove(new PendingAltKey(chatId, senderUserId));
+        sendProspectingPrompt(chatId, senderUserId, ore.get(), "");
+        return true;
+    }
+
+    private void sendProspectingPrompt(long chatId, long senderUserId, ProspectingOre ore, String error) {
+        PendingProspectingKey key = new PendingProspectingKey(chatId, senderUserId);
+        pendingProspecting.invalidate(key);
+        String prompt = "Selected: " + ore.label() + "\n\n"
+                + (error.isBlank() ? "" : error + "\n\n")
+                + "Reply with: " + PROSPECT_BATCH_FORMAT + "\n"
+                + "Enter ALL saleable outputs, including byproducts, using their quality-specific item IDs. "
+                + "This batch will be saved for this ore and quality and used by All ores.\n\n"
+                + "Use " + ProspectingReportService.COMMAND + " to change ore, or " + CANCEL_COMMAND + " to cancel. "
+                + "This selection expires after 10 minutes.";
+        try {
+            SendMessage message = SendMessage.builder().chatId(chatId)
+                    .parseMode("HTML")
+                    .text("<a href=\"tg://user?id=" + senderUserId + "\">Prospecting</a>\n"
+                            + HtmlUtils.htmlEscape(prompt, StandardCharsets.UTF_8.name()))
+                    .replyMarkup(ForceReplyKeyboard.builder().forceReply(true).selective(true)
+                            .inputFieldPlaceholder(PROSPECT_BATCH_FORMAT).build())
+                    .build();
+            var sent = client.execute(message);
+            if (sent != null && sent.getMessageId() != null) {
+                pendingProspecting.put(key, new PendingProspectingSelection(ore, sent.getMessageId()));
+            }
+        } catch (Exception _) {
+            // A failed prompt must not leave an active selection that can consume later chat messages.
+            send(chatId, "Could not open the prospecting batch prompt. Use /prospect to try again.",
+                    prospectingKeyboard(ore));
+        }
+    }
+
+    private boolean handlePendingProspecting(Update update) {
+        var message = update.getMessage();
+        if (!message.hasText() || message.getFrom() == null) {
+            return false;
+        }
+        Long chatId = message.getChatId();
+        Long userId = message.getFrom().getId();
+        if (chatId == null || userId == null) {
+            return false;
+        }
+        PendingProspectingKey key = new PendingProspectingKey(chatId, userId);
+        PendingProspectingSelection pending = pendingProspecting.getIfPresent(key);
+        if (pending == null) {
+            return false;
+        }
+        if (!isAdmin(key.telegramUserId()) || !telegramAccessPolicy.isAllowed(key.chatId(), key.telegramUserId())) {
+            pendingProspecting.invalidate(key);
+            return true;
+        }
+        String text = message.getText().strip();
+        if (text.startsWith("/")) {
+            pendingProspecting.invalidate(key);
+            if (CommandContext.from(update).command().equals(CANCEL_COMMAND)) {
+                send(key.chatId(), "Prospecting cancelled.", prospectingKeyboard(null));
+                return true;
+            }
+            return false;
+        }
+        var reply = message.getReplyToMessage();
+        if ((reply != null && !Integer.valueOf(pending.promptMessageId()).equals(reply.getMessageId()))
+                || (key.chatId() < 0 && reply == null)) {
+            return false;
+        }
+        submitProspectingBatch(key, pending.ore(), text);
+        return true;
+    }
+
+    private void submitProspectingBatch(PendingProspectingKey key, ProspectingOre ore, String text) {
+        String arguments = ore.alias() + " " + text;
+        try {
+            ProspectingBatch.parse(arguments);
+        } catch (IllegalArgumentException e) {
+            sendProspectingPrompt(key.chatId(), key.telegramUserId(), ore, e.getMessage());
+            return;
+        }
+        pendingProspecting.invalidate(key);
+        ScheduledFuture<?> workingMessage = scheduleWorkingMessage(key.chatId());
+        try {
+            send(key.chatId(), prospectingReportService.saveAndReport(key.telegramUserId(), arguments),
+                    prospectingKeyboard(ore));
+        } finally {
+            workingMessage.cancel(false);
+        }
     }
 
     private void sendHousingReport(long chatId, HousingRanking ranking) {
@@ -553,6 +736,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
 
         removeInlineKeyboard(chatId, callback.getMessage().getMessageId());
+        pendingProspecting.invalidate(new PendingProspectingKey(chatId, senderUserId));
         ScheduledFuture<?> workingMessage = scheduleWorkingMessage(chatId);
         try {
             routeCallback(chatId, senderUserId, callback.getData());
@@ -1187,6 +1371,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 adminCommandButton("Travel Import", "travel_import"),
                 adminCommandButton("Import Status", "import_status"),
                 adminCommandButton(HOUSING_TOP_LABEL, HOUSING_TOP_ACTION),
+                adminCommandButton(PROSPECT_LABEL, PROSPECT_ACTION),
                 adminCommandButton("Group ID", "group_id"),
                 inlineButton("Public WoW Menu", WOW_ADMIN_CALLBACK_PREFIX + ADMIN_PUBLIC_CALLBACK)
         )));
@@ -1249,6 +1434,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case ADMIN_ALTS_CALLBACK -> handled(() -> sendAdminAltManagementMenu(chatId, value, null));
             case ADMIN_ALT_ADD_CALLBACK -> handled(() -> startAltAddition(chatId, senderUserId, value));
             case ADMIN_HOUSING_CALLBACK -> routeHousingRankingCallback(chatId, value);
+            case PROSPECT_ACTION -> selectProspectingOre(chatId, senderUserId, value);
+            case PROSPECT_SAMPLE_CALLBACK -> startProspectingSample(chatId, senderUserId, value);
             case WOW_COMMAND_CALLBACK -> handled(() -> runWowAdminAction(chatId, senderUserId, value));
             default -> false;
         };
@@ -1312,6 +1499,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "travel_import" -> send(chatId, timeToGoCommands.submitHistoricalImport(), adminBackKeyboard());
             case "import_status" -> send(chatId, timeToGoCommands.refreshHistoricalImport(), adminBackKeyboard());
             case HOUSING_TOP_ACTION -> sendHousingTop(chatId);
+            case PROSPECT_ACTION -> sendProspectingMenu(chatId, senderUserId);
             case "group_id" -> send(chatId, "Chat ID: " + chatId, adminBackKeyboard());
             default -> send(chatId, "That admin action is unavailable. Use /wow_admin to refresh the menu.");
         }
@@ -2866,6 +3054,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private record PendingAltKey(long chatId, long telegramUserId) {
     }
+
+    private record PendingProspectingKey(long chatId, long telegramUserId) {}
+
+    private record PendingProspectingSelection(ProspectingOre ore, int promptMessageId) {}
 
     private record PendingAltAddition(long profileId, String profileName, Instant expiresAt) {
     }

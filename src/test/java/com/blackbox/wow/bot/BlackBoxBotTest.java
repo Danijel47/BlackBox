@@ -16,6 +16,8 @@ import com.blackbox.wow.service.MPlusPerformanceService;
 import com.blackbox.wow.service.MPlusTeamService;
 import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
+import com.blackbox.wow.service.ProspectingReportService;
+import com.blackbox.wow.service.ProspectingOre;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
@@ -33,6 +35,8 @@ import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,12 +45,16 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.chat.Chat;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.message.MaybeInaccessibleMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ForceReplyKeyboard;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -58,14 +66,26 @@ import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.
 import static com.blackbox.wow.service.HousingSalesReportService.HousingRanking.SALES;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class BlackBoxBotTest {
+
+    private static final long PROSPECT_CHAT_ID = 123L;
+    private static final long ADMIN_ID = 999L;
+    private static final String PROSPECT_BATCH = "1000 774:100";
+    private static final String COPPER_BATCH_ARGUMENTS = "copper1 " + PROSPECT_BATCH;
+    private static final String COPPER_CALLBACK = "admin:prospect:copper1";
+    private static final String PROSPECT_ALL_CALLBACK = "admin:prospect:all";
+    private static final String PROSPECT_MENU_CALLBACK = "admin:command:prospect";
+    private static final String PROSPECT_REPORT = "Prospecting report";
+    private static final int PROSPECT_PROMPT_ID = 789;
 
     @Mock private TelegramClient telegramClient;
     @Mock private RaiderIoClient raiderIoClient;
@@ -94,8 +114,308 @@ class BlackBoxBotTest {
     @Mock private TelegramBotUserService telegramBotUserService;
     @Mock private TelegramDailyPromptService telegramDailyPromptService;
     @Mock private HousingSalesReportService housingSalesReportService;
+    @Mock private ProspectingReportService prospectingReportService;
 
     private BlackBoxBot bot;
+
+    @Test
+    void routesProspectingBatchesOnlyForTheAdmin() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        String arguments = "copper1 1000 774:100";
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        when(prospectingReportService.saveAndReport(adminId, arguments)).thenReturn(PROSPECT_REPORT);
+
+        bot().consume(update(chatId, adminId, ProspectingReportService.COMMAND + "@BlackBoxBot " + arguments));
+
+        verify(prospectingReportService).saveAndReport(adminId, arguments);
+        assertThat(sentMessage().getText()).isEqualTo(PROSPECT_REPORT);
+    }
+
+    @Test
+    void rejectsProspectingForAnAllowedNonAdminUser() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, ProspectingReportService.COMMAND));
+
+        verifyNoInteractions(prospectingReportService);
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+    }
+
+    @Test
+    void opensProspectingFromTheAdminMenu() throws Exception {
+        long chatId = 123L;
+        long adminId = 999L;
+        when(accessPolicy.isAllowed(chatId, adminId)).thenReturn(true);
+        bot().consume(callbackUpdate(chatId, adminId, PROSPECT_MENU_CALLBACK));
+
+        assertProspectingPicker(sentMessage());
+        verifyNoInteractions(prospectingReportService);
+    }
+
+    @Test
+    void opensTheOrePickerFromTheProspectCommand() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, ProspectingReportService.COMMAND));
+
+        assertProspectingPicker(sentMessage());
+        verifyNoInteractions(prospectingReportService);
+    }
+
+    @Test
+    void comparesAllOresFromTheButton() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(prospectingReportService.compareSaved(ADMIN_ID)).thenReturn(PROSPECT_REPORT);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_ALL_CALLBACK));
+
+        verify(prospectingReportService).compareSaved(ADMIN_ID);
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo(PROSPECT_REPORT);
+        assertThat(buttons(message)).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(PROSPECT_ALL_CALLBACK, PROSPECT_MENU_CALLBACK);
+    }
+
+    @Test
+    void comparesAllOresFromTheDirectCommand() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(prospectingReportService.compareSaved(ADMIN_ID)).thenReturn(PROSPECT_REPORT);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, ProspectingReportService.COMMAND + " ALL"));
+
+        verify(prospectingReportService).compareSaved(ADMIN_ID);
+        assertThat(sentMessage().getText()).isEqualTo(PROSPECT_REPORT);
+    }
+
+    @Test
+    void selectingASavedOreRepricesItAndOffersAnUpdateButton() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(prospectingReportService.savedReport(ADMIN_ID, ProspectingOre.COPPER_ONE))
+                .thenReturn(Optional.of(PROSPECT_REPORT));
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+
+        SendMessage message = sentMessage();
+        assertThat(message.getText()).isEqualTo(PROSPECT_REPORT);
+        assertThat(buttons(message)).extracting(InlineKeyboardButton::getCallbackData)
+                .contains("admin:prospectsample:copper1", PROSPECT_ALL_CALLBACK, PROSPECT_MENU_CALLBACK);
+    }
+
+    @Test
+    void selectingAnUnsavedOrePromptsAndPrefixesTheSelectedAliasWhenSaving() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        when(prospectingReportService.saveAndReport(ADMIN_ID, COPPER_BATCH_ARGUMENTS))
+                .thenReturn(PROSPECT_REPORT);
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        List<SendMessage> messages = sentMessages(2);
+        assertThat(messages.getFirst().getText()).contains("Selected: " + ProspectingOre.COPPER_ONE.label(),
+                "tg://user?id=999", "&lt;ore used&gt;", "/cancel");
+        assertThat(messages.getFirst().getParseMode()).isEqualTo("HTML");
+        ForceReplyKeyboard replyKeyboard = (ForceReplyKeyboard) messages.getFirst().getReplyMarkup();
+        assertThat(replyKeyboard.getForceReply()).isTrue();
+        assertThat(replyKeyboard.getSelective()).isTrue();
+        assertThat(messages.getLast().getText()).isEqualTo(PROSPECT_REPORT);
+        verify(prospectingReportService).saveAndReport(ADMIN_ID, COPPER_BATCH_ARGUMENTS);
+    }
+
+    @Test
+    void invalidBatchRetriesTheSameOreInsteadOfDiscardingTheSelection() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        when(prospectingReportService.saveAndReport(ADMIN_ID, "tin2 " + PROSPECT_BATCH))
+                .thenReturn(PROSPECT_REPORT);
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "admin:prospect:tin2"));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, "0 774:100", null));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        assertThat(sentMessages(3).get(1).getText()).contains(ProspectingOre.TIN_TWO.label(), "positive ore ID");
+        verify(prospectingReportService).saveAndReport(ADMIN_ID, "tin2 " + PROSPECT_BATCH);
+    }
+
+    @Test
+    void updateBatchButtonPromptsWithoutReusingTheOldSample() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        when(prospectingReportService.saveAndReport(ADMIN_ID, "silver2 " + PROSPECT_BATCH))
+                .thenReturn(PROSPECT_REPORT);
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "admin:prospectsample:silver2"));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).savedReport(anyLong(), any(ProspectingOre.class));
+        verify(prospectingReportService).saveAndReport(ADMIN_ID, "silver2 " + PROSPECT_BATCH);
+        assertThat(sentMessages(2).getFirst().getText()).contains(ProspectingOre.SILVER_TWO.label());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {COPPER_CALLBACK, PROSPECT_ALL_CALLBACK, "admin:prospectsample:copper1"})
+    void nonAdminCannotUseProspectingButtons(String callback) throws Exception {
+        long otherUserId = 456L;
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, otherUserId)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, otherUserId, callback));
+
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+        verifyNoInteractions(prospectingReportService);
+    }
+
+    @Test
+    void sampleRepliesAreIsolatedByChatAndUser() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+
+        subject.consume(prospectingReply(456L, ADMIN_ID, PROSPECT_BATCH, null));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, 456L, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertThat(sentMessage().getReplyMarkup()).isInstanceOf(ForceReplyKeyboard.class);
+    }
+
+    @Test
+    void groupSamplesRequireAReplyToTheCorrectPrompt() throws Exception {
+        long groupId = -123L;
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(groupId);
+        when(prospectingReportService.saveAndReport(ADMIN_ID, COPPER_BATCH_ARGUMENTS))
+                .thenReturn(PROSPECT_REPORT);
+        subject.consume(callbackUpdate(groupId, ADMIN_ID, COPPER_CALLBACK));
+
+        subject.consume(prospectingReply(groupId, ADMIN_ID, PROSPECT_BATCH, null));
+        subject.consume(prospectingReply(groupId, ADMIN_ID, PROSPECT_BATCH, PROSPECT_PROMPT_ID + 1));
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        subject.consume(prospectingReply(groupId, ADMIN_ID, PROSPECT_BATCH, PROSPECT_PROMPT_ID));
+
+        verify(prospectingReportService).saveAndReport(ADMIN_ID, COPPER_BATCH_ARGUMENTS);
+        assertThat(sentMessages(2).getLast().getText()).isEqualTo(PROSPECT_REPORT);
+    }
+
+    @Test
+    void cancelWithBotMentionClearsThePendingSelection() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, "/cancel@BlackBoxBot", null));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertThat(sentMessages(2).getLast().getText()).isEqualTo("Prospecting cancelled.");
+    }
+
+    @Test
+    void returningToThePickerClearsThePendingSelection() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_MENU_CALLBACK));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertProspectingPicker(sentMessages(2).getLast());
+    }
+
+    @Test
+    void failedPromptDeliveryCannotConsumeLaterMessages() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        BlackBoxBot subject = bot();
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertThat(sentMessage().getReplyMarkup()).isInstanceOf(ForceReplyKeyboard.class);
+    }
+
+    @Test
+    void accessRevocationBeforeReplyPreventsSaving() throws Exception {
+        BlackBoxBot subject = prospectingBotWithDeliveredPrompt(PROSPECT_CHAT_ID);
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(false);
+
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertThat(sentMessage().getReplyMarkup()).isInstanceOf(ForceReplyKeyboard.class);
+    }
+
+    @Test
+    void promptDeliveryExceptionOffersASafeRetryWithoutActivatingSelection() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(telegramClient.execute(any(SendMessage.class)))
+                .thenThrow(new TelegramApiException("private-token-url")).thenReturn(null);
+        BlackBoxBot subject = bot();
+
+        subject.consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, COPPER_CALLBACK));
+        subject.consume(prospectingReply(PROSPECT_CHAT_ID, ADMIN_ID, PROSPECT_BATCH, null));
+
+        verify(prospectingReportService, never()).saveAndReport(anyLong(), any());
+        assertThat(sentMessages(2).getLast().getText())
+                .contains("Could not open", "/prospect").doesNotContain("private-token-url");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"admin:prospect:invalid", "admin:prospectsample:invalid"})
+    void unknownOreCallbacksDoNotLoadOrSaveSamples(String callback) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, callback));
+
+        assertThat(sentMessage().getText()).contains("no longer valid");
+        verifyNoInteractions(prospectingReportService);
+    }
+
+    private BlackBoxBot prospectingBotWithDeliveredPrompt(long chatId) throws Exception {
+        when(accessPolicy.isAllowed(chatId, ADMIN_ID)).thenReturn(true);
+        Message delivered = new Message();
+        delivered.setMessageId(PROSPECT_PROMPT_ID);
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(delivered);
+        return bot();
+    }
+
+    private static Update prospectingReply(long chatId, long userId, String text, Integer replyId) {
+        User sender = new User(userId, "Test user", false);
+        Chat chat = Chat.builder().id(chatId).type(chatId < 0 ? "group" : "private").build();
+        Message message = new Message();
+        message.setChat(chat);
+        message.setFrom(sender);
+        message.setText(text);
+        if (replyId != null) {
+            Message reply = new Message();
+            reply.setMessageId(replyId);
+            message.setReplyToMessage(reply);
+        }
+        Update update = new Update();
+        update.setMessage(message);
+        return update;
+    }
+
+    private List<SendMessage> sentMessages(int count) throws Exception {
+        ArgumentCaptor<SendMessage> messages = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(count)).execute(messages.capture());
+        return messages.getAllValues();
+    }
+
+    private static List<InlineKeyboardButton> buttons(SendMessage message) {
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+        return keyboard.getKeyboard().stream().flatMap(List::stream).toList();
+    }
+
+    private static void assertProspectingPicker(SendMessage message) {
+        assertThat(message.getText()).contains("Choose a Midnight ore", "All ores", "recorded batch");
+        List<InlineKeyboardButton> buttons = buttons(message);
+        assertThat(buttons).hasSize(ProspectingOre.values().length + 2);
+        assertThat(buttons).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(PROSPECT_ALL_CALLBACK, "admin:menu");
+        for (ProspectingOre ore : ProspectingOre.values()) {
+            assertThat(buttons).anySatisfy(button -> {
+                assertThat(button.getText()).isEqualTo(ore.label());
+                assertThat(button.getCallbackData()).isEqualTo("admin:prospect:" + ore.alias());
+            });
+        }
+    }
 
     @AfterEach
     void stopScheduler() {
@@ -1171,7 +1491,8 @@ class BlackBoxBotTest {
                 accessPolicy,
                 telegramBotUserService,
                 telegramDailyPromptService,
-                housingSalesReportService
+                housingSalesReportService,
+                prospectingReportService
         );
         return bot;
     }
