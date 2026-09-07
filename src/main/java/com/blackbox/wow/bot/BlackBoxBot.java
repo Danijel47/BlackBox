@@ -978,7 +978,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return;
         }
         if (parts.length >= 3 && parts[1].equals(WOW_CHARACTER_CALLBACK)) {
-            routeCharacterCallback(chatId, parts);
+            routeCharacterCallback(chatId, senderUserId, parts);
             return;
         }
         if (parts.length >= 3 && parts[1].equals(WOW_RAID_CALLBACK)) {
@@ -1117,7 +1117,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 inlineButton("My Profile", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":view"),
                 inlineButton("Select Main", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":main"),
                 inlineButton("Group Mains", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":mains"),
-                inlineButton("Enchants & Gems", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":" + GEAR_CHECK_ACTION),
                 inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
@@ -1127,8 +1126,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/profile"));
         } else if (parts.length == 3 && parts[2].equals("mains")) {
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/mains"));
-        } else if (parts.length == 3 && GEAR_CHECK_ACTION.equals(parts[2])) {
-            dispatchCommand(CommandContext.forCallback(chatId, senderUserId, GearCheckService.COMMAND));
+
         } else if (parts.length == 3 && parts[2].equals("main")) {
             sendOwnedCharacterMenu(chatId, senderUserId);
         } else if (parts.length == 5 && parts[2].equals("select")) {
@@ -1208,11 +1206,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 inlineButton(ITEM_LEVEL_LABEL,
                         WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + ITEM_LEVEL_CALLBACK),
                 inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
+                inlineButton("Enchants & Gems", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + GEAR_CHECK_ACTION),
                 inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
 
-    private void routeCharacterCallback(long chatId, String[] parts) {
+    private void routeCharacterCallback(long chatId, long senderUserId, String[] parts) {
+        if (parts.length == 3 && GEAR_CHECK_ACTION.equals(parts[2])) {
+            dispatchCommand(CommandContext.forCallback(chatId, senderUserId, GearCheckService.COMMAND));
+            return;
+        }
         if (parts.length == 3 && CharacterReportAction.isSupported(parts[2])) {
             sendCharacterProfileMenu(chatId, parts[2]);
             return;

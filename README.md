@@ -1,7 +1,7 @@
 # BlackBox
 
 `/gearcheck` checks the currently selected main of every active player profile.
-It is also available through **Profiles → Enchants & Gems** and uses the bot's
+It is also available through **Character → Enchants & Gems** and uses the bot's
 existing Telegram access policy and Blizzard API credentials.
 
 The report lists missing permanent enchants and empty existing gem sockets for

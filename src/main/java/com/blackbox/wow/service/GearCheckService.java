@@ -14,9 +14,6 @@ public class GearCheckService {
     public static final String COMMAND = "/gearcheck";
     private static final int MAX_MESSAGE_LENGTH = 3500;
     private static final String HEADER = "Gear check — current mains (Midnight)\n";
-    private static final String SCOPE = "\nChecks permanent enchants and existing sockets only; "
-            + "not ranks, best stats, or sockets you could add. "
-            + "Blizzard's last saved gear may lag behind the game; results cached for 5 minutes.\n";
 
     private final TrackedPlayerService players;
     private final BlizzardEquipmentService equipment;
@@ -32,7 +29,7 @@ public class GearCheckService {
             return List.of("No active group mains are configured.");
         }
         List<String> messages = new ArrayList<>();
-        StringBuilder message = new StringBuilder(HEADER).append(SCOPE);
+        StringBuilder message = new StringBuilder(HEADER);
         for (TrackedPlayer player : mains) {
             String result = playerResult(player);
             if (message.length() + result.length() > MAX_MESSAGE_LENGTH) {

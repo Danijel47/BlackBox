@@ -135,11 +135,11 @@ class BlackBoxBotTest {
     }
 
     @Test
-    void opensGearCheckFromProfilesMenu() throws Exception {
+    void opensGearCheckFromCharacterMenu() throws Exception {
         when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
         when(gearCheckService.messages()).thenReturn(List.of("Gear result"));
 
-        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "wow:profiles:gearcheck"));
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "wow:character:gearcheck"));
 
         assertThat(sentMessage().getText()).isEqualTo("Gear result");
     }
@@ -894,7 +894,7 @@ class BlackBoxBotTest {
         assertThat(keyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("My Profile", "Select Main", "Group Mains", "Enchants & Gems", "Back");
+                .containsExactly("My Profile", "Select Main", "Group Mains", "Back");
     }
 
     @Test
@@ -909,7 +909,7 @@ class BlackBoxBotTest {
         assertThat(characterKeyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("Raider.IO Score", "Item Level", "Mount Progress", "Back")
+                .containsExactly("Raider.IO Score", "Item Level", "Mount Progress", "Enchants & Gems", "Back")
                 .doesNotContain("Weekly Vault");
     }
 
