@@ -128,6 +128,21 @@ class BlizzardEquipmentServiceTest {
     }
 
     @Test
+    void retriesMalformedEquipmentBeforeSharingItWithOtherReports() {
+        ObjectNode invalid = completeGear();
+        item(invalid, "HEAD").putObject(SOCKETS);
+        when(api.profileQuery()).thenReturn(QUERY);
+        when(api.getSnapshot(anyString(), anyMap(), anyMap()))
+                .thenReturn(new BlizzardApiClient.ApiSnapshot(invalid, UPDATED, UPDATED))
+                .thenReturn(new BlizzardApiClient.ApiSnapshot(completeGear(), UPDATED, UPDATED));
+
+        assertThatThrownBy(() -> service.snapshot(PLAYER)).isInstanceOf(IllegalStateException.class);
+        assertThat(service.check(PLAYER).complete()).isTrue();
+        assertThat(service.snapshot(PLAYER).items()).isNotEmpty();
+        verify(api, times(2)).getSnapshot(anyString(), anyMap(), anyMap());
+    }
+
+    @Test
     void cachesByCharacterAndPreservesAccentsInRequestVariables() {
         stub(completeGear());
         service.check(PLAYER);
