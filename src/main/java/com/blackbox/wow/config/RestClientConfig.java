@@ -44,9 +44,7 @@ public class RestClientConfig {
 
     @Bean("blizzardApiRestClient")
     public RestClient blizzardApiRestClient(@Value("${blizzard.api-base-url}") String baseUrl) {
-        return RestClient.builder()
-                .baseUrl(baseUrl)
-                .build();
+        return restClientWithTimeouts(baseUrl);
     }
 
     @Bean("wowTokenHistoryRestClient")

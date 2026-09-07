@@ -26,6 +26,7 @@ import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.TrackedPlayerService;
+import com.blackbox.wow.service.GearCheckService;
 import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
@@ -97,6 +98,7 @@ class BlackBoxBotTest {
     @Mock private BlizzardMountService mountService;
     @Mock private TimeToGoCommandService timeToGoCommandService;
     @Mock private TrackedPlayerService trackedPlayerService;
+    @Mock private GearCheckService gearCheckService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
     @Mock private RaidReportService raidReportService;
@@ -117,6 +119,37 @@ class BlackBoxBotTest {
     @Mock private ProspectingReportService prospectingReportService;
 
     private BlackBoxBot bot;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/gearcheck", "/gearcheck@BlackBoxBot"})
+    void checksMainGearAndSendsEveryReportPage(String command) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(gearCheckService.messages()).thenReturn(List.of("First gear page", "Second gear page"));
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, command));
+
+        ArgumentCaptor<SendMessage> messages = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(2)).execute(messages.capture());
+        assertThat(messages.getAllValues()).extracting(SendMessage::getText)
+                .containsExactly("First gear page", "Second gear page");
+    }
+
+    @Test
+    void opensGearCheckFromProfilesMenu() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(gearCheckService.messages()).thenReturn(List.of("Gear result"));
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "wow:profiles:gearcheck"));
+
+        assertThat(sentMessage().getText()).isEqualTo("Gear result");
+    }
+
+    @Test
+    void rejectsUnauthorizedGearChecks() {
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, GearCheckService.COMMAND));
+
+        verifyNoInteractions(gearCheckService);
+    }
 
     @Test
     void routesProspectingBatchesOnlyForTheAdmin() throws Exception {
@@ -861,7 +894,7 @@ class BlackBoxBotTest {
         assertThat(keyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("My Profile", "Select Main", "Group Mains", "Back");
+                .containsExactly("My Profile", "Select Main", "Group Mains", "Enchants & Gems", "Back");
     }
 
     @Test
@@ -1475,6 +1508,7 @@ class BlackBoxBotTest {
                 mountService,
                 timeToGoCommandService,
                 trackedPlayerService,
+                gearCheckService,
                 vaultReminderService,
                 raceToWorldFirstService,
                 raidReportService,

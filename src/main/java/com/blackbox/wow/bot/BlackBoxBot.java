@@ -25,6 +25,7 @@ import com.blackbox.wow.service.ProspectingOre;
 import com.blackbox.wow.service.HousingSalesReportService.HousingRanking;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
+import com.blackbox.wow.service.GearCheckService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
@@ -89,6 +90,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String TELEGRAM_USER_PREFIX = "Telegram user ";
     private static final String PROFILE_PREFIX = "Profile ";
     private static final String PROFILES_LABEL = "Profiles";
+    private static final String GEAR_CHECK_ACTION = "gearcheck";
     private static final String BACK_LABEL = "Back";
     private static final String CHOOSE_PROFILE_PREFIX = "Choose a profile for ";
     private static final String USAGE_PREFIX = "Usage: ";
@@ -202,6 +204,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final BlizzardMountService mountService;
     private final TimeToGoCommandService timeToGoCommands;
     private final TrackedPlayerService trackedPlayerService;
+    private final GearCheckService gearCheckService;
     private final VaultReminderService vaultReminderService;
     private final RaceToWorldFirstService raceToWorldFirstService;
     private final RaidReportService raidReportService;
@@ -246,6 +249,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             BlizzardMountService mountService,
             TimeToGoCommandService timeToGoCommands,
             TrackedPlayerService trackedPlayerService,
+            GearCheckService gearCheckService,
             VaultReminderService vaultReminderService,
             RaceToWorldFirstService raceToWorldFirstService,
             RaidReportService raidReportService,
@@ -277,6 +281,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.mountService = mountService;
         this.timeToGoCommands = timeToGoCommands;
         this.trackedPlayerService = trackedPlayerService;
+        this.gearCheckService = gearCheckService;
         this.vaultReminderService = vaultReminderService;
         this.raceToWorldFirstService = raceToWorldFirstService;
         this.raidReportService = raidReportService;
@@ -624,6 +629,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/profile-help" -> handled(() -> send(context.chatId(), profileHelpMessage()));
             case "/profile" -> handled(() -> sendOwnProfile(context));
             case "/profilemain" -> handled(() -> changeOwnMain(context));
+            case GearCheckService.COMMAND -> handled(() -> gearCheckService.messages()
+                    .forEach(message -> send(context.chatId(), message)));
             case "/mains" -> handled(() -> send(context.chatId(), formatCurrentMains()));
             default -> false;
         };
@@ -1110,6 +1117,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 inlineButton("My Profile", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":view"),
                 inlineButton("Select Main", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":main"),
                 inlineButton("Group Mains", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":mains"),
+                inlineButton("Enchants & Gems", WOW_CALLBACK_PREFIX + WOW_PROFILES_CALLBACK + ":" + GEAR_CHECK_ACTION),
                 inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
@@ -1119,6 +1127,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/profile"));
         } else if (parts.length == 3 && parts[2].equals("mains")) {
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, "/mains"));
+        } else if (parts.length == 3 && GEAR_CHECK_ACTION.equals(parts[2])) {
+            dispatchCommand(CommandContext.forCallback(chatId, senderUserId, GearCheckService.COMMAND));
         } else if (parts.length == 3 && parts[2].equals("main")) {
             sendOwnedCharacterMenu(chatId, senderUserId);
         } else if (parts.length == 5 && parts[2].equals("select")) {
@@ -2453,8 +2463,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 View all current group mains:
                 /mains
 
+                Check enchants and gems for all current mains:
+                %s
+
                 Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus_combat follows each profile's selected main.
-                """.strip();
+                """.formatted(GearCheckService.COMMAND).strip();
     }
 
     private static String formatOwnPlayerProfile(TrackedPlayerService.PlayerProfile profile) {
