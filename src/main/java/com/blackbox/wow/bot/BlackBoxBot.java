@@ -26,6 +26,7 @@ import com.blackbox.wow.service.HousingSalesReportService.HousingRanking;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.GearCheckService;
+import com.blackbox.wow.service.GearUpgradeService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
@@ -117,6 +118,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String WOW_COMMAND_CALLBACK = "command";
     private static final String WOW_PROFILES_CALLBACK = "profiles";
     private static final String WOW_CHARACTER_CALLBACK = "character";
+    private static final String GEAR_UPGRADE_CALLBACK =
+            WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + GearUpgradeService.ACTION;
     private static final String WOW_RAID_CALLBACK = "raid";
     private static final String RAID_PROGRESS_CALLBACK = "progress";
     private static final String RAID_VAULT_CALLBACK = "vault";
@@ -205,6 +208,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TimeToGoCommandService timeToGoCommands;
     private final TrackedPlayerService trackedPlayerService;
     private final GearCheckService gearCheckService;
+    private final GearUpgradeService gearUpgradeService;
     private final VaultReminderService vaultReminderService;
     private final RaceToWorldFirstService raceToWorldFirstService;
     private final RaidReportService raidReportService;
@@ -250,6 +254,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TimeToGoCommandService timeToGoCommands,
             TrackedPlayerService trackedPlayerService,
             GearCheckService gearCheckService,
+            GearUpgradeService gearUpgradeService,
             VaultReminderService vaultReminderService,
             RaceToWorldFirstService raceToWorldFirstService,
             RaidReportService raidReportService,
@@ -282,6 +287,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.timeToGoCommands = timeToGoCommands;
         this.trackedPlayerService = trackedPlayerService;
         this.gearCheckService = gearCheckService;
+        this.gearUpgradeService = gearUpgradeService;
         this.vaultReminderService = vaultReminderService;
         this.raceToWorldFirstService = raceToWorldFirstService;
         this.raidReportService = raidReportService;
@@ -631,6 +637,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/profilemain" -> handled(() -> changeOwnMain(context));
             case GearCheckService.COMMAND -> handled(() -> gearCheckService.messages()
                     .forEach(message -> send(context.chatId(), message)));
+            case GearUpgradeService.COMMAND -> handled(() -> sendCharacterProfileMenu(
+                    context.chatId(), GearUpgradeService.ACTION, GearUpgradeService.LABEL));
             case "/mains" -> handled(() -> send(context.chatId(), formatCurrentMains()));
             default -> false;
         };
@@ -1207,11 +1215,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                         WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + ITEM_LEVEL_CALLBACK),
                 inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
                 inlineButton("Enchants & Gems", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + GEAR_CHECK_ACTION),
+                inlineButton(GearUpgradeService.LABEL, GEAR_UPGRADE_CALLBACK),
                 inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
         )));
     }
 
     private void routeCharacterCallback(long chatId, long senderUserId, String[] parts) {
+        if (GearUpgradeService.ACTION.equals(parts[2])) {
+            routeGearUpgradeCallback(chatId, parts);
+            return;
+        }
         if (parts.length == 3 && GEAR_CHECK_ACTION.equals(parts[2])) {
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, GearCheckService.COMMAND));
             return;
@@ -1233,6 +1246,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, "That character report is unavailable.");
             return;
         }
+        sendCharacterProfileMenu(chatId, action.key(), action.label());
+    }
+
+    private void sendCharacterProfileMenu(long chatId, String actionKey, String label) {
         List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
         if (profiles.isEmpty()) {
             send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
@@ -1241,7 +1258,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         List<InlineKeyboardButton> buttons = new ArrayList<>();
         buttons.add(inlineButton(
                 ALL_PROFILES_LABEL,
-                WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":all"
+                WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + actionKey + ":" + ALL_PROFILES_CALLBACK
         ));
         for (TrackedPlayer profile : profiles) {
             if (buttons.size() >= MAX_PROFILE_BUTTONS) {
@@ -1249,11 +1266,51 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             }
             buttons.add(inlineButton(
                     profile.profileName(),
-                    WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + action.key() + ":" + profile.profileId()
+                    WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + actionKey + ":" + profile.profileId()
             ));
         }
         buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
-        send(chatId, CHOOSE_PROFILE_PREFIX + action.label() + ":", inlineKeyboard(buttons));
+        send(chatId, CHOOSE_PROFILE_PREFIX + label + ":", inlineKeyboard(buttons));
+    }
+
+    private void routeGearUpgradeCallback(long chatId, String[] parts) {
+        if (parts.length == 3) {
+            sendCharacterProfileMenu(chatId, GearUpgradeService.ACTION, GearUpgradeService.LABEL);
+        } else if (parts.length == 4) {
+            sendGearUpgradeReport(chatId, parts[3]);
+        } else {
+            send(chatId, "That gear upgrade selection is no longer valid. Use /gearupg to start again.");
+        }
+    }
+
+    private void sendGearUpgradeReport(long chatId, String profileValue) {
+        if (ALL_PROFILES_CALLBACK.equals(profileValue)) {
+            List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
+            if (profiles.isEmpty()) {
+                send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
+                return;
+            }
+            for (TrackedPlayer profile : profiles) {
+                send(chatId, gearUpgradeService.summary(profile), inlineKeyboard(List.of(
+                        inlineButton("Details", GEAR_UPGRADE_CALLBACK + ":" + profile.profileId()),
+                        inlineButton(BACK_LABEL, GEAR_UPGRADE_CALLBACK)
+                )));
+            }
+            return;
+        }
+        TrackedPlayer profile = findActiveProfile(profileValue);
+        if (profile == null) {
+            send(chatId, "That profile is no longer available. Use /gearupg to refresh the menu.");
+            return;
+        }
+        List<String> pages = gearUpgradeService.details(profile);
+        for (int index = 0; index < pages.size(); index++) {
+            if (index == pages.size() - 1) {
+                send(chatId, pages.get(index), inlineKeyboard(List.of(inlineButton(BACK_LABEL, GEAR_UPGRADE_CALLBACK))));
+            } else {
+                send(chatId, pages.get(index));
+            }
+        }
     }
 
     private void runCharacterReport(long chatId, String actionKey, String profileIdValue) {
@@ -2469,8 +2526,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 Check enchants and gems for all current mains:
                 %s
 
+                Prioritize gear upgrades for one main or all profiles:
+                %s
+
                 Only the characters registered to your profile can be selected. Ask the bot admin to add another character. /mplus_combat follows each profile's selected main.
-                """.formatted(GearCheckService.COMMAND).strip();
+                """.formatted(GearCheckService.COMMAND, GearUpgradeService.COMMAND).strip();
     }
 
     private static String formatOwnPlayerProfile(TrackedPlayerService.PlayerProfile profile) {

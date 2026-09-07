@@ -30,13 +30,21 @@ public class BlizzardEquipmentService {
     );
 
     private final BlizzardApiClient api;
-    private final BlizzardCache<EquipmentCheck> cache = new BlizzardCache<>(256, value -> 1);
+    private final BlizzardCache<EquipmentData> cache = new BlizzardCache<>(256, value -> 1);
 
     public BlizzardEquipmentService(BlizzardApiClient api) {
         this.api = api;
     }
 
     public EquipmentCheck check(TrackedPlayer player) {
+        return data(player).check();
+    }
+
+    public EquipmentSnapshot snapshot(TrackedPlayer player) {
+        return data(player).snapshot();
+    }
+
+    private EquipmentData data(TrackedPlayer player) {
         Map<String, String> query = api.profileQuery();
         String region = player.region().toLowerCase(Locale.ROOT);
         if (!("profile-" + region).equals(query.get("namespace"))) {
@@ -48,18 +56,22 @@ public class BlizzardEquipmentService {
         return cache.getOrCompute(key, CACHE_TTL, () -> load(realm, name, query));
     }
 
-    private EquipmentCheck load(String realm, String name, Map<String, String> query) {
+    private EquipmentData load(String realm, String name, Map<String, String> query) {
         var snapshot = api.getSnapshot(
                 "/profile/wow/character/{realm}/{name}/equipment",
                 Map.of("realm", realm, "name", name), query
         );
-        Map<String, JsonNode> items = equippedItems(snapshot.data());
+        var equipment = new EquipmentSnapshot(equippedItems(snapshot.data()), snapshot.sourceUpdatedAt());
+        return new EquipmentData(equipment, check(equipment));
+    }
+
+    private static EquipmentCheck check(EquipmentSnapshot snapshot) {
         List<String> missingEnchants = new ArrayList<>();
         List<String> emptySockets = new ArrayList<>();
         int enchantSlots = 0;
         int sockets = 0;
         int filledSockets = 0;
-        for (var entry : items.entrySet()) {
+        for (var entry : snapshot.items().entrySet()) {
             String slot = entry.getKey();
             JsonNode item = entry.getValue();
             String label = slotLabel(slot);
@@ -164,4 +176,12 @@ public class BlizzardEquipmentService {
             return missingEnchants.isEmpty() && emptySockets.isEmpty();
         }
     }
+
+    public record EquipmentSnapshot(Map<String, JsonNode> items, Instant sourceUpdatedAt) {
+        public EquipmentSnapshot {
+            items = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(items));
+        }
+    }
+
+    private record EquipmentData(EquipmentSnapshot snapshot, EquipmentCheck check) {}
 }

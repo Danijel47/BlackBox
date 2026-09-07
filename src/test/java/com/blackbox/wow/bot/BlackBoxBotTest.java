@@ -27,6 +27,7 @@ import com.blackbox.wow.service.TelegramBotUserService;
 import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.GearCheckService;
+import com.blackbox.wow.service.GearUpgradeService;
 import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
@@ -87,6 +88,8 @@ class BlackBoxBotTest {
     private static final String PROSPECT_MENU_CALLBACK = "admin:command:prospect";
     private static final String PROSPECT_REPORT = "Prospecting report";
     private static final int PROSPECT_PROMPT_ID = 789;
+    private static final String GEAR_UPGRADE_CALLBACK = "wow:character:gearupg";
+    private static final TrackedPlayer GEAR_PLAYER = new TrackedPlayer(11, "Alice", "eu", "stormscale", "Mage");
 
     @Mock private TelegramClient telegramClient;
     @Mock private RaiderIoClient raiderIoClient;
@@ -99,6 +102,7 @@ class BlackBoxBotTest {
     @Mock private TimeToGoCommandService timeToGoCommandService;
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private GearCheckService gearCheckService;
+    @Mock private GearUpgradeService gearUpgradeService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
     @Mock private RaidReportService raidReportService;
@@ -119,6 +123,101 @@ class BlackBoxBotTest {
     @Mock private ProspectingReportService prospectingReportService;
 
     private BlackBoxBot bot;
+
+    @Test
+    void showsGearUpgradeButtonUnderCharacter() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, "wow:menu:character"));
+
+        assertThat(buttons(sentMessage())).anySatisfy(button -> {
+            assertThat(button.getText()).isEqualTo(GearUpgradeService.LABEL);
+            assertThat(button.getCallbackData()).isEqualTo(GEAR_UPGRADE_CALLBACK);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/gearupg", "/gearupg@BlackBoxBot", GEAR_UPGRADE_CALLBACK})
+    void opensGearUpgradeProfilePickerFromCommandAndButton(String trigger) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(GEAR_PLAYER));
+
+        bot().consume(trigger.startsWith("/") ? update(PROSPECT_CHAT_ID, ADMIN_ID, trigger)
+                : callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, trigger));
+
+        assertThat(sentMessage().getText()).contains(GearUpgradeService.LABEL);
+        assertThat(buttons(sentMessage())).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(GEAR_UPGRADE_CALLBACK + ":all", GEAR_UPGRADE_CALLBACK + ":11");
+        verifyNoInteractions(gearUpgradeService);
+    }
+
+    @Test
+    void sendsCompactGearReportsWithDetailsButtonsForAllCurrentMains() throws Exception {
+        TrackedPlayer second = new TrackedPlayer(12, "Bob", "eu", "stormscale", "Warrior");
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(GEAR_PLAYER, second));
+        when(gearUpgradeService.summary(GEAR_PLAYER)).thenReturn("Alice summary");
+        when(gearUpgradeService.summary(second)).thenReturn("Bob summary");
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, GEAR_UPGRADE_CALLBACK + ":all"));
+
+        ArgumentCaptor<SendMessage> messages = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(2)).execute(messages.capture());
+        assertThat(messages.getAllValues()).extracting(SendMessage::getText)
+                .containsExactly("Alice summary", "Bob summary");
+        assertThat(buttons(messages.getAllValues().getFirst())).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(GEAR_UPGRADE_CALLBACK + ":11");
+        assertThat(buttons(messages.getAllValues().getLast())).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(GEAR_UPGRADE_CALLBACK + ":12");
+        verify(gearUpgradeService, never()).details(any());
+    }
+
+    @Test
+    void resolvesCurrentSelectedMainAtClickTimeAndSendsEveryDetailPage() throws Exception {
+        TrackedPlayer changedMain = new TrackedPlayer(11, "Alice", "eu", "stormscale", "Alt");
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(changedMain));
+        when(gearUpgradeService.details(changedMain)).thenReturn(List.of("First detail page", "Last detail page"));
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, GEAR_UPGRADE_CALLBACK + ":11"));
+
+        ArgumentCaptor<SendMessage> messages = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(2)).execute(messages.capture());
+        assertThat(messages.getAllValues()).extracting(SendMessage::getText)
+                .containsExactly("First detail page", "Last detail page");
+        assertThat(buttons(messages.getAllValues().getLast())).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(GEAR_UPGRADE_CALLBACK);
+        verify(gearUpgradeService, never()).details(GEAR_PLAYER);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/gearupg", GEAR_UPGRADE_CALLBACK, GEAR_UPGRADE_CALLBACK + ":all", GEAR_UPGRADE_CALLBACK + ":11"})
+    void rejectsUnauthorizedGearUpgradeCommandsAndCallbacks(String trigger) {
+        bot().consume(trigger.startsWith("/") ? update(PROSPECT_CHAT_ID, ADMIN_ID, trigger)
+                : callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, trigger));
+
+        verifyNoInteractions(gearUpgradeService);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"11", "0", "-1", "not-an-id", "999999999999999999999", "all:extra"})
+    void rejectsMissingOrMalformedGearUpgradeSelections(String selection) {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, GEAR_UPGRADE_CALLBACK + ":" + selection));
+
+        verifyNoInteractions(gearUpgradeService);
+    }
+
+    @Test
+    void handlesEmptyGearUpgradeProfileList() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, GEAR_UPGRADE_CALLBACK + ":all"));
+
+        assertThat(sentMessage().getText()).contains("No active profiles");
+        verifyNoInteractions(gearUpgradeService);
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {"/gearcheck", "/gearcheck@BlackBoxBot"})
@@ -909,7 +1008,7 @@ class BlackBoxBotTest {
         assertThat(characterKeyboard.getKeyboard().stream()
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
-                .containsExactly("Raider.IO Score", "Item Level", "Mount Progress", "Enchants & Gems", "Back")
+                .containsExactly("Raider.IO Score", "Item Level", "Mount Progress", "Enchants & Gems", GearUpgradeService.LABEL, "Back")
                 .doesNotContain("Weekly Vault");
     }
 
@@ -1509,6 +1608,7 @@ class BlackBoxBotTest {
                 timeToGoCommandService,
                 trackedPlayerService,
                 gearCheckService,
+                gearUpgradeService,
                 vaultReminderService,
                 raceToWorldFirstService,
                 raidReportService,
