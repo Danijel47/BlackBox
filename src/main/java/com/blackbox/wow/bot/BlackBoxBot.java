@@ -27,6 +27,7 @@ import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.GearCheckService;
 import com.blackbox.wow.service.GearUpgradeService;
+import com.blackbox.wow.service.CombatKeyLevelService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.TelegramAccessPolicy;
 import com.blackbox.wow.service.TelegramBotUserService;
@@ -45,6 +46,7 @@ import com.blackbox.wow.blizzard.BlizzardMountService;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
 import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
@@ -140,6 +142,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String ADMIN_USER_CALLBACK = "user";
     private static final String ADMIN_PROFILE_CALLBACK = "profile";
     private static final String ADMIN_ALTS_CALLBACK = "alts";
+    private static final String ADMIN_KEY_LEVEL_CALLBACK = "keylevel";
+    private static final String ADMIN_KEY_LEVEL_LABEL = "M+ Key Level";
     private static final String ADMIN_ALT_CALLBACK = "alt";
     private static final String ADMIN_ALT_ADD_CALLBACK = "alt_add";
     private static final String HOUSING_TOP_ACTION = "housing_top";
@@ -209,6 +213,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TrackedPlayerService trackedPlayerService;
     private final GearCheckService gearCheckService;
     private final GearUpgradeService gearUpgradeService;
+    private final CombatKeyLevelService combatKeyLevelService;
     private final VaultReminderService vaultReminderService;
     private final RaceToWorldFirstService raceToWorldFirstService;
     private final RaidReportService raidReportService;
@@ -255,6 +260,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TrackedPlayerService trackedPlayerService,
             GearCheckService gearCheckService,
             GearUpgradeService gearUpgradeService,
+            CombatKeyLevelService combatKeyLevelService,
             VaultReminderService vaultReminderService,
             RaceToWorldFirstService raceToWorldFirstService,
             RaidReportService raidReportService,
@@ -288,6 +294,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.trackedPlayerService = trackedPlayerService;
         this.gearCheckService = gearCheckService;
         this.gearUpgradeService = gearUpgradeService;
+        this.combatKeyLevelService = combatKeyLevelService;
         this.vaultReminderService = vaultReminderService;
         this.raceToWorldFirstService = raceToWorldFirstService;
         this.raidReportService = raidReportService;
@@ -394,6 +401,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/userdisable", "/userenable" -> () -> changeTelegramUserStatus(context);
             case "/housingtop" -> () -> sendHousingTop(context.chatId());
             case ProspectingReportService.COMMAND -> () -> handleProspectingCommand(context);
+            case CombatKeyLevelService.COMMAND -> () -> handleCombatKeyLevelCommand(context);
             default -> null;
         };
         if (adminAction == null) {
@@ -1437,6 +1445,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 adminButton("Profile Access", ADMIN_PROFILE_ACCESS_CALLBACK),
                 adminButton("Manage Alts", ADMIN_ALTS_CALLBACK),
                 adminCommandButton("M+ Status", "mplus_status"),
+                adminButton(ADMIN_KEY_LEVEL_LABEL, ADMIN_KEY_LEVEL_CALLBACK),
                 adminCommandButton("Vault Reminder", "vault_reminder"),
                 adminCommandButton("Travel Import", "travel_import"),
                 adminCommandButton("Import Status", "import_status"),
@@ -1460,7 +1469,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             send(chatId, adminOnlyMessage());
             return;
         }
-        String[] parts = callbackData.split(":");
+        String[] parts = callbackData.split(":", -1);
         boolean routed = switch (parts.length) {
             case 2 -> routeAdminMenuCallback(chatId, senderUserId, parts[1]);
             case 3 -> routeAdminActionCallback(chatId, senderUserId, parts[1], parts[2]);
@@ -1490,6 +1499,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             ));
             case ADMIN_PROFILE_ACCESS_CALLBACK -> handled(() -> sendAdminProfileAccessMenu(chatId));
             case ADMIN_ALTS_CALLBACK -> handled(() -> sendAdminAltProfileMenu(chatId));
+            case ADMIN_KEY_LEVEL_CALLBACK -> handled(() -> sendCombatKeyLevelMenu(chatId, ""));
             default -> false;
         };
     }
@@ -1506,6 +1516,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case ADMIN_HOUSING_CALLBACK -> routeHousingRankingCallback(chatId, value);
             case PROSPECT_ACTION -> selectProspectingOre(chatId, senderUserId, value);
             case PROSPECT_SAMPLE_CALLBACK -> startProspectingSample(chatId, senderUserId, value);
+            case ADMIN_KEY_LEVEL_CALLBACK -> handled(() -> changeCombatKeyLevel(chatId, senderUserId, value));
             case WOW_COMMAND_CALLBACK -> handled(() -> runWowAdminAction(chatId, senderUserId, value));
             default -> false;
         };
@@ -1535,6 +1546,54 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private InlineKeyboardMarkup adminBackKeyboard() {
         return inlineKeyboard(List.of(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK)));
+    }
+
+    private void handleCombatKeyLevelCommand(CommandContext context) {
+        String argument = commandArguments(context);
+        if (argument.isBlank()) {
+            sendCombatKeyLevelMenu(context.chatId(), "");
+        } else {
+            changeCombatKeyLevel(context.chatId(), context.senderUserId(), argument);
+        }
+    }
+
+    private void sendCombatKeyLevelMenu(long chatId, String confirmation) {
+        try {
+            int currentLevel = combatKeyLevelService.currentLevel();
+            List<InlineKeyboardButton> buttons = new ArrayList<>();
+            for (int level = CombatKeyLevelService.MIN_LEVEL; level <= CombatKeyLevelService.MAX_LEVEL; level++) {
+                buttons.add(inlineButton((level == currentLevel ? "✓ " : "") + "+" + level,
+                        WOW_ADMIN_CALLBACK_PREFIX + ADMIN_KEY_LEVEL_CALLBACK + ":" + level));
+            }
+            buttons.add(inlineButton(BACK_LABEL, WOW_ADMIN_CALLBACK_PREFIX + WOW_MENU_CALLBACK));
+            send(chatId, confirmation + ADMIN_KEY_LEVEL_LABEL + " — current minimum: +" + currentLevel
+                    + "\nChoose the minimum for timed M+ combat and awards, for all profiles."
+                    + "\nChanges apply to new reports immediately and survive restarts."
+                    + "\nPreviously uncollected runs may need the next log sync.", inlineKeyboard(buttons));
+        } catch (DataAccessException | IllegalStateException _) {
+            send(chatId, "Could not load the combat key level. Please try again.", adminBackKeyboard());
+        }
+    }
+
+    private void changeCombatKeyLevel(long chatId, long senderUserId, String value) {
+        Long level = parseLong(value.strip());
+        if (level == null || level < CombatKeyLevelService.MIN_LEVEL || level > CombatKeyLevelService.MAX_LEVEL) {
+            send(chatId, CombatKeyLevelService.RANGE_MESSAGE, adminBackKeyboard());
+            return;
+        }
+        try {
+            combatKeyLevelService.changeLevel(senderUserId, level.intValue());
+        } catch (SecurityException _) {
+            send(chatId, adminOnlyMessage());
+            return;
+        } catch (IllegalArgumentException _) {
+            send(chatId, CombatKeyLevelService.RANGE_MESSAGE, adminBackKeyboard());
+            return;
+        } catch (DataAccessException | IllegalStateException _) {
+            send(chatId, "Could not save the combat key level. Please try again.", adminBackKeyboard());
+            return;
+        }
+        sendCombatKeyLevelMenu(chatId, "Saved minimum key level: +" + level + ".\n");
     }
 
     private InlineKeyboardMarkup housingRankingKeyboard() {
@@ -3095,7 +3154,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
 
         private static NormalizedCommand normalizeSnakeCaseCommand(String command) {
-            if (!command.contains("_") || command.startsWith("/token_")) {
+            if (!command.contains("_") || command.startsWith("/token_") || CombatKeyLevelService.COMMAND.equals(command)) {
                 return null;
             }
             if (command.startsWith("/mplus_")) {

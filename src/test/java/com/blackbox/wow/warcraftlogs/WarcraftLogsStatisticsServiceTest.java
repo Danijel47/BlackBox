@@ -6,10 +6,14 @@ import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
 import com.blackbox.wow.repository.WarcraftLogItemLevelRepository;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.service.TrackedPlayerService;
+import com.blackbox.wow.service.CombatKeyLevelService;
+import com.blackbox.wow.repository.CombatKeyLevelRepository;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsEventPager.EventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -23,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -35,6 +40,39 @@ class WarcraftLogsStatisticsServiceTest {
 
     private static final int MINIMUM_KEYSTONE_LEVEL = 13;
     private static final String RUBY_LIFE_POOLS = "Ruby Life Pools";
+
+    @Test
+    void combatAndAwardsUseTheLatestPersistedLevelWithoutRefreshingLogs() {
+        CombatKeyLevelRepository settings = mock(CombatKeyLevelRepository.class);
+        when(settings.findLevel()).thenReturn(Optional.of(12), Optional.of(18), Optional.of(18), Optional.of(12));
+        WarcraftLogsClient client = mock(WarcraftLogsClient.class);
+        WarcraftLogPlayerRunRepository runs = mock(WarcraftLogPlayerRunRepository.class);
+        TrackedPlayerService players = mock(TrackedPlayerService.class);
+        when(players.activePlayers()).thenReturn(List.of(
+                new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")));
+        List<WarcraftLogPlayerRunEntity> stored = List.of(
+                runAtLevel(12, 1, "Thelinq", "lower", 4, 0, "80", "100000", null),
+                runAtLevel(18, 1, "Thelinq", "higher", 8, 0, "90", "200000", null));
+        when(runs.findTimedBySeasonKeyAndMinimumKeystoneLevel(eq("midnight-season-2"), anyInt()))
+                .thenAnswer(invocation -> stored.stream()
+                        .filter(run -> run.getKeystoneLevel() >= (int) invocation.getArgument(1)).toList());
+        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+                client, properties(), players, runs, mock(WarcraftLogProfileSnapshotRepository.class),
+                mock(MPlusRunCorrelationService.class), mock(WarcraftLogsEventPager.class),
+                mock(WarcraftLogItemLevelRepository.class), new CombatKeyLevelService(settings, properties(), 999L));
+
+        assertThat(service.combatMessage(""))
+                .contains("timed +12 and above", "Logged runs: 2", "DPS: 150k", "timed +12 or higher runs");
+        assertThat(service.combatMessage("Linq"))
+                .contains("timed +18 and above", "Logged runs: 1", "DPS: 200k", "timed +18 or higher runs");
+        assertThat(service.awardsMessage()).contains("timed +18 and above", "Timed +18 or higher runs only");
+        assertThat(service.awardsMessage()).contains("timed +12 and above", "Timed +12 or higher runs only");
+
+        verify(settings, times(4)).findLevel();
+        verify(runs, times(2)).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 12);
+        verify(runs, times(2)).findTimedBySeasonKeyAndMinimumKeystoneLevel("midnight-season-2", 18);
+        verifyNoInteractions(client);
+    }
 
     @Test
     void buildsOnDemandCombatMessagesWithoutRefreshingWarcraftLogs() {
@@ -57,7 +95,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 mock(WarcraftLogsEventPager.class),
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         assertThat(service.combatMessage(""))
@@ -93,7 +132,8 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class),
                 mock(MPlusRunCorrelationService.class),
                 mock(WarcraftLogsEventPager.class),
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         service.refresh();
@@ -429,7 +469,8 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class),
                 mock(MPlusRunCorrelationService.class),
                 mock(WarcraftLogsEventPager.class),
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         String message = service.raidCombatMessage(List.of(
@@ -464,7 +505,8 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogProfileSnapshotRepository.class),
                 mock(MPlusRunCorrelationService.class),
                 mock(WarcraftLogsEventPager.class),
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         String report = service.raidCombatMessage(List.of(
@@ -497,7 +539,7 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
-    void skipsCombatCollectionAndBackfillsBelowTheConfiguredKeyLevel() throws Exception {
+    void skipsCombatCollectionAndBackfillsBelowTheSupportedKeyLevel() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
@@ -506,7 +548,7 @@ class WarcraftLogsStatisticsServiceTest {
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         WarcraftLogsEventPager eventPager = mock(WarcraftLogsEventPager.class);
         WarcraftLogPlayerRunEntity storedRun = runAtLevel(
-                MINIMUM_KEYSTONE_LEVEL - 1,
+                CombatKeyLevelService.MIN_LEVEL - 1,
                 1L,
                 "Thelinq",
                 "below-minimum",
@@ -525,7 +567,7 @@ class WarcraftLogsStatisticsServiceTest {
                      "friendlyPlayers":[42]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
                 ]}}}}
-                """.formatted(MINIMUM_KEYSTONE_LEVEL - 1));
+                """.formatted(CombatKeyLevelService.MIN_LEVEL - 1));
         when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
         when(client.query(anyString(), anyMap())).thenReturn(reports);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(storedRun));
@@ -542,7 +584,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 eventPager,
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         service.refresh();
@@ -562,8 +605,9 @@ class WarcraftLogsStatisticsServiceTest {
                 .isEqualByComparingTo("301");
     }
 
-    @Test
-    void collectsDuplicateUploadsOnlyOnce() throws Exception {
+    @ParameterizedTest
+    @ValueSource(ints = {12, 13, 18, 19})
+    void collectsDuplicateUploadsOnlyOnceAcrossSupportedLevels(int level) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
@@ -575,17 +619,17 @@ class WarcraftLogsStatisticsServiceTest {
         JsonNode reports = mapper.readTree("""
                 {"characterData":{"character":{"recentReports":{"data":[
                   {"code":"first","revision":1,"startTime":1000,"endTime":5000,
-                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":13,
+                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":%d,
                      "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}},
                   {"code":"duplicate","revision":1,"startTime":1000,"endTime":5000,
-                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":13,
+                   "fights":[{"id":1,"name":"Ruby Life Pools","keystoneLevel":%d,
                      "keystoneTime":3000,"keystoneBonus":1,"startTime":0,"endTime":3000,
                      "friendlyPlayers":[42],"friendlyItemLevels":[303]}],
                    "masterData":{"actors":[{"id":42,"name":"Thelinq","server":"Stormscale"}]}}
                 ]}}}}
-                """);
+                """.formatted(level, level));
         JsonNode emptyReportData = mapper.readTree("""
                 {"reportData":{"report":{}}}
                 """);
@@ -607,7 +651,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 eventPager,
-                itemLevelRepository
+                itemLevelRepository,
+                keyLevels()
         );
 
         service.refresh();
@@ -673,7 +718,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 correlationService,
                 eventPager,
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         service.refresh();
@@ -736,7 +782,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 eventPager,
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         service.refresh();
@@ -789,7 +836,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 eventPager,
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
 
         service.refresh();
@@ -838,6 +886,10 @@ class WarcraftLogsStatisticsServiceTest {
                 .doesNotContain("Key parse: unavailable");
     }
 
+    private static CombatKeyLevelService keyLevels() {
+        return new CombatKeyLevelService(mock(CombatKeyLevelRepository.class), properties(), 999L);
+    }
+
     private static WarcraftLogsStatisticsService service(
             TrackedPlayerService trackedPlayerService,
             WarcraftLogPlayerRunRepository runRepository,
@@ -851,7 +903,8 @@ class WarcraftLogsStatisticsServiceTest {
                 snapshotRepository,
                 mock(MPlusRunCorrelationService.class),
                 mock(WarcraftLogsEventPager.class),
-                mock(WarcraftLogItemLevelRepository.class)
+                mock(WarcraftLogItemLevelRepository.class),
+                keyLevels()
         );
     }
 

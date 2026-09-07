@@ -6,6 +6,7 @@ import com.blackbox.wow.repository.WarcraftLogPlayerRunRepository;
 import com.blackbox.wow.repository.WarcraftLogProfileSnapshotRepository;
 import com.blackbox.wow.repository.WarcraftLogItemLevelRepository;
 import com.blackbox.wow.service.TrackedPlayerService;
+import com.blackbox.wow.service.CombatKeyLevelService;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
 import com.blackbox.wow.helper.MPlusRunMatcher.LogFight;
@@ -172,6 +173,7 @@ public class WarcraftLogsStatisticsService {
     private final MPlusRunCorrelationService correlationService;
     private final WarcraftLogsEventPager eventPager;
     private final WarcraftLogItemLevelRepository itemLevelRepository;
+    private final CombatKeyLevelService combatKeyLevelService;
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
     private final AtomicReference<Instant> rateLimitBlockedUntil = new AtomicReference<>();
 
@@ -183,7 +185,8 @@ public class WarcraftLogsStatisticsService {
             WarcraftLogProfileSnapshotRepository snapshotRepository,
             MPlusRunCorrelationService correlationService,
             WarcraftLogsEventPager eventPager,
-            WarcraftLogItemLevelRepository itemLevelRepository
+            WarcraftLogItemLevelRepository itemLevelRepository,
+            CombatKeyLevelService combatKeyLevelService
     ) {
         this.client = client;
         this.properties = properties;
@@ -193,6 +196,7 @@ public class WarcraftLogsStatisticsService {
         this.correlationService = correlationService;
         this.eventPager = eventPager;
         this.itemLevelRepository = itemLevelRepository;
+        this.combatKeyLevelService = combatKeyLevelService;
     }
 
     public List<PlayerStatistics> statistics() {
@@ -267,7 +271,7 @@ public class WarcraftLogsStatisticsService {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
-        int minimumKeystoneLevel = properties.combatMinimumKeystoneLevel();
+        int minimumKeystoneLevel = combatKeyLevelService.currentLevel();
         String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
         List<PlayerStatistics> availableStatistics = statistics(minimumKeystoneLevel);
         boolean requestedProfileExists = requestedProfile.isBlank()
@@ -305,7 +309,7 @@ public class WarcraftLogsStatisticsService {
         if (refreshRunning.get()) {
             return REFRESH_IN_PROGRESS_MESSAGE;
         }
-        int minimumKeystoneLevel = properties.combatMinimumKeystoneLevel();
+        int minimumKeystoneLevel = combatKeyLevelService.currentLevel();
         List<PlayerStatistics> candidates = statistics(minimumKeystoneLevel).stream()
                 .filter(statistic -> statistic.dungeonRuns() > 0)
                 .toList();
@@ -654,7 +658,7 @@ public class WarcraftLogsStatisticsService {
         Map<Long, TrackedPlayer> playersById = players.stream()
                 .collect(Collectors.toMap(TrackedPlayer::profileId, Function.identity()));
         Map<String, List<WarcraftLogPlayerRunEntity>> staleRunsByReport = storedRuns.stream()
-                .filter(run -> run.getKeystoneLevel() >= properties.combatMinimumKeystoneLevel())
+                .filter(run -> run.getKeystoneLevel() >= CombatKeyLevelService.MIN_LEVEL)
                 .filter(run -> !hasCurrentMetricsVersion(run) || run.getTimed() == null)
                 .filter(run -> playersById.containsKey(run.getProfileId()))
                 .collect(Collectors.groupingBy(
@@ -684,7 +688,7 @@ public class WarcraftLogsStatisticsService {
                 .map(TrackedPlayer::profileId)
                 .collect(Collectors.toSet());
         Map<String, List<WarcraftLogPlayerRunEntity>> runsByReport = storedRuns.stream()
-                .filter(run -> run.getKeystoneLevel() >= properties.combatMinimumKeystoneLevel())
+                .filter(run -> run.getKeystoneLevel() >= CombatKeyLevelService.MIN_LEVEL)
                 .filter(WarcraftLogsStatisticsService::needsOnlyFightWindowBackfill)
                 .filter(run -> activeProfileIds.contains(run.getProfileId()))
                 .collect(Collectors.groupingBy(
@@ -959,7 +963,7 @@ public class WarcraftLogsStatisticsService {
                 fightId,
                 keyLevel,
                 discoveredReport.actorId(),
-                properties.combatMinimumKeystoneLevel()
+                CombatKeyLevelService.MIN_LEVEL
         )
                 || fightWindow == null) {
             return;

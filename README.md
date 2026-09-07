@@ -1,5 +1,26 @@
 # BlackBox
 
+The admin can change the minimum key level for M+ combat and awards while the bot
+is running: **`/wow_admin` → M+ Key Level → +12 through +18**, or
+`/mplus_keylevel 14`. Use `/mplus_keylevel` without a number to open the picker and
+see the current selection. The selected value means **timed +N and above**, for
+all profiles; it is not an exact-level filter and does not change the Vault target.
+
+The setting takes effect on the next combat/awards report and is saved in the
+database across restarts. No restart or wait for the :00/:30 collection schedule
+is needed to change the filter. Existing Telegram messages are unchanged; request
+a new report. The configured `warcraft-logs.combat-minimum-keystone-level` is only
+the initial default until an admin saves a selection. A saved selection takes
+precedence over subsequent environment/default changes.
+
+Warcraft Logs collection and metric backfills retain eligible runs from **+12
+upward**, including levels above +18, regardless of the selected report minimum.
+Switching down therefore reuses already collected runs. Previously uncollected
+runs still need a scheduled sync and must be available within the collector's
+normal report discovery limits. Existing history is not deleted. The database
+migration `V30` adds one global setting row on first save; applying this new
+feature still requires the normal one-time application deployment.
+
 `/gearupg` opens **Character → Gear Upg → All Profiles / individual profile**.
 Both selections use each active profile's currently selected main. All Profiles
 sends a compact summary of the three highest-priority verified next upgrades per

@@ -28,6 +28,7 @@ import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.TrackedPlayerService;
 import com.blackbox.wow.service.GearCheckService;
 import com.blackbox.wow.service.GearUpgradeService;
+import com.blackbox.wow.service.CombatKeyLevelService;
 import com.blackbox.wow.service.TrackedPlayerService.PlayerProfile;
 import com.blackbox.wow.service.TrackedPlayerService.ProfileCharacter;
 import com.blackbox.wow.service.TrackedPlayerService.TrackedPlayer;
@@ -43,6 +44,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.web.client.HttpClientErrorException;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
@@ -70,6 +72,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -90,6 +93,7 @@ class BlackBoxBotTest {
     private static final int PROSPECT_PROMPT_ID = 789;
     private static final String GEAR_UPGRADE_CALLBACK = "wow:character:gearupg";
     private static final TrackedPlayer GEAR_PLAYER = new TrackedPlayer(11, "Alice", "eu", "stormscale", "Mage");
+    private static final String KEY_LEVEL_CALLBACK = "admin:keylevel";
 
     @Mock private TelegramClient telegramClient;
     @Mock private RaiderIoClient raiderIoClient;
@@ -103,6 +107,7 @@ class BlackBoxBotTest {
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private GearCheckService gearCheckService;
     @Mock private GearUpgradeService gearUpgradeService;
+    @Mock private CombatKeyLevelService combatKeyLevelService;
     @Mock private VaultReminderService vaultReminderService;
     @Mock private RaceToWorldFirstService raceToWorldFirstService;
     @Mock private RaidReportService raidReportService;
@@ -123,6 +128,115 @@ class BlackBoxBotTest {
     @Mock private ProspectingReportService prospectingReportService;
 
     private BlackBoxBot bot;
+
+    @Test
+    void adminMenuIncludesDynamicCombatKeyLevel() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, "/wow_admin"));
+
+        assertThat(buttons(sentMessage())).anySatisfy(button -> {
+            assertThat(button.getText()).isEqualTo("M+ Key Level");
+            assertThat(button.getCallbackData()).isEqualTo(KEY_LEVEL_CALLBACK);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/mplus_keylevel", "/mplus_keylevel@BlackBoxBot", KEY_LEVEL_CALLBACK})
+    void opensKeyLevelPickerAndMarksCurrentSelection(String trigger) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(combatKeyLevelService.currentLevel()).thenReturn(14);
+
+        bot().consume(trigger.startsWith("/") ? update(PROSPECT_CHAT_ID, ADMIN_ID, trigger)
+                : callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, trigger));
+
+        assertThat(sentMessage().getText()).contains("current minimum: +14", "all profiles");
+        assertThat(buttons(sentMessage())).extracting(InlineKeyboardButton::getText)
+                .containsExactly("+12", "+13", "✓ +14", "+15", "+16", "+17", "+18", "Back");
+        assertThat(buttons(sentMessage())).extracting(InlineKeyboardButton::getCallbackData)
+                .contains(KEY_LEVEL_CALLBACK + ":12", KEY_LEVEL_CALLBACK + ":18");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {12, 13, 14, 15, 16, 17, 18})
+    void adminCanChangeEverySupportedKeyLevelUsingButtons(int level) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(combatKeyLevelService.currentLevel()).thenReturn(level);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, KEY_LEVEL_CALLBACK + ":" + level));
+
+        verify(combatKeyLevelService).changeLevel(ADMIN_ID, level);
+        assertThat(sentMessage().getText()).contains("Saved minimum key level: +" + level,
+                "current minimum: +" + level);
+    }
+
+    @Test
+    void adminCanChangeKeyLevelFromDirectCommandWithBotMention() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(combatKeyLevelService.currentLevel()).thenReturn(18);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, "/mplus_keylevel@BlackBoxBot 18"));
+
+        verify(combatKeyLevelService).changeLevel(ADMIN_ID, 18);
+        assertThat(sentMessage().getText()).contains("Saved minimum key level: +18");
+        verifyNoInteractions(warcraftLogsStatisticsService);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/mplus_keylevel", "/mplus_keylevel 18", KEY_LEVEL_CALLBACK, KEY_LEVEL_CALLBACK + ":18"})
+    void allowedNonAdminCannotReadOrChangeAdminKeyLevelSetting(String trigger) throws Exception {
+        long nonAdmin = 456L;
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, nonAdmin)).thenReturn(true);
+
+        bot().consume(trigger.startsWith("/") ? update(PROSPECT_CHAT_ID, nonAdmin, trigger)
+                : callbackUpdate(PROSPECT_CHAT_ID, nonAdmin, trigger));
+
+        verifyNoInteractions(combatKeyLevelService);
+        assertThat(sentMessage().getText()).contains("only be used by the configured bot administrator");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"11", "19", "-1", "0", "14.5", "12 18", "999999999999999999999", "abc"})
+    void rejectsInvalidKeyLevelsBeforeCallingSettingsService(String argument) throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, CombatKeyLevelService.COMMAND + " " + argument));
+
+        verifyNoInteractions(combatKeyLevelService);
+        assertThat(sentMessage().getText()).isEqualTo(CombatKeyLevelService.RANGE_MESSAGE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {":11", ":19", ":", ":18:extra", ":18:"})
+    void rejectsForgedKeyLevelCallbacks(String suffix) {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+
+        bot().consume(callbackUpdate(PROSPECT_CHAT_ID, ADMIN_ID, KEY_LEVEL_CALLBACK + suffix));
+
+        verifyNoInteractions(combatKeyLevelService);
+    }
+
+    @Test
+    void doesNotConfirmOrExposeDatabaseDetailsAfterFailedSettingSave() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        doThrow(new DataAccessResourceFailureException("private connection details"))
+                .when(combatKeyLevelService).changeLevel(ADMIN_ID, 18);
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, CombatKeyLevelService.COMMAND + " 18"));
+
+        assertThat(sentMessage().getText()).contains("Could not save").doesNotContain("private", "Saved minimum");
+        verify(combatKeyLevelService, never()).currentLevel();
+    }
+
+    @Test
+    void handlesSettingsReadFailureWithoutExposingDatabaseDetails() throws Exception {
+        when(accessPolicy.isAllowed(PROSPECT_CHAT_ID, ADMIN_ID)).thenReturn(true);
+        when(combatKeyLevelService.currentLevel()).thenThrow(new DataAccessResourceFailureException("private details"));
+
+        bot().consume(update(PROSPECT_CHAT_ID, ADMIN_ID, CombatKeyLevelService.COMMAND));
+
+        assertThat(sentMessage().getText()).contains("Could not load").doesNotContain("private details");
+    }
 
     @Test
     void showsGearUpgradeButtonUnderCharacter() throws Exception {
@@ -1609,6 +1723,7 @@ class BlackBoxBotTest {
                 trackedPlayerService,
                 gearCheckService,
                 gearUpgradeService,
+                combatKeyLevelService,
                 vaultReminderService,
                 raceToWorldFirstService,
                 raidReportService,
