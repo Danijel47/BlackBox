@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -480,23 +481,44 @@ class WarcraftLogsStatisticsServiceTest {
         assertThat(message)
                 .contains("Raid Combat — best performance average")
                 .contains("Normal: 81.69%", "Heroic: 24.69%", "Mythic: —")
+                .containsSubsequence("Mythic: —", "Heroic: 24.69%", "Normal: 81.69%")
                 .doesNotContain("81.68728134929741", "24.692101313564862");
     }
 
-    @Test
-    void sortsRaidCombatProfilesByBestAvailableParse() throws Exception {
+    @ParameterizedTest
+    @CsvSource({
+            "null, null, 60, null, null, 85, Linq, Buco",
+            "null, 95, 99, 40, null, null, Linq, Buco",
+            "null, null, 99, null, 40, null, Linq, Buco",
+            "40, 99, 99, 50, 10, 10, Linq, Buco",
+            "null, 40, 99, null, 50, 10, Linq, Buco",
+            "null, 95, 99, 0, null, null, Linq, Buco",
+            "null, null, null, null, null, 0, Linq, Buco",
+            "40, 10, 10, 40, 99, 99, Buco, Linq",
+            "null, null, null, null, null, null, Buco, Linq"
+    })
+    void sortsRaidCombatProfilesByHighestAvailableDifficulty(
+            String bucoMythic, String bucoHeroic, String bucoNormal,
+            String linqMythic, String linqHeroic, String linqNormal,
+            String first, String second
+    ) throws Exception {
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         TrackedPlayerService trackedPlayerService = mock(TrackedPlayerService.class);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode buco = mapper.readTree("""
                 {"characterData":{"character":{"name":"Bucothered",
-                  "normal":{"bestPerformanceAverage":60},"heroic":null,"mythic":null}}}
-                """);
+                  "normal":{"bestPerformanceAverage":%s},
+                  "heroic":{"bestPerformanceAverage":%s},
+                  "mythic":{"bestPerformanceAverage":%s}}}}
+                """.formatted(bucoNormal, bucoHeroic, bucoMythic));
         JsonNode linq = mapper.readTree("""
                 {"characterData":{"character":{"name":"Thelinq",
-                  "normal":{"bestPerformanceAverage":85},"heroic":null,"mythic":null}}}
-                """);
-        when(client.query(anyString(), anyMap())).thenReturn(buco, linq);
+                  "normal":{"bestPerformanceAverage":%s},
+                  "heroic":{"bestPerformanceAverage":%s},
+                  "mythic":{"bestPerformanceAverage":%s}}}}
+                """.formatted(linqNormal, linqHeroic, linqMythic));
+        when(client.query(anyString(), anyMap())).thenReturn(linq, buco)
+                .thenThrow(new IllegalStateException("rankings unavailable"));
         WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
                 client,
                 properties(),
@@ -510,11 +532,13 @@ class WarcraftLogsStatisticsServiceTest {
         );
 
         String report = service.raidCombatMessage(List.of(
+                new TrackedPlayerService.TrackedPlayer(2L, "Linq", "eu", "Draenor", "Thelinq"),
                 new TrackedPlayerService.TrackedPlayer(1L, "Buco", "eu", "Stormscale", "Bucothered"),
-                new TrackedPlayerService.TrackedPlayer(2L, "Linq", "eu", "Draenor", "Thelinq")
+                new TrackedPlayerService.TrackedPlayer(3L, "Unavailable", "eu", "Draenor", "Missing")
         ));
 
-        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
+        assertThat(report).containsSubsequence("• " + first, "• " + second,
+                "• Unavailable (Missing): unavailable");
     }
 
     @Test

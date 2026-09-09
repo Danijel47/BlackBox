@@ -339,7 +339,8 @@ public class WarcraftLogsStatisticsService {
         List<RaidCombatRow> rows = players.stream()
                 .map(this::loadRaidCombatRow)
                 .sorted(Comparator
-                        .comparing(RaidCombatRow::bestParse, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .comparingInt(RaidCombatRow::difficultyPriority)
+                        .thenComparing(RaidCombatRow::bestParse, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(row -> row.player().profileName(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
         StringBuilder message = new StringBuilder("Raid Combat — best performance average\n\n");
@@ -360,9 +361,16 @@ public class WarcraftLogsStatisticsService {
             if (character.isMissingNode() || character.isNull()) {
                 throw new IllegalStateException("character rankings unavailable");
             }
-            return new RaidCombatRow(player, character, bestRaidParse(character));
+            List<String> difficulties = List.of("mythic", "heroic", "normal");
+            for (int priority = 0; priority < difficulties.size(); priority++) {
+                BigDecimal parse = raidParseValue(character.path(difficulties.get(priority)));
+                if (parse != null) {
+                    return new RaidCombatRow(player, character, priority, parse);
+                }
+            }
+            return new RaidCombatRow(player, character, Integer.MAX_VALUE, null);
         } catch (RuntimeException _) {
-            return new RaidCombatRow(player, null, null);
+            return new RaidCombatRow(player, null, Integer.MAX_VALUE, null);
         }
     }
 
@@ -376,17 +384,9 @@ public class WarcraftLogsStatisticsService {
         }
         message.append("• ").append(player.profileName()).append(" (")
                 .append(character.path(NAME_FIELD).asText(player.name())).append(")\n")
-                .append("  Normal: ").append(formatRaidParse(character.path("normal"))).append('\n')
+                .append("  Mythic: ").append(formatRaidParse(character.path("mythic"))).append('\n')
                 .append("  Heroic: ").append(formatRaidParse(character.path("heroic"))).append('\n')
-                .append("  Mythic: ").append(formatRaidParse(character.path("mythic"))).append("\n\n");
-    }
-
-    private static BigDecimal bestRaidParse(JsonNode character) {
-        return Stream.of("normal", "heroic", "mythic")
-                .map(difficulty -> raidParseValue(character.path(difficulty)))
-                .filter(Objects::nonNull)
-                .max(BigDecimal::compareTo)
-                .orElse(null);
+                .append("  Normal: ").append(formatRaidParse(character.path("normal"))).append("\n\n");
     }
 
     private static BigDecimal raidParseValue(JsonNode rankings) {
@@ -1516,7 +1516,9 @@ public class WarcraftLogsStatisticsService {
     ) {
     }
 
-    private record RaidCombatRow(TrackedPlayer player, JsonNode character, BigDecimal bestParse) {
+    private record RaidCombatRow(
+            TrackedPlayer player, JsonNode character, int difficultyPriority, BigDecimal bestParse
+    ) {
     }
 
     private record CombatAwardDefinition(
