@@ -1,5 +1,9 @@
 # BlackBox
 
+`/adresa` returns the fixed Google Maps location with an **Otvori Google Maps**
+button. It also supports `/adresa@BlackBoxBot` in groups and follows the bot's
+existing Telegram access policy.
+
 The admin can change the minimum key level for M+ combat and awards while the bot
 is running: **`/wow_admin` → M+ Key Level → +12 through +18**, or
 `/mplus_keylevel 14`. Use `/mplus_keylevel` without a number to open the picker and

@@ -94,6 +94,9 @@ class BlackBoxBotTest {
     private static final String GEAR_UPGRADE_CALLBACK = "wow:character:gearupg";
     private static final TrackedPlayer GEAR_PLAYER = new TrackedPlayer(11, "Alice", "eu", "stormscale", "Mage");
     private static final String KEY_LEVEL_CALLBACK = "admin:keylevel";
+    private static final String ADDRESS_COMMAND = "/adresa";
+    private static final String ADDRESS_GROUP_COMMAND = ADDRESS_COMMAND + "@BlackBoxBot";
+    private static final String ADDRESS_MAPS_URL = "https://share.google/uVCtY5va20v9CirWD";
 
     @Mock private TelegramClient telegramClient;
     @Mock private RaiderIoClient raiderIoClient;
@@ -128,6 +131,33 @@ class BlackBoxBotTest {
     @Mock private ProspectingReportService prospectingReportService;
 
     private BlackBoxBot bot;
+
+    @ParameterizedTest
+    @ValueSource(strings = {ADDRESS_COMMAND, ADDRESS_GROUP_COMMAND})
+    void addressCommandSendsFixedLocationWithMapsButton(String command) throws Exception {
+        long chatId = -100123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+
+        bot().consume(update(chatId, userId, command));
+
+        SendMessage message = sentMessage();
+        assertThat(message.getChatId()).isEqualTo(Long.toString(chatId));
+        assertThat(message.getText()).contains("Adresa", ADDRESS_MAPS_URL);
+        assertThat(buttons(message)).singleElement().satisfies(button -> {
+            assertThat(button.getText()).isEqualTo("Otvori Google Maps");
+            assertThat(button.getUrl()).isEqualTo(ADDRESS_MAPS_URL);
+            assertThat(button.getCallbackData()).isNull();
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {ADDRESS_COMMAND, ADDRESS_GROUP_COMMAND})
+    void addressCommandDoesNotDiscloseLocationWhenAccessIsDenied(String command) {
+        bot().consume(update(-100123L, 456L, command));
+
+        verifyNoInteractions(telegramClient);
+    }
 
     @Test
     void adminMenuIncludesDynamicCombatKeyLevel() throws Exception {

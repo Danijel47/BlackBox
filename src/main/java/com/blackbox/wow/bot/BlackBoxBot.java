@@ -99,6 +99,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String USAGE_PREFIX = "Usage: ";
     private static final String ROAD_COMMAND = "/road";
     private static final String ROAD_BEST_COMMAND = "/roadbest";
+    private static final String ADDRESS_MAPS_URL = "https://share.google/uVCtY5va20v9CirWD";
     private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
     private static final String TOKEN_LOWEST_WEEK_COMMAND = "/token_lowest_week";
     private static final String TOKEN_LOWEST_MONTH_COMMAND = "/token_lowest_month";
@@ -2449,6 +2450,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleGeneralCommand(CommandContext context) {
         return switch (context.command()) {
+            case "/adresa" -> handled(() -> sendAddress(context.chatId()));
             case "/wow", "/start" -> handled(() -> sendWowMenu(context.chatId()));
             case "/wowadmin" -> handled(() -> sendWowAdminMenu(context.chatId(), context.senderUserId()));
             case "/vault" -> handled(() -> handleVaultCommand(context));
@@ -2460,6 +2462,14 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             ));
             default -> false;
         };
+    }
+
+    private void sendAddress(long chatId) {
+        InlineKeyboardButton mapsButton = InlineKeyboardButton.builder()
+                .text("Otvori Google Maps")
+                .url(ADDRESS_MAPS_URL)
+                .build();
+        send(chatId, "📍 Adresa\n" + ADDRESS_MAPS_URL, inlineKeyboard(List.of(mapsButton)));
     }
 
     private void handleVaultCommand(CommandContext context) {
