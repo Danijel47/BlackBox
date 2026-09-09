@@ -96,7 +96,7 @@ class BlackBoxBotTest {
     private static final String KEY_LEVEL_CALLBACK = "admin:keylevel";
     private static final String ADDRESS_COMMAND = "/adresa";
     private static final String ADDRESS_GROUP_COMMAND = ADDRESS_COMMAND + "@BlackBoxBot";
-    private static final String ADDRESS_MAPS_URL = "https://share.google/uVCtY5va20v9CirWD";
+    private static final String ADDRESS_MAPS_URL = "https://maps.app.goo.gl/Eo58ie8fwrqNqrW97";
 
     @Mock private TelegramClient telegramClient;
     @Mock private RaiderIoClient raiderIoClient;

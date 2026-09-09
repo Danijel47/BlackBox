@@ -99,7 +99,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String USAGE_PREFIX = "Usage: ";
     private static final String ROAD_COMMAND = "/road";
     private static final String ROAD_BEST_COMMAND = "/roadbest";
-    private static final String ADDRESS_MAPS_URL = "https://share.google/uVCtY5va20v9CirWD";
+    private static final String ADDRESS_MAPS_URL = "https://maps.app.goo.gl/Eo58ie8fwrqNqrW97";
     private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
     private static final String TOKEN_LOWEST_WEEK_COMMAND = "/token_lowest_week";
     private static final String TOKEN_LOWEST_MONTH_COMMAND = "/token_lowest_month";
