@@ -4,6 +4,7 @@ import com.blackbox.time_to_go.service.TimeToGoCommandService;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.blackbox.wow.blizzard.BlizzardItemService;
 import com.blackbox.wow.blizzard.BlizzardMountService;
+import com.blackbox.wow.blizzard.BlizzardItemLevelService;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
@@ -106,6 +107,7 @@ class BlackBoxBotTest {
     @Mock private WowTokenReportService wowTokenReportService;
     @Mock private BlizzardItemService itemService;
     @Mock private BlizzardMountService mountService;
+    @Mock private BlizzardItemLevelService itemLevelService;
     @Mock private TimeToGoCommandService timeToGoCommandService;
     @Mock private TrackedPlayerService trackedPlayerService;
     @Mock private GearCheckService gearCheckService;
@@ -1193,24 +1195,48 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void itemLevelCommandOpensProfilePicker() throws Exception {
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(
+                new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered")));
+
+        bot().consume(update(123L, 456L, "/ilvl"));
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sentMessage().getReplyMarkup();
+        assertThat(keyboard).isNotNull();
+        assertThat(keyboard.getKeyboard().stream().flatMap(List::stream)
+                .map(button -> button.getCallbackData())).contains("wow:character:ilvl:all", "wow:character:ilvl:11");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"11", "all"})
+    void reportsUnavailableBlizzardItemLevel(String selection) throws Exception {
+        TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
+        when(itemLevelService.equippedItemLevel(buco)).thenThrow(new IllegalStateException("secret upstream details"));
+
+        bot().consume(callbackUpdate(123L, 456L, "wow:character:ilvl:" + selection));
+
+        assertThat(sentMessage().getText()).contains("unavailable").doesNotContain("secret upstream details");
+        verifyNoInteractions(raiderIoClient, warcraftLogsStatisticsService);
+    }
+
+    @Test
     void runsItemLevelForSelectedProfile() throws Exception {
         long chatId = 123L;
         long userId = 456L;
         TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco));
-        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
-                .thenReturn(new RaiderIoClient.RaiderIoScore(
-                        "Bucothered", "Stormscale", "eu",
-                        new BigDecimal("303.25"),
-                        null, null, null, null, "", Instant.EPOCH
-                ));
+        when(itemLevelService.equippedItemLevel(buco)).thenReturn(new BigDecimal("303"));
 
         bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl:11"));
 
         assertThat(sentMessage().getText())
-                .contains("Item Level", "Bucothered - Stormscale (eu)", "Equipped item level: 303.25")
+                .contains("Item Level", "Bucothered - stormscale (eu)", "Equipped item level: 303")
                 .doesNotContain("Score:", "DPS:");
+        verifyNoInteractions(raiderIoClient, warcraftLogsStatisticsService);
     }
 
     @Test
@@ -1219,30 +1245,29 @@ class BlackBoxBotTest {
         long userId = 456L;
         TrackedPlayer buco = new TrackedPlayer(11L, "Buco", "eu", "stormscale", "Bucothered");
         TrackedPlayer linq = new TrackedPlayer(12L, "Linq", "eu", "draenor", "Thelinq");
+        TrackedPlayer alpha = new TrackedPlayer(13L, "Alpha", "eu", "draenor", "Alpha");
+        TrackedPlayer missing = new TrackedPlayer(14L, "Missing", "eu", "draenor", "Missing");
+        TrackedPlayer failed = new TrackedPlayer(15L, "Failed", "eu", "draenor", "Failed");
         when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
-        when(trackedPlayerService.activePlayers()).thenReturn(List.of(buco, linq));
-        when(raiderIoClient.getCurrentMPlusScore("eu", "stormscale", "Bucothered"))
-                .thenReturn(new RaiderIoClient.RaiderIoScore(
-                        "Bucothered", "Stormscale", "eu",
-                        new BigDecimal("303.25"),
-                        null, null, null, null, "", Instant.EPOCH
-                ));
-        when(raiderIoClient.getCurrentMPlusScore("eu", "draenor", "Thelinq"))
-                .thenReturn(new RaiderIoClient.RaiderIoScore(
-                        "Thelinq", "Draenor", "eu",
-                        new BigDecimal("306"),
-                        null, null, null, null, "", Instant.EPOCH
-                ));
+        when(trackedPlayerService.activePlayers()).thenReturn(List.of(missing, buco, failed, linq, alpha));
+        when(itemLevelService.equippedItemLevel(buco)).thenReturn(new BigDecimal("303"));
+        when(itemLevelService.equippedItemLevel(linq)).thenReturn(new BigDecimal("306"));
+
+        when(itemLevelService.equippedItemLevel(alpha)).thenReturn(new BigDecimal("306"));
+        when(itemLevelService.equippedItemLevel(failed)).thenThrow(new IllegalStateException("upstream failed"));
 
         bot().consume(callbackUpdate(chatId, userId, "wow:character:ilvl:all"));
 
         String report = sentMessage().getText();
         assertThat(report)
                 .contains("Item Level — all profiles")
-                .contains("• Buco (Bucothered-Stormscale)", "Item level: 303.25")
-                .contains("• Linq (Thelinq-Draenor)", "Item level: 306")
+                .contains("• Buco (Bucothered-stormscale)", "Item level: 303")
+                .contains("• Linq (Thelinq-draenor)", "Item level: 306")
                 .doesNotContain("Score:", "DPS:");
-        assertThat(report.indexOf("• Linq")).isLessThan(report.indexOf("• Buco"));
+        verifyNoInteractions(raiderIoClient, warcraftLogsStatisticsService);
+        assertThat(report).containsSubsequence("• Alpha", "• Linq", "• Buco", "• Failed", "• Missing")
+                .contains("• Failed (Failed-draenor)\n  Status: unavailable",
+                        "• Missing (Missing-draenor)\n  Status: unavailable");
     }
 
     @Test
@@ -1749,6 +1774,7 @@ class BlackBoxBotTest {
                 wowTokenReportService,
                 itemService,
                 mountService,
+                itemLevelService,
                 timeToGoCommandService,
                 trackedPlayerService,
                 gearCheckService,

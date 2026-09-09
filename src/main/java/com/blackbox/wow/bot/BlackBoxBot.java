@@ -43,6 +43,7 @@ import com.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
 import com.blackbox.wow.blizzard.BlizzardItemService;
 import com.blackbox.wow.blizzard.BlizzardItemService.ItemRef;
 import com.blackbox.wow.blizzard.BlizzardMountService;
+import com.blackbox.wow.blizzard.BlizzardItemLevelService;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -210,6 +211,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final WowTokenReportService wowTokenReportService;
     private final BlizzardItemService itemService;
     private final BlizzardMountService mountService;
+    private final BlizzardItemLevelService itemLevelService;
     private final TimeToGoCommandService timeToGoCommands;
     private final TrackedPlayerService trackedPlayerService;
     private final GearCheckService gearCheckService;
@@ -257,6 +259,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             WowTokenReportService wowTokenReportService,
             BlizzardItemService itemService,
             BlizzardMountService mountService,
+            BlizzardItemLevelService itemLevelService,
             TimeToGoCommandService timeToGoCommands,
             TrackedPlayerService trackedPlayerService,
             GearCheckService gearCheckService,
@@ -291,6 +294,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.wowTokenReportService = wowTokenReportService;
         this.itemService = itemService;
         this.mountService = mountService;
+        this.itemLevelService = itemLevelService;
         this.timeToGoCommands = timeToGoCommands;
         this.trackedPlayerService = trackedPlayerService;
         this.gearCheckService = gearCheckService;
@@ -1337,9 +1341,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case RAIDER_IO -> send(chatId, formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(
                     profile.region(), profile.realm(), profile.name()
             )));
-            case ITEM_LEVEL -> send(chatId, formatItemLevel(raiderIoClient.getCurrentMPlusScore(
-                    profile.region(), profile.realm(), profile.name()
-            )));
+            case ITEM_LEVEL -> send(chatId, formatItemLevel(loadCharacterReportRow(action, profile)));
             case MOUNTS -> send(chatId, "Insurmountable Collection: " + formatMountAchievementProgress(
                     mountService.getMountProgress(profile.realm(), profile.name()).usable()
             ));
@@ -1366,19 +1368,24 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private CharacterReportRow loadCharacterReportRow(CharacterReportAction action, TrackedPlayer profile) {
         try {
             return switch (action) {
-                case RAIDER_IO, ITEM_LEVEL -> new CharacterReportRow(
+                case RAIDER_IO -> new CharacterReportRow(
                         profile,
                         raiderIoClient.getCurrentMPlusScore(profile.region(), profile.realm(), profile.name()),
+                        null,
                         null
+                );
+                case ITEM_LEVEL -> new CharacterReportRow(
+                        profile, null, null, itemLevelService.equippedItemLevel(profile)
                 );
                 case MOUNTS -> new CharacterReportRow(
                         profile,
                         null,
-                        mountService.getMountProgress(profile.realm(), profile.name())
+                        mountService.getMountProgress(profile.realm(), profile.name()),
+                        null
                 );
             };
         } catch (RuntimeException _) {
-            return new CharacterReportRow(profile, null, null);
+            return new CharacterReportRow(profile, null, null, null);
         }
     }
 
@@ -1416,11 +1423,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                         .append("  Tank: ").append(valueOrUnavailable(score.tank())).append("\n\n");
             }
             case ITEM_LEVEL -> {
-                RaiderIoClient.RaiderIoScore score = row.score();
                 message.append("• ").append(profile.profileName()).append(" (")
-                        .append(score.name()).append('-').append(score.realm()).append(")\n")
+                        .append(profile.name()).append('-').append(profile.realm()).append(")\n")
                         .append("  ").append(ITEM_LEVEL_PREFIX)
-                        .append(valueOrUnavailable(score.itemLevel())).append("\n\n");
+                        .append(valueOrUnavailable(row.itemLevel())).append("\n\n");
             }
             case MOUNTS -> {
                 BlizzardMountService.MountProgress progress = row.mountProgress();
@@ -2082,6 +2088,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleWarcraftInformationCommand(CommandContext context) {
         return switch (context.command()) {
+            case "/ilvl" -> handled(() -> sendCharacterProfileMenu(context.chatId(), ITEM_LEVEL_CALLBACK));
             case "/affixes" -> handled(() -> send(
                     context.chatId(),
                     AffixFormatter.formatWeeklyAffixes(raiderIoClient.getWeeklyAffixes("eu", "en"))
@@ -2691,17 +2698,18 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         ).strip();
     }
 
-    private static String formatItemLevel(RaiderIoClient.RaiderIoScore score) {
+    private static String formatItemLevel(CharacterReportRow row) {
+        TrackedPlayer profile = row.profile();
         return """
                 %s
                 %s - %s (%s)
                 Equipped item level: %s
                 """.formatted(
                 ITEM_LEVEL_LABEL,
-                score.name(),
-                score.realm(),
-                score.region(),
-                valueOrUnavailable(score.itemLevel())
+                profile.name(),
+                profile.realm(),
+                profile.region(),
+                row.itemLevel() == null ? "unavailable" : row.itemLevel().toString()
         ).strip();
     }
 
@@ -3044,16 +3052,17 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private record CharacterReportRow(
             TrackedPlayer profile,
             RaiderIoClient.RaiderIoScore score,
-            BlizzardMountService.MountProgress mountProgress
+            BlizzardMountService.MountProgress mountProgress,
+            BigDecimal itemLevel
     ) {
         private boolean unavailable() {
-            return score == null && mountProgress == null;
+            return score == null && mountProgress == null && itemLevel == null;
         }
 
         private BigDecimal metric(CharacterReportAction action) {
             return switch (action) {
                 case RAIDER_IO -> score == null ? null : score.all();
-                case ITEM_LEVEL -> score == null ? null : score.itemLevel();
+                case ITEM_LEVEL -> itemLevel;
                 case MOUNTS -> mountProgress == null ? null : BigDecimal.valueOf(mountProgress.usable());
             };
         }
