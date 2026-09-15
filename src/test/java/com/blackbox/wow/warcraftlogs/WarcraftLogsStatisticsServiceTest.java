@@ -57,8 +57,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(runs.findTimedBySeasonKeyAndMinimumKeystoneLevel(eq("midnight-season-2"), anyInt()))
                 .thenAnswer(invocation -> stored.stream()
                         .filter(run -> run.getKeystoneLevel() >= (int) invocation.getArgument(1)).toList());
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
-                client, properties(), players, runs, mock(WarcraftLogProfileSnapshotRepository.class),
+        WarcraftLogsStatisticsService service = service(
+                client, new WarcraftLogsRaidStatisticsService(client), properties(), players, runs,
+                mock(WarcraftLogProfileSnapshotRepository.class),
                 mock(MPlusRunCorrelationService.class), mock(WarcraftLogsEventPager.class),
                 mock(WarcraftLogItemLevelRepository.class), new CombatKeyLevelService(settings, properties(), 999L));
 
@@ -88,8 +89,9 @@ class WarcraftLogsStatisticsServiceTest {
                 .thenReturn(List.of());
         when(snapshotRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of());
         when(trackedPlayerService.activePlayers()).thenReturn(List.of());
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -125,8 +127,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(client.query(anyString(), anyMap())).thenThrow(new WarcraftLogsClient.RateLimitExceededException(
                 Duration.ofMinutes(30), null
         ));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -372,9 +375,11 @@ class WarcraftLogsStatisticsServiceTest {
                 mock(WarcraftLogPlayerRunRepository.class),
                 mock(WarcraftLogProfileSnapshotRepository.class)
         );
-        AtomicBoolean refreshRunning = (AtomicBoolean) ReflectionTestUtils.getField(
-                service, "refreshRunning"
-        );
+        WarcraftLogsCollectionService collectionService =
+                (WarcraftLogsCollectionService) ReflectionTestUtils.getField(service, "collectionService");
+        assertThat(collectionService).isNotNull();
+        AtomicBoolean refreshRunning =
+                (AtomicBoolean) ReflectionTestUtils.getField(collectionService, "refreshRunning");
         assertThat(refreshRunning).isNotNull();
         refreshRunning.set(true);
         String expectedMessage = "⛏️ Work, work! A peon is refreshing Warcraft Logs data. "
@@ -396,7 +401,7 @@ class WarcraftLogsStatisticsServiceTest {
                 ]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+        assertThat(WarcraftLogsEventParser.sumAvoidableDamageForActor(
                 events, 42, RUBY_LIFE_POOLS
         ))
                 .isEqualByComparingTo("150000.5");
@@ -412,7 +417,7 @@ class WarcraftLogsStatisticsServiceTest {
                 ]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+        assertThat(WarcraftLogsEventParser.sumAvoidableDamageForActor(
                 events, 42, RUBY_LIFE_POOLS
         )).isEqualByComparingTo("120000");
     }
@@ -423,7 +428,7 @@ class WarcraftLogsStatisticsServiceTest {
                 [{"targetID":42,"abilityGameID":372735,"amount":120000}]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+        assertThat(WarcraftLogsEventParser.sumAvoidableDamageForActor(
                 events, 42, RUBY_LIFE_POOLS
         )).isEqualByComparingTo(BigDecimal.ZERO);
     }
@@ -434,7 +439,7 @@ class WarcraftLogsStatisticsServiceTest {
                 [{"targetID":42,"abilityGameID":373614,"amount":120000}]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+        assertThat(WarcraftLogsEventParser.sumAvoidableDamageForActor(
                 events, 42, "Unknown Dungeon"
         )).isNull();
     }
@@ -445,7 +450,7 @@ class WarcraftLogsStatisticsServiceTest {
                 [{"targetID":42,"abilityGameID":373614,"isAvoidable":false,"amount":120000}]
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.sumAvoidableDamageForActor(
+        assertThat(WarcraftLogsEventParser.sumAvoidableDamageForActor(
                 events, 42, RUBY_LIFE_POOLS
         )).isEqualByComparingTo(BigDecimal.ZERO);
     }
@@ -462,8 +467,9 @@ class WarcraftLogsStatisticsServiceTest {
                 }}}
                 """);
         when(client.query(anyString(), anyMap())).thenReturn(response);
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 mock(WarcraftLogPlayerRunRepository.class),
@@ -519,8 +525,9 @@ class WarcraftLogsStatisticsServiceTest {
                 """.formatted(linqNormal, linqHeroic, linqMythic));
         when(client.query(anyString(), anyMap())).thenReturn(linq, buco)
                 .thenThrow(new IllegalStateException("rankings unavailable"));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 mock(WarcraftLogPlayerRunRepository.class),
@@ -551,13 +558,13 @@ class WarcraftLogsStatisticsServiceTest {
                 {"keystoneTime": null, "friendlyPlayers": [42]}
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+        assertThat(WarcraftLogsEventParser.isEligibleFight(
                 completed, 3, MINIMUM_KEYSTONE_LEVEL, 42, MINIMUM_KEYSTONE_LEVEL
         )).isTrue();
-        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+        assertThat(WarcraftLogsEventParser.isEligibleFight(
                 completed, 3, MINIMUM_KEYSTONE_LEVEL - 1, 42, MINIMUM_KEYSTONE_LEVEL
         )).isFalse();
-        assertThat(WarcraftLogsStatisticsService.isEligibleFight(
+        assertThat(WarcraftLogsEventParser.isEligibleFight(
                 partial, 1, MINIMUM_KEYSTONE_LEVEL, 42, MINIMUM_KEYSTONE_LEVEL
         )).isFalse();
     }
@@ -600,8 +607,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
                 new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")
         ));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -625,7 +633,7 @@ class WarcraftLogsStatisticsServiceTest {
                 {"friendlyPlayers":[7,2,9],"friendlyItemLevels":[305,301,298]}
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findFriendlyItemLevel(fight, 2))
+        assertThat(WarcraftLogsEventParser.findFriendlyItemLevel(fight, 2))
                 .isEqualByComparingTo("301");
     }
 
@@ -667,8 +675,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
                 new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Thelinq")
         ));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -734,8 +743,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(eventPager.events("pending", 7, EventType.INTERRUPTS)).thenReturn(List.of());
         when(eventPager.events("pending", 7, EventType.DEATHS)).thenReturn(List.of());
         when(eventPager.events("pending", 7, EventType.DAMAGE_TAKEN)).thenReturn(List.of());
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -798,8 +808,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(eventPager.events("stored", 7, EventType.INTERRUPTS)).thenReturn(List.of());
         when(eventPager.events("stored", 7, EventType.DEATHS)).thenReturn(List.of());
         when(eventPager.events("stored", 7, EventType.DAMAGE_TAKEN)).thenReturn(List.of(avoidableEvents.get(0)));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -852,8 +863,9 @@ class WarcraftLogsStatisticsServiceTest {
         when(trackedPlayerService.activePlayers()).thenReturn(List.of(
                 new TrackedPlayerService.TrackedPlayer(1, "Linq", "eu", "Stormscale", "Linqq")
         ));
-        WarcraftLogsStatisticsService service = new WarcraftLogsStatisticsService(
+        WarcraftLogsStatisticsService service = service(
                 client,
+                new WarcraftLogsRaidStatisticsService(client),
                 properties(),
                 trackedPlayerService,
                 runRepository,
@@ -915,12 +927,35 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     private static WarcraftLogsStatisticsService service(
+            WarcraftLogsClient client,
+            WarcraftLogsRaidStatisticsService raidStatisticsService,
+            WarcraftLogsProperties properties,
+            TrackedPlayerService trackedPlayerService,
+            WarcraftLogPlayerRunRepository runRepository,
+            WarcraftLogProfileSnapshotRepository snapshotRepository,
+            MPlusRunCorrelationService correlationService,
+            WarcraftLogsEventPager eventPager,
+            WarcraftLogItemLevelRepository itemLevelRepository,
+            CombatKeyLevelService combatKeyLevelService
+    ) {
+        WarcraftLogsCollectionService collectionService = new WarcraftLogsCollectionService(
+                client, properties, trackedPlayerService, runRepository, snapshotRepository,
+                correlationService, eventPager, itemLevelRepository
+        );
+        return new WarcraftLogsStatisticsService(
+                properties, trackedPlayerService, runRepository, snapshotRepository,
+                combatKeyLevelService, raidStatisticsService, collectionService
+        );
+    }
+
+    private static WarcraftLogsStatisticsService service(
             TrackedPlayerService trackedPlayerService,
             WarcraftLogPlayerRunRepository runRepository,
             WarcraftLogProfileSnapshotRepository snapshotRepository
     ) {
-        return new WarcraftLogsStatisticsService(
+        return service(
                 mock(WarcraftLogsClient.class),
+                mock(WarcraftLogsRaidStatisticsService.class),
                 properties(),
                 trackedPlayerService,
                 runRepository,

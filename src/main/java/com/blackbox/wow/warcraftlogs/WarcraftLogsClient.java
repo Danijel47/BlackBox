@@ -58,9 +58,7 @@ public class WarcraftLogsClient {
                     .retrieve()
                     .body(String.class);
         } catch (HttpClientErrorException.TooManyRequests rateLimited) {
-            Duration retryAfter = parseRetryAfter(
-                    rateLimited.getResponseHeaders().getFirst(HttpHeaders.RETRY_AFTER)
-            );
+            Duration retryAfter = retryAfter(rateLimited);
             blockRequests(retryAfter);
             throw new RateLimitExceededException(retryAfter, rateLimited);
         }
@@ -75,6 +73,11 @@ public class WarcraftLogsClient {
                     + errors.path(0).path("message").asText("unknown error"));
         }
         return response.path("data");
+    }
+
+    static Duration retryAfter(HttpClientErrorException.TooManyRequests rateLimited) {
+        HttpHeaders headers = rateLimited.getResponseHeaders();
+        return parseRetryAfter(headers == null ? null : headers.getFirst(HttpHeaders.RETRY_AFTER));
     }
 
     private void throwIfRateLimited() {

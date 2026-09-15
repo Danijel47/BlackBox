@@ -3,8 +3,6 @@ package com.blackbox.wow.bot;
 import com.blackbox.time_to_go.service.TimeToGoCommandService;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.helper.AffixFormatter;
-import com.blackbox.wow.helper.RaidPicker;
-import com.blackbox.wow.helper.RaidProgressFormatter;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
 import com.blackbox.wow.properties.WowWatchlistProperties;
 import com.blackbox.wow.service.RaceToWorldFirstService;
@@ -35,16 +33,14 @@ import com.blackbox.wow.service.TelegramDailyPromptService;
 import com.blackbox.wow.service.VaultReminderService;
 import com.blackbox.wow.service.WowTokenReportService;
 import com.blackbox.wow.warcraftlogs.WarcraftLogsStatisticsService;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
-import com.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
 import com.blackbox.wow.blizzard.BlizzardItemService;
-import com.blackbox.wow.blizzard.BlizzardItemService.ItemRef;
 import com.blackbox.wow.blizzard.BlizzardMountService;
 import com.blackbox.wow.blizzard.BlizzardItemLevelService;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -64,15 +60,10 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
-import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -84,11 +75,9 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Component
+@Slf4j
 public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
 
-    private static final int INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS = 600;
-    private static final Duration TOKEN_MONTH_LOOKBACK = Duration.ofDays(30);
-    private static final String TOKEN_MONTH_LABEL = "last 30 days";
     private static final String TELEGRAM_USER_UNAVAILABLE =
             "Telegram user information is unavailable for this message.";
     private static final String TELEGRAM_USER_PREFIX = "Telegram user ";
@@ -101,7 +90,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String ROAD_COMMAND = "/road";
     private static final String ROAD_BEST_COMMAND = "/roadbest";
     private static final String ADDRESS_MAPS_URL = "https://maps.app.goo.gl/Eo58ie8fwrqNqrW97";
-    private static final String WOW_TOKEN_EU_SCOPE = "WoW Token (EU)";
     private static final String TOKEN_LOWEST_WEEK_COMMAND = "/token_lowest_week";
     private static final String TOKEN_LOWEST_MONTH_COMMAND = "/token_lowest_month";
     private static final String TOKEN_HIGHEST_WEEK_COMMAND = "/token_highest_week";
@@ -130,12 +118,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final String RAID_COMBAT_CALLBACK = "combat";
     private static final String ALL_PROFILES_CALLBACK = "all";
     private static final String ALL_PROFILES_LABEL = "All Profiles";
-    private static final String RAID_PROGRESS_LABEL = "Raid Progress";
-    private static final String RAID_VAULT_LABEL = "Raid Vault";
-    private static final String RAID_COMBAT_LABEL = "Raid Combat";
-    private static final String ITEM_LEVEL_CALLBACK = "ilvl";
-    private static final String ITEM_LEVEL_LABEL = "Item Level";
-    private static final String ITEM_LEVEL_PREFIX = "Item level: ";
     private static final String NO_ACTIVE_PROFILES_MESSAGE = "No active profiles are available.";
     private static final String ADMIN_PUBLIC_CALLBACK = "public";
     private static final String ADMIN_USERS_CALLBACK = "users";
@@ -180,46 +162,27 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private static final Duration ALT_ADDITION_TTL = Duration.ofMinutes(10);
     private static final int INLINE_BUTTONS_PER_ROW = 2;
     private static final int MAX_PROFILE_BUTTONS = 90;
-    private static final ZoneId ZAGREB_ZONE = ZoneId.of("Europe/Zagreb");
     private static final List<String> PEON_WORK_MESSAGES = List.of(
             "Work, work... fetching the data. 🛠️",
             "Zug zug! The peon is checking. 🔎",
             "Something need doing? Still working on it. ⛏️",
             "Back to work! Your result is being prepared. 🧱"
     );
-    private static final Map<String, List<Long>> MIDNIGHT_MATERIAL_IDS = Map.ofEntries(
-            Map.entry("refulgent copper ore", List.of(237359L, 237361L)),
-            Map.entry("umbral tin ore", List.of(237362L, 237363L)),
-            Map.entry("brilliant silver ore", List.of(237364L, 237365L)),
-            Map.entry("dazzling thorium", List.of(237366L)),
-            Map.entry("dazzling thorium ore", List.of(237366L)),
-            Map.entry("tranquility bloom", List.of(236761L, 236767L)),
-            Map.entry("sanguithorn", List.of(236770L, 236771L)),
-            Map.entry("azeroot", List.of(236774L, 236775L)),
-            Map.entry("argentleaf", List.of(236776L, 236777L)),
-            Map.entry("mana lily", List.of(236778L, 236779L)),
-            Map.entry("nocturnal lotus", List.of(236780L))
-    );
 
     private final String token;
     private final long adminUserId;
     private final TelegramClient client;
     private final RaiderIoClient raiderIoClient;
-    private final RaiderIoDefaultGuildProperties defaultGuildProps;
-    private final WowWatchlistProperties watchlistProps;
-    private final BlizzardAuctionService auctionService;
-    private final WowTokenReportService wowTokenReportService;
-    private final BlizzardItemService itemService;
-    private final BlizzardMountService mountService;
-    private final BlizzardItemLevelService itemLevelService;
+    private final CharacterCommandHandler characterCommandHandler;
+    private final RaidCommandHandler raidCommandHandler;
+    private final EconomyCommandHandler economyCommandHandler;
     private final TimeToGoCommandService timeToGoCommands;
+    private final TravelCommandHandler travelCommandHandler;
     private final TrackedPlayerService trackedPlayerService;
     private final GearCheckService gearCheckService;
     private final GearUpgradeService gearUpgradeService;
     private final CombatKeyLevelService combatKeyLevelService;
     private final VaultReminderService vaultReminderService;
-    private final RaceToWorldFirstService raceToWorldFirstService;
-    private final RaidReportService raidReportService;
     private final MPlusDataCollectionService mplusDataCollectionService;
     private final MPlusProgressService mplusProgressService;
     private final MPlusDungeonVaultService mplusDungeonVaultService;
@@ -288,21 +251,36 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.adminUserId = adminUserId;
         this.client = client;
         this.raiderIoClient = raiderIoClient;
-        this.defaultGuildProps = defaultGuildProps;
-        this.watchlistProps = watchlistProps;
-        this.auctionService = auctionService;
-        this.wowTokenReportService = wowTokenReportService;
-        this.itemService = itemService;
-        this.mountService = mountService;
-        this.itemLevelService = itemLevelService;
+        this.characterCommandHandler = new CharacterCommandHandler(
+                raiderIoClient,
+                trackedPlayerService,
+                mountService,
+                itemLevelService,
+                this::send
+        );
+        this.raidCommandHandler = new RaidCommandHandler(
+                raiderIoClient,
+                defaultGuildProps,
+                trackedPlayerService,
+                raceToWorldFirstService,
+                raidReportService,
+                warcraftLogsStatisticsService,
+                this::send
+        );
+        this.economyCommandHandler = new EconomyCommandHandler(
+                auctionService,
+                wowTokenReportService,
+                itemService,
+                watchlistProps,
+                this::send
+        );
         this.timeToGoCommands = timeToGoCommands;
+        this.travelCommandHandler = new TravelCommandHandler(timeToGoCommands, adminUserId, this::send);
         this.trackedPlayerService = trackedPlayerService;
         this.gearCheckService = gearCheckService;
         this.gearUpgradeService = gearUpgradeService;
         this.combatKeyLevelService = combatKeyLevelService;
         this.vaultReminderService = vaultReminderService;
-        this.raceToWorldFirstService = raceToWorldFirstService;
-        this.raidReportService = raidReportService;
         this.mplusDataCollectionService = mplusDataCollectionService;
         this.mplusProgressService = mplusProgressService;
         this.mplusDungeonVaultService = mplusDungeonVaultService;
@@ -323,9 +301,16 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 this::handlePlayerProfileCommand,
                 this::handleProfileAdministrationCommand,
                 this::handleWarcraftInformationCommand,
-                this::handleEconomyCommand,
+                context -> characterCommandHandler.handle(context.chatId(), context.text(), context.command()),
+                context -> raidCommandHandler.handle(context.chatId(), context.text(), context.command()),
+                context -> economyCommandHandler.handle(context.chatId(), context.text(), context.command()),
                 this::handleSeasonCommand,
-                this::handleTravelCommand,
+                context -> travelCommandHandler.handle(
+                        context.chatId(),
+                        context.senderUserId(),
+                        context.text(),
+                        context.command()
+                ),
                 this::handleGeneralCommand
         );
     }
@@ -650,7 +635,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/profilemain" -> handled(() -> changeOwnMain(context));
             case GearCheckService.COMMAND -> handled(() -> gearCheckService.messages()
                     .forEach(message -> send(context.chatId(), message)));
-            case GearUpgradeService.COMMAND -> handled(() -> sendCharacterProfileMenu(
+            case GearUpgradeService.COMMAND -> handled(() -> characterCommandHandler.sendProfileMenu(
                     context.chatId(), GearUpgradeService.ACTION, GearUpgradeService.LABEL));
             case "/mains" -> handled(() -> send(context.chatId(), formatCurrentMains()));
             default -> false;
@@ -999,11 +984,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return;
         }
         if (parts.length >= 3 && parts[1].equals(WOW_CHARACTER_CALLBACK)) {
-            routeCharacterCallback(chatId, senderUserId, parts);
+            routeCharacterCallback(chatId, senderUserId, callbackData, parts);
             return;
         }
         if (parts.length >= 3 && parts[1].equals(WOW_RAID_CALLBACK)) {
-            routeRaidCallback(chatId, parts);
+            raidCommandHandler.handleCallback(chatId, callbackData);
             return;
         }
         send(chatId, "That WoW menu selection is no longer valid. Use /wow to start again.");
@@ -1013,8 +998,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         switch (menuKey) {
             case "mplus" -> sendMPlusMenu(chatId);
             case WOW_PROFILES_CALLBACK -> sendProfilesMenu(chatId);
-            case WOW_CHARACTER_CALLBACK -> sendCharacterMenu(chatId);
-            case "raids" -> sendRaidMenu(chatId);
+            case WOW_CHARACTER_CALLBACK -> characterCommandHandler.sendMenu(chatId);
+            case "raids" -> raidCommandHandler.sendMenu(chatId);
             case "season" -> sendCommandMenu(chatId, "Choose a season report:", WowMenuGroup.SEASON);
             case "tokens" -> sendCommandMenu(chatId, "Choose a token report:", WowMenuGroup.TOKENS);
             case "materials" -> sendCommandMenu(chatId, "Choose a material list:", WowMenuGroup.MATERIALS);
@@ -1044,93 +1029,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             return;
         }
         dispatchCommand(CommandContext.forCallback(chatId, senderUserId, action.commandText()));
-    }
-
-    private void sendRaidMenu(long chatId) {
-        send(chatId, "Choose a raid report:", inlineKeyboard(List.of(
-                inlineButton("World First", WOW_CALLBACK_PREFIX + WOW_COMMAND_CALLBACK + ":rwf"),
-                inlineButton(RAID_PROGRESS_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
-                        + RAID_PROGRESS_CALLBACK),
-                inlineButton(RAID_VAULT_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
-                        + RAID_VAULT_CALLBACK),
-                inlineButton(RAID_COMBAT_LABEL, WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":"
-                        + RAID_COMBAT_CALLBACK),
-                inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
-        )));
-    }
-
-    private void routeRaidCallback(long chatId, String[] parts) {
-        if (parts.length == 3 && isRaidAction(parts[2])) {
-            sendRaidProfileMenu(chatId, parts[2]);
-            return;
-        }
-        if (parts.length == 4 && isRaidAction(parts[2])) {
-            runRaidReport(chatId, parts[2], parts[3]);
-            return;
-        }
-        send(chatId, "That raid report is no longer available. Use /wow to refresh the menu.");
-    }
-
-    private void sendRaidProfileMenu(long chatId, String action) {
-        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
-        if (profiles.isEmpty()) {
-            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
-            return;
-        }
-        List<InlineKeyboardButton> buttons = new ArrayList<>();
-        buttons.add(inlineButton(
-                ALL_PROFILES_LABEL,
-                WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":" + action + ":" + ALL_PROFILES_CALLBACK
-        ));
-        for (TrackedPlayer profile : profiles) {
-            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
-                break;
-            }
-            buttons.add(inlineButton(
-                    profile.profileName(),
-                    WOW_CALLBACK_PREFIX + WOW_RAID_CALLBACK + ":" + action + ":" + profile.profileId()
-            ));
-        }
-        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":raids"));
-        send(chatId, CHOOSE_PROFILE_PREFIX + raidActionLabel(action) + ":", inlineKeyboard(buttons));
-    }
-
-    private void runRaidReport(long chatId, String action, String profileIdValue) {
-        List<TrackedPlayer> players = raidReportPlayersById(profileIdValue);
-        if (players.isEmpty()) {
-            send(chatId, "That raid profile is no longer active. Use /wow to refresh the menu.");
-            return;
-        }
-        String report = switch (action) {
-            case RAID_PROGRESS_CALLBACK -> raidReportService.progress(players);
-            case RAID_VAULT_CALLBACK -> raidReportService.weeklyVault(players);
-            case RAID_COMBAT_CALLBACK -> warcraftLogsStatisticsService.raidCombatMessage(players);
-            default -> "That raid report is unavailable.";
-        };
-        send(chatId, report);
-    }
-
-    private List<TrackedPlayer> raidReportPlayersById(String profileIdValue) {
-        if (ALL_PROFILES_CALLBACK.equals(profileIdValue)) {
-            return trackedPlayerService.activePlayers();
-        }
-        TrackedPlayer profile = findActiveProfile(profileIdValue);
-        return profile == null ? List.of() : List.of(profile);
-    }
-
-    private static boolean isRaidAction(String action) {
-        return RAID_PROGRESS_CALLBACK.equals(action)
-                || RAID_VAULT_CALLBACK.equals(action)
-                || RAID_COMBAT_CALLBACK.equals(action);
-    }
-
-    private static String raidActionLabel(String action) {
-        return switch (action) {
-            case RAID_PROGRESS_CALLBACK -> RAID_PROGRESS_LABEL;
-            case RAID_VAULT_CALLBACK -> RAID_VAULT_LABEL;
-            case RAID_COMBAT_CALLBACK -> RAID_COMBAT_LABEL;
-            default -> "Raid Report";
-        };
     }
 
     private void sendProfilesMenu(long chatId) {
@@ -1221,19 +1119,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 .toList();
     }
 
-    private void sendCharacterMenu(long chatId) {
-        send(chatId, "Choose a character report:", inlineKeyboard(List.of(
-                inlineButton("Raider.IO Score", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":rio"),
-                inlineButton(ITEM_LEVEL_LABEL,
-                        WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + ITEM_LEVEL_CALLBACK),
-                inlineButton("Mount Progress", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":mount"),
-                inlineButton("Enchants & Gems", WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + GEAR_CHECK_ACTION),
-                inlineButton(GearUpgradeService.LABEL, GEAR_UPGRADE_CALLBACK),
-                inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK)
-        )));
-    }
-
-    private void routeCharacterCallback(long chatId, long senderUserId, String[] parts) {
+    private void routeCharacterCallback(long chatId, long senderUserId, String callbackData, String[] parts) {
         if (GearUpgradeService.ACTION.equals(parts[2])) {
             routeGearUpgradeCallback(chatId, parts);
             return;
@@ -1242,53 +1128,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             dispatchCommand(CommandContext.forCallback(chatId, senderUserId, GearCheckService.COMMAND));
             return;
         }
-        if (parts.length == 3 && CharacterReportAction.isSupported(parts[2])) {
-            sendCharacterProfileMenu(chatId, parts[2]);
-            return;
-        }
-        if (parts.length == 4) {
-            runCharacterReport(chatId, parts[2], parts[3]);
-            return;
-        }
-        send(chatId, "That character report is no longer valid. Use /wow to start again.");
-    }
-
-    private void sendCharacterProfileMenu(long chatId, String actionKey) {
-        CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
-        if (action == null) {
-            send(chatId, "That character report is unavailable.");
-            return;
-        }
-        sendCharacterProfileMenu(chatId, action.key(), action.label());
-    }
-
-    private void sendCharacterProfileMenu(long chatId, String actionKey, String label) {
-        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
-        if (profiles.isEmpty()) {
-            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
-            return;
-        }
-        List<InlineKeyboardButton> buttons = new ArrayList<>();
-        buttons.add(inlineButton(
-                ALL_PROFILES_LABEL,
-                WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + actionKey + ":" + ALL_PROFILES_CALLBACK
-        ));
-        for (TrackedPlayer profile : profiles) {
-            if (buttons.size() >= MAX_PROFILE_BUTTONS) {
-                break;
-            }
-            buttons.add(inlineButton(
-                    profile.profileName(),
-                    WOW_CALLBACK_PREFIX + WOW_CHARACTER_CALLBACK + ":" + actionKey + ":" + profile.profileId()
-            ));
-        }
-        buttons.add(inlineButton(BACK_LABEL, WOW_CALLBACK_PREFIX + WOW_MENU_CALLBACK + ":" + WOW_CHARACTER_CALLBACK));
-        send(chatId, CHOOSE_PROFILE_PREFIX + label + ":", inlineKeyboard(buttons));
+        characterCommandHandler.handleCallback(chatId, callbackData);
     }
 
     private void routeGearUpgradeCallback(long chatId, String[] parts) {
         if (parts.length == 3) {
-            sendCharacterProfileMenu(chatId, GearUpgradeService.ACTION, GearUpgradeService.LABEL);
+            characterCommandHandler.sendProfileMenu(chatId, GearUpgradeService.ACTION, GearUpgradeService.LABEL);
         } else if (parts.length == 4) {
             sendGearUpgradeReport(chatId, parts[3]);
         } else {
@@ -1322,120 +1167,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 send(chatId, pages.get(index), inlineKeyboard(List.of(inlineButton(BACK_LABEL, GEAR_UPGRADE_CALLBACK))));
             } else {
                 send(chatId, pages.get(index));
-            }
-        }
-    }
-
-    private void runCharacterReport(long chatId, String actionKey, String profileIdValue) {
-        CharacterReportAction action = CharacterReportAction.fromKey(actionKey);
-        if (action != null && ALL_PROFILES_CALLBACK.equals(profileIdValue)) {
-            sendAllCharacterReports(chatId, action);
-            return;
-        }
-        TrackedPlayer profile = findActiveProfile(profileIdValue);
-        if (action == null || profile == null) {
-            send(chatId, "That character or report is no longer available. Use /wow to refresh the menu.");
-            return;
-        }
-        switch (action) {
-            case RAIDER_IO -> send(chatId, formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(
-                    profile.region(), profile.realm(), profile.name()
-            )));
-            case ITEM_LEVEL -> send(chatId, formatItemLevel(loadCharacterReportRow(action, profile)));
-            case MOUNTS -> send(chatId, "Insurmountable Collection: " + formatMountAchievementProgress(
-                    mountService.getMountProgress(profile.realm(), profile.name()).usable()
-            ));
-        }
-    }
-
-    private void sendAllCharacterReports(long chatId, CharacterReportAction action) {
-        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
-        if (profiles.isEmpty()) {
-            send(chatId, NO_ACTIVE_PROFILES_MESSAGE);
-            return;
-        }
-        List<CharacterReportRow> rows = profiles.stream()
-                .map(profile -> loadCharacterReportRow(action, profile))
-                .sorted(characterReportComparator(action))
-                .toList();
-        StringBuilder message = new StringBuilder(action.label()).append(" — all profiles\n\n");
-        for (CharacterReportRow row : rows) {
-            appendCharacterReport(message, action, row);
-        }
-        send(chatId, message.toString().trim());
-    }
-
-    private CharacterReportRow loadCharacterReportRow(CharacterReportAction action, TrackedPlayer profile) {
-        try {
-            return switch (action) {
-                case RAIDER_IO -> new CharacterReportRow(
-                        profile,
-                        raiderIoClient.getCurrentMPlusScore(profile.region(), profile.realm(), profile.name()),
-                        null,
-                        null
-                );
-                case ITEM_LEVEL -> new CharacterReportRow(
-                        profile, null, null, itemLevelService.equippedItemLevel(profile)
-                );
-                case MOUNTS -> new CharacterReportRow(
-                        profile,
-                        null,
-                        mountService.getMountProgress(profile.realm(), profile.name()),
-                        null
-                );
-            };
-        } catch (RuntimeException _) {
-            return new CharacterReportRow(profile, null, null, null);
-        }
-    }
-
-    private static Comparator<CharacterReportRow> characterReportComparator(CharacterReportAction action) {
-        return Comparator
-                .comparing(
-                        (CharacterReportRow row) -> row.metric(action),
-                        Comparator.nullsLast(Comparator.reverseOrder())
-                )
-                .thenComparing(row -> row.profile().profileName(), String.CASE_INSENSITIVE_ORDER);
-    }
-
-    private void appendCharacterReport(
-            StringBuilder message,
-            CharacterReportAction action,
-            CharacterReportRow row
-    ) {
-        TrackedPlayer profile = row.profile();
-        if (row.unavailable()) {
-            message.append("• ").append(profile.profileName()).append(" (")
-                    .append(profile.name()).append('-').append(profile.realm())
-                    .append(")\n  Status: unavailable\n\n");
-            return;
-        }
-        switch (action) {
-            case RAIDER_IO -> {
-                RaiderIoClient.RaiderIoScore score = row.score();
-                message.append("• ").append(profile.profileName()).append(" (")
-                        .append(score.name()).append('-').append(score.realm()).append(")\n")
-                        .append("  ").append(ITEM_LEVEL_PREFIX)
-                        .append(valueOrUnavailable(score.itemLevel())).append('\n')
-                        .append("  Score: ").append(valueOrUnavailable(score.all())).append('\n')
-                        .append("  DPS: ").append(valueOrUnavailable(score.dps())).append('\n')
-                        .append("  Healer: ").append(valueOrUnavailable(score.healer())).append('\n')
-                        .append("  Tank: ").append(valueOrUnavailable(score.tank())).append("\n\n");
-            }
-            case ITEM_LEVEL -> {
-                message.append("• ").append(profile.profileName()).append(" (")
-                        .append(profile.name()).append('-').append(profile.realm()).append(")\n")
-                        .append("  ").append(ITEM_LEVEL_PREFIX)
-                        .append(valueOrUnavailable(row.itemLevel())).append("\n\n");
-            }
-            case MOUNTS -> {
-                BlizzardMountService.MountProgress progress = row.mountProgress();
-                message.append("• ").append(profile.profileName()).append(" (")
-                        .append(progress.characterName()).append('-').append(progress.realmSlug()).append(")\n")
-                        .append("  Usable mounts: ").append(progress.usable()).append('\n')
-                        .append("  Collected mounts: ").append(progress.collected()).append('\n')
-                        .append("  Achievement: ").append(formatMountAchievementProgress(progress.usable()))
-                        .append("\n\n");
             }
         }
     }
@@ -1872,8 +1603,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                     .inputFieldPlaceholder("realm character-name")
                     .build());
             client.execute(message);
-        } catch (Exception ignored) {
-            // Delivery failures are isolated so Telegram polling can continue processing later updates.
+        } catch (Exception exception) {
+            log.warn("Could not send the alt-addition prompt to Telegram chat {}.", chatId, exception);
         }
     }
 
@@ -2088,295 +1819,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private boolean handleWarcraftInformationCommand(CommandContext context) {
         return switch (context.command()) {
-            case "/ilvl" -> handled(() -> sendCharacterProfileMenu(context.chatId(), ITEM_LEVEL_CALLBACK));
             case "/affixes" -> handled(() -> send(
                     context.chatId(),
                     AffixFormatter.formatWeeklyAffixes(raiderIoClient.getWeeklyAffixes("eu", "en"))
             ));
-            case "/guild" -> handled(() -> handleGuildCommand(context));
-            case "/guildlist" -> handled(() -> send(context.chatId(), formatAvailableRaids()));
-            case "/rwf" -> handled(() -> sendRaceToWorldFirstStandings(context.chatId()));
-            case "/raidprogress" -> handled(() -> send(
-                    context.chatId(),
-                    raidReportService.progress(raidReportPlayersByName(commandArguments(context)))
-            ));
-            case "/raidvault" -> handled(() -> send(
-                    context.chatId(),
-                    raidReportService.weeklyVault(raidReportPlayersByName(commandArguments(context)))
-            ));
-            case "/raidcombat" -> handled(() -> send(
-                    context.chatId(),
-                    warcraftLogsStatisticsService.raidCombatMessage(raidReportPlayersByName(commandArguments(context)))
-            ));
             default -> false;
         };
-    }
-
-    private List<TrackedPlayer> raidReportPlayersByName(String profileArgument) {
-        String requestedProfile = profileArgument == null ? "" : profileArgument.trim();
-        List<TrackedPlayer> profiles = trackedPlayerService.activePlayers();
-        if (requestedProfile.isBlank() || ALL_PROFILES_CALLBACK.equalsIgnoreCase(requestedProfile)) {
-            return profiles;
-        }
-        return profiles.stream()
-                .filter(profile -> profile.profileName().equalsIgnoreCase(requestedProfile))
-                .toList();
-    }
-
-    private void sendRaceToWorldFirstStandings(long chatId) {
-        try {
-            send(chatId, raceToWorldFirstService.currentStandingsMessage());
-        } catch (RuntimeException _) {
-            send(chatId, "Could not fetch the Race to World First standings from Raider.IO.");
-        }
-    }
-
-    private void handleGuildCommand(CommandContext context) {
-        String argument = commandArguments(context);
-        JsonNode guild = fetchDefaultGuild();
-        if (argument.equalsIgnoreCase("list")) {
-            send(context.chatId(), formatRaidProgressionList(guild));
-            return;
-        }
-
-        String raidKey = selectRaidKey(argument, guild);
-        String lastCrawledAt = guild.path("last_crawled_at").asText("n/a");
-        send(context.chatId(), """
-                %s
-                %s
-                Last update: %s
-                """.formatted(
-                defaultGuildProps.guildName(),
-                RaidProgressFormatter.formatRaidLine(guild, raidKey),
-                formatLastCrawled(lastCrawledAt)
-        ).strip());
-    }
-
-    private JsonNode fetchDefaultGuild() {
-        return raiderIoClient.getGuildProfile(
-                defaultGuildProps.region(),
-                defaultGuildProps.realm(),
-                defaultGuildProps.guildName()
-        );
-    }
-
-    private String selectRaidKey(String argument, JsonNode guild) {
-        if (!argument.isBlank()) {
-            return argument;
-        }
-        String configuredRaid = defaultGuildProps.raidName();
-        return configuredRaid == null || configuredRaid.isBlank()
-                ? RaidPicker.pickBestRaidKey(guild)
-                : configuredRaid;
-    }
-
-    private static String formatRaidProgressionList(JsonNode guild) {
-        StringBuilder message = new StringBuilder("Raids:\n");
-        guild.path("raid_progression").fieldNames().forEachRemaining(raidKey -> message
-                .append("• ")
-                .append(RaidProgressFormatter.formatRaidLine(guild, raidKey))
-                .append("\n"));
-        return message.append("\nUse: /guild <raidKey>").toString();
-    }
-
-    private String formatAvailableRaids() {
-        JsonNode guild = fetchDefaultGuild();
-        StringBuilder message = new StringBuilder("Available raids:\n");
-        guild.path("raid_progression").fieldNames().forEachRemaining(raidKey -> message
-                .append("• ")
-                .append(raidKey)
-                .append("\n"));
-        return message.toString();
-    }
-
-    private boolean handleEconomyCommand(CommandContext context) {
-        return switch (context.command()) {
-            case "/price" -> handled(() -> handlePrice(context));
-            case "/priceah" -> handled(() -> handleAuctionHousePrice(context));
-            case "/token" -> handled(() -> handleTokenPrice(context.chatId()));
-            case TOKEN_LOWEST_WEEK_COMMAND -> handled(() -> handleTokenPriceExtreme(
-                    context,
-                    TokenPriceExtreme.LOWEST,
-                    TokenHistoryPeriod.WEEK
-            ));
-            case TOKEN_LOWEST_MONTH_COMMAND -> handled(() -> handleTokenPriceExtreme(
-                    context,
-                    TokenPriceExtreme.LOWEST,
-                    TokenHistoryPeriod.MONTH
-            ));
-            case TOKEN_HIGHEST_WEEK_COMMAND -> handled(() -> handleTokenPriceExtreme(
-                    context,
-                    TokenPriceExtreme.HIGHEST,
-                    TokenHistoryPeriod.WEEK
-            ));
-            case TOKEN_HIGHEST_MONTH_COMMAND -> handled(() -> handleTokenPriceExtreme(
-                    context,
-                    TokenPriceExtreme.HIGHEST,
-                    TokenHistoryPeriod.MONTH
-            ));
-            case TOKEN_BEST_COMMAND -> handled(() -> handleBestTokenTradingHours(context));
-            // Compatibility aliases for previously published commands.
-            case "/tokenlowest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.LOWEST));
-            case "/tokenhighest" -> handled(() -> handleTokenPriceExtreme(context, TokenPriceExtreme.HIGHEST));
-            case "/tokenbest" -> handled(() -> handleBestTokenTradingHours(context));
-            case "/mount-achiv" -> handled(() -> handleMountAchievement(context));
-            case "/ores", "/ore" -> handled(() -> send(
-                    context.chatId(),
-                    formatWatchlistWithSilverGold("Ores (EU)", watchlistProps.ores())
-            ));
-            case "/herbs", "/herb" -> handled(() -> send(
-                    context.chatId(),
-                    formatWatchlistWithSilverGold("Herbs (EU)", watchlistProps.herbs())
-            ));
-            default -> false;
-        };
-    }
-
-    private void handlePrice(CommandContext context) {
-        String arguments = commandArguments(context);
-        if (arguments.isBlank()) {
-            send(context.chatId(), """
-                    Usage: /price <itemId|item name> [realm-if-itemId]
-                    Examples:
-                    /price 72092 Draenor
-                    /price wow token
-                    """.strip());
-            return;
-        }
-
-        try {
-            String[] idAndRealm = arguments.split("\\s+", 2);
-            Long itemId = parseLong(idAndRealm[0]);
-            if (itemId == null) {
-                sendNamedItemPrice(context.chatId(), arguments);
-            } else {
-                String realm = idAndRealm.length == 2 ? idAndRealm[1].trim() : "";
-                sendItemIdPrice(context.chatId(), itemId, realm);
-            }
-        } catch (Exception e) {
-            send(context.chatId(), "Blizzard price lookup failed: " + e.getMessage());
-        }
-    }
-
-    private void sendItemIdPrice(long chatId, long itemId, String realm) {
-        ItemRef item = itemService.getById(itemId);
-        String itemName = resolveDisplayName(item, itemId);
-        if (!realm.isBlank()) {
-            PriceResult result = auctionService.getRealmAverage(realm, itemId);
-            send(chatId, formatPriceMessage("Realm " + realm, itemName, result));
-            return;
-        }
-
-        PriceResult result = auctionService.getRegionAverage(itemId);
-        if (!result.available() && isWowToken(itemName)) {
-            result = auctionService.getWowTokenPrice();
-            send(chatId, formatPriceMessage(WOW_TOKEN_EU_SCOPE, itemName, result));
-            return;
-        }
-        send(chatId, formatPriceMessage("Region avg (EU)", itemName, result));
-    }
-
-    private void sendNamedItemPrice(long chatId, String itemName) {
-        ItemRef item = itemService.findByName(itemName);
-        if (item == null) {
-            send(chatId, "Item not found: " + itemName);
-            return;
-        }
-
-        PriceResult result = isWowToken(item.name())
-                ? auctionService.getWowTokenPrice()
-                : auctionService.getRegionAverage(item.id());
-        String scope = isWowToken(item.name()) ? WOW_TOKEN_EU_SCOPE : "Region avg (EU)";
-        send(chatId, formatPriceMessage(scope, item.name(), result));
-    }
-
-    private void handleAuctionHousePrice(CommandContext context) {
-        String[] parts = context.text().split("\\s+");
-        if (parts.length != 4) {
-            send(context.chatId(), """
-                    Usage: /price_ah <connectedRealmId> <auctionHouseId> <itemId>
-                    Example: /price_ah 1080 2 72092
-                    """.strip());
-            return;
-        }
-
-        Long connectedRealmId = parseLong(parts[1]);
-        Long auctionHouseId = parseLong(parts[2]);
-        Long itemId = parseLong(parts[3]);
-        if (connectedRealmId == null || auctionHouseId == null || itemId == null) {
-            send(context.chatId(), "Invalid numbers. Example: /price_ah 1080 2 72092");
-            return;
-        }
-
-        try {
-            PriceResult result = auctionService.getAuctionHouseAverage(connectedRealmId, auctionHouseId, itemId);
-            ItemRef item = itemService.getById(itemId);
-            send(context.chatId(), formatPriceMessage(
-                    "AuctionHouse " + auctionHouseId,
-                    resolveDisplayName(item, itemId),
-                    result
-            ));
-        } catch (Exception e) {
-            send(context.chatId(), "Blizzard price lookup failed: " + e.getMessage());
-        }
-    }
-
-    private void handleTokenPrice(long chatId) {
-        send(chatId, wowTokenReportService.currentPrice());
-    }
-
-    private void handleTokenPriceExtreme(CommandContext context, TokenPriceExtreme extreme) {
-        String requestedPeriod = commandArguments(context).toLowerCase(Locale.ROOT);
-        switch (requestedPeriod) {
-            case "week" -> handleTokenPriceExtreme(context, extreme, TokenHistoryPeriod.WEEK);
-            case "month" -> handleTokenPriceExtreme(context, extreme, TokenHistoryPeriod.MONTH);
-            default -> {
-                send(context.chatId(), extreme.usageMessage());
-            }
-        }
-    }
-
-    private void handleTokenPriceExtreme(
-            CommandContext context,
-            TokenPriceExtreme extreme,
-            TokenHistoryPeriod period
-    ) {
-        if (!commandArguments(context).isBlank() && context.command().contains("_")) {
-            send(context.chatId(), USAGE_PREFIX + extreme.commandFor(period));
-            return;
-        }
-
-        String report = extreme == TokenPriceExtreme.LOWEST
-                ? wowTokenReportService.lowestPrice(period.lookback(), period.label())
-                : wowTokenReportService.highestPrice(period.lookback(), period.label());
-        send(context.chatId(), report);
-    }
-
-    private void handleBestTokenTradingHours(CommandContext context) {
-        if (!commandArguments(context).isBlank()) {
-            send(context.chatId(), USAGE_PREFIX + TOKEN_BEST_COMMAND);
-            return;
-        }
-        send(context.chatId(), wowTokenReportService.bestTradingHours());
-    }
-
-    private void handleMountAchievement(CommandContext context) {
-        String[] parts = context.text().split("\\s+");
-        if (parts.length < 3) {
-            send(context.chatId(), """
-                    Usage: /mount_achievement <realm> <name>
-                    Example: /mount_achievement stormscale bucothered
-                    """.strip());
-            return;
-        }
-
-        try {
-            var progress = mountService.getMountProgress(parts[1], parts[2]);
-            send(context.chatId(), "Insurmountable Collection: "
-                    + formatMountAchievementProgress(progress.usable()));
-        } catch (Exception e) {
-            send(context.chatId(), formatMountLookupError(parts[1], parts[2], e));
-        }
     }
 
     private static String commandArguments(CommandContext context) {
@@ -2421,47 +1869,12 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         return false;
     }
 
-    private boolean handleTravelCommand(CommandContext context) {
-        return switch (context.command()) {
-            case ROAD_COMMAND, "/travel", "/timetogo" -> handled(() -> send(
-                    context.chatId(),
-                    timeToGoCommands.formatCurrent(context.text())
-            ));
-            case ROAD_BEST_COMMAND, "/travelbest", "/timetogobest" -> handled(() -> send(
-                    context.chatId(),
-                    timeToGoCommands.formatBest(context.text())
-            ));
-            case "/timetogoimport30", "/roadimport30", "/travelimport30" -> handled(() ->
-                    runAdminCommand(context, () -> submitHistoricalImport(context.chatId())));
-            case "/timetogoimportstatus", "/roadimportstatus", "/travelimportstatus" -> handled(() ->
-                    runAdminCommand(context, () -> refreshHistoricalImport(context.chatId())));
-            default -> false;
-        };
-    }
-
-    private void submitHistoricalImport(long chatId) {
-        try {
-            send(chatId, timeToGoCommands.submitHistoricalImport());
-        } catch (Exception e) {
-            send(chatId, "TomTom historical import submit failed: " + e.getMessage());
-        }
-    }
-
-    private void refreshHistoricalImport(long chatId) {
-        try {
-            send(chatId, timeToGoCommands.refreshHistoricalImport());
-        } catch (Exception e) {
-            send(chatId, "TomTom historical import status failed: " + e.getMessage());
-        }
-    }
-
     private boolean handleGeneralCommand(CommandContext context) {
         return switch (context.command()) {
             case "/adresa" -> handled(() -> sendAddress(context.chatId()));
             case "/wow", "/start" -> handled(() -> sendWowMenu(context.chatId()));
             case "/wowadmin" -> handled(() -> sendWowAdminMenu(context.chatId(), context.senderUserId()));
             case "/vault" -> handled(() -> handleVaultCommand(context));
-            case "/rio" -> handled(() -> handleRaiderIoCommand(context));
             case "/help", "/commands" -> handled(() -> sendWowMenu(context.chatId()));
             case "/help-admin" -> handled(() -> runAdminCommand(
                     context,
@@ -2494,29 +1907,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         String realm = parts.length == 4 ? parts[2] : parts[1];
         String name = parts.length == 4 ? parts[3] : parts[2];
         send(context.chatId(), mplusSeasonReportService.weeklyVault(region, realm, name));
-    }
-
-    private void handleRaiderIoCommand(CommandContext context) {
-        String[] parts = context.text().split("\\s+");
-        if (parts.length < 4) {
-            send(context.chatId(), """
-                    Usage: /rio <region> <realm> <name>
-                    Example: /rio eu stormscale bucothered
-                    """.strip());
-            return;
-        }
-
-        String region = parts[1].toLowerCase(Locale.ROOT);
-        String realm = parts[2];
-        String name = parts[3];
-        try {
-            send(context.chatId(), formatRaiderIoScore(raiderIoClient.getCurrentMPlusScore(region, realm, name)));
-        } catch (Exception e) {
-            send(context.chatId(), """
-                    Couldn’t fetch Raider.IO for %s/%s/%s
-                    Reason: %s
-                    """.formatted(region, realm, name, e.getMessage()).strip());
-        }
     }
 
     private ScheduledFuture<?> scheduleWorkingMessage(long chatId) {
@@ -2674,49 +2064,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
     }
 
-    private static String formatRaiderIoScore(RaiderIoClient.RaiderIoScore score) {
-        String profile = score.profileUrl() == null || score.profileUrl().isBlank()
-                ? ""
-                : "%nProfile: %s".formatted(score.profileUrl());
-        return """
-                Raider.IO (current season)
-                %s - %s (%s)
-                %s%s
-                Score: %s
-                DPS: %s | Healer: %s | Tank: %s%s
-                """.formatted(
-                score.name(),
-                score.realm(),
-                score.region(),
-                ITEM_LEVEL_PREFIX,
-                valueOrUnavailable(score.itemLevel()),
-                valueOrUnavailable(score.all()),
-                valueOrUnavailable(score.dps()),
-                valueOrUnavailable(score.healer()),
-                valueOrUnavailable(score.tank()),
-                profile
-        ).strip();
-    }
-
-    private static String formatItemLevel(CharacterReportRow row) {
-        TrackedPlayer profile = row.profile();
-        return """
-                %s
-                %s - %s (%s)
-                Equipped item level: %s
-                """.formatted(
-                ITEM_LEVEL_LABEL,
-                profile.name(),
-                profile.realm(),
-                profile.region(),
-                row.itemLevel() == null ? "unavailable" : row.itemLevel().toString()
-        ).strip();
-    }
-
-    private static String valueOrUnavailable(BigDecimal value) {
-        return value == null ? "n/a" : value.toString();
-    }
-
     private void send(long chatId, String msg) {
         send(chatId, msg, null);
     }
@@ -2726,8 +2073,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             SendMessage message = SendMessage.builder().chatId(chatId).text(msg).build();
             message.setReplyMarkup(keyboard);
             client.execute(message);
-        } catch (Exception ignored) {
-            // Delivery failures are isolated so Telegram polling can continue processing later updates.
+        } catch (Exception exception) {
+            log.warn("Could not send a message to Telegram chat {}.", chatId, exception);
         }
     }
 
@@ -2756,185 +2103,11 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         }
     }
 
-    private static String formatMountLookupError(String realm, String name, Exception e) {
-        String message = e.getMessage() == null ? "" : e.getMessage();
-        if (message.contains("404")) {
-            return """
-                    Mount progression not found for %s on %s (EU).
-                    Use: /mount_achievement <realm> <name>
-                    Example: /mount_achievement stormscale bucothered
-                    Also check that the character exists on EU and has logged out recently.
-                    """.formatted(name, realm).strip();
-        }
-
-        return """
-                Couldn’t fetch mount progression for %s on %s (EU).
-                Try again later, or check the realm and character name.
-                """.formatted(name, realm).strip();
-    }
-
-    private static String formatMountAchievementProgress(int usableMounts) {
-        int missing = Math.max(0, INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS - usableMounts);
-        if (missing == 0) {
-            return usableMounts + "/" + INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS + " completed";
-        }
-        return usableMounts + "/" + INSURMOUNTABLE_COLLECTION_REQUIRED_MOUNTS + " (" + missing + " missing)";
-    }
-
-    private static String formatLastCrawled(String isoUtc) {
-        if (isoUtc == null || isoUtc.isBlank() || isoUtc.equals("n/a")) return "n/a";
-        try {
-            Instant i = Instant.parse(isoUtc);
-            ZonedDateTime zagreb = i.atZone(ZAGREB_ZONE);
-            return zagreb.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        } catch (Exception _) {
-            return "n/a";
-        }
-    }
-
     private static Long parseLong(String value) {
         try {
             return Long.parseLong(value);
         } catch (Exception _) {
             return null;
-        }
-    }
-
-    private String formatPriceMessage(String scope, String itemName, PriceResult result) {
-        if (!result.available()) {
-            return "No pricing data for " + itemName + " (" + scope + ").";
-        }
-        return scope + " avg for " + itemName + ": " + formatCopper(result.avgCopper());
-    }
-
-    private static String resolveDisplayName(ItemRef item, long fallbackItemId) {
-        if (item != null && item.name() != null && !item.name().isBlank()) {
-            return item.name();
-        }
-        return "item " + fallbackItemId;
-    }
-
-    private static boolean isWowToken(String name) {
-        if (name == null) return false;
-        String normalized = name.trim().toLowerCase();
-        return normalized.equals("wow token");
-    }
-
-    private String formatWatchlistWithSilverGold(String title, List<String> names) {
-        if (names == null || names.isEmpty()) {
-            return title + "\nNo items configured.";
-        }
-
-        StringBuilder sb = new StringBuilder(title).append("\n");
-        for (String rawBase : names) {
-            String baseName = rawBase == null ? "" : rawBase.trim();
-            if (baseName.isBlank()) continue;
-
-            try {
-                List<ItemRef> ranks = findMaterialRanks(baseName);
-
-                if (ranks.size() == 1) {
-                    sb.append("• ").append(baseName)
-                            .append(": ").append(formatItemPriceOrState(ranks.getFirst(), "n/a"))
-                            .append("\n");
-                } else {
-                    ItemRef silver = findMaterialRank(ranks, 2);
-                    ItemRef gold = findMaterialRank(ranks, 3);
-
-                    String silverPrice = formatItemPriceOrState(silver, "n/a");
-                    String goldPrice = formatItemPriceOrState(gold, "n/a");
-
-                    sb.append("• ").append(baseName)
-                            .append(" | S: ").append(silverPrice)
-                            .append(" | G: ").append(goldPrice)
-                            .append("\n");
-                }
-            } catch (Exception _) {
-                sb.append("• ").append(baseName).append(": error").append("\n");
-            }
-        }
-        return sb.toString().trim();
-    }
-
-    private List<ItemRef> findMaterialRanks(String baseName) {
-        List<Long> ids = MIDNIGHT_MATERIAL_IDS.get(baseName.toLowerCase());
-        if (ids == null) {
-            return itemService.findExactByName(baseName);
-        }
-        return ids.stream()
-                .map(id -> new ItemRef(id, baseName))
-                .toList();
-    }
-
-    private static ItemRef findMaterialRank(List<ItemRef> ranks, int qualityRank) {
-        if (ranks == null || ranks.isEmpty()) return null;
-        if (qualityRank == 2) {
-            return ranks.size() >= 3 ? ranks.get(1) : ranks.get(0);
-        }
-        if (qualityRank == 3) {
-            if (ranks.size() >= 3) {
-                return ranks.get(2);
-            }
-            if (ranks.size() >= 2) {
-                return ranks.get(1);
-            }
-        }
-        return null;
-    }
-
-    private String formatItemPriceOrState(ItemRef item, String emptyLabel) {
-        if (item == null) return emptyLabel;
-        PriceResult result = isWowToken(item.name())
-                ? auctionService.getWowTokenPrice()
-                : auctionService.getRegionBuyPrice(item.id());
-        return result.available() ? formatCopper(result.avgCopper()) : emptyLabel;
-    }
-
-    private static String formatCopper(long copper) {
-        long gold = copper / 10_000;
-        long silver = copper % 10_000 / 100;
-        return gold + "g " + silver + "s";
-    }
-
-    private enum TokenPriceExtreme {
-        LOWEST(TOKEN_LOWEST_WEEK_COMMAND, TOKEN_LOWEST_MONTH_COMMAND),
-        HIGHEST(TOKEN_HIGHEST_WEEK_COMMAND, TOKEN_HIGHEST_MONTH_COMMAND);
-
-        private final String weekCommand;
-        private final String monthCommand;
-
-        TokenPriceExtreme(String weekCommand, String monthCommand) {
-            this.weekCommand = weekCommand;
-            this.monthCommand = monthCommand;
-        }
-
-        String commandFor(TokenHistoryPeriod period) {
-            return period == TokenHistoryPeriod.WEEK ? weekCommand : monthCommand;
-        }
-
-        String usageMessage() {
-            return USAGE_PREFIX + weekCommand + " or " + monthCommand;
-        }
-    }
-
-    private enum TokenHistoryPeriod {
-        WEEK(Duration.ofDays(7), "last week"),
-        MONTH(TOKEN_MONTH_LOOKBACK, TOKEN_MONTH_LABEL);
-
-        private final Duration lookback;
-        private final String label;
-
-        TokenHistoryPeriod(Duration lookback, String label) {
-            this.lookback = lookback;
-            this.label = label;
-        }
-
-        Duration lookback() {
-            return lookback;
-        }
-
-        String label() {
-            return label;
         }
     }
 
@@ -3011,60 +2184,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 }
             }
             return null;
-        }
-    }
-
-    private enum CharacterReportAction {
-        RAIDER_IO("rio", "Raider.IO Score"),
-        ITEM_LEVEL(ITEM_LEVEL_CALLBACK, ITEM_LEVEL_LABEL),
-        MOUNTS("mount", "Mount Progress");
-
-        private final String key;
-        private final String label;
-
-        CharacterReportAction(String key, String label) {
-            this.key = key;
-            this.label = label;
-        }
-
-        String key() {
-            return key;
-        }
-
-        String label() {
-            return label;
-        }
-
-        static boolean isSupported(String key) {
-            return fromKey(key) != null;
-        }
-
-        static CharacterReportAction fromKey(String key) {
-            for (CharacterReportAction action : values()) {
-                if (action.key.equals(key)) {
-                    return action;
-                }
-            }
-            return null;
-        }
-    }
-
-    private record CharacterReportRow(
-            TrackedPlayer profile,
-            RaiderIoClient.RaiderIoScore score,
-            BlizzardMountService.MountProgress mountProgress,
-            BigDecimal itemLevel
-    ) {
-        private boolean unavailable() {
-            return score == null && mountProgress == null && itemLevel == null;
-        }
-
-        private BigDecimal metric(CharacterReportAction action) {
-            return switch (action) {
-                case RAIDER_IO -> score == null ? null : score.all();
-                case ITEM_LEVEL -> itemLevel;
-                case MOUNTS -> mountProgress == null ? null : BigDecimal.valueOf(mountProgress.usable());
-            };
         }
     }
 

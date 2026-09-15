@@ -2,8 +2,11 @@ package com.blackbox.wow.warcraftlogs;
 
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -23,6 +26,20 @@ class WarcraftLogsClientTest {
                 .isEqualTo(Duration.ofHours(24));
         assertThat(WarcraftLogsClient.parseRetryAfter(null)).isEqualTo(Duration.ofHours(1));
         assertThat(WarcraftLogsClient.parseRetryAfter("invalid")).isEqualTo(Duration.ofHours(1));
+    }
+
+    @Test
+    void usesDefaultRetryDelayWhenRateLimitResponseHasNoHeaders() {
+        HttpClientErrorException.TooManyRequests rateLimited =
+                (HttpClientErrorException.TooManyRequests) HttpClientErrorException.create(
+                        HttpStatus.TOO_MANY_REQUESTS,
+                        "Too Many Requests",
+                        null,
+                        new byte[0],
+                        StandardCharsets.UTF_8
+                );
+
+        assertThat(WarcraftLogsClient.retryAfter(rateLimited)).isEqualTo(Duration.ofHours(1));
     }
 
     @Test

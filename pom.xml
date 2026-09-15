@@ -29,7 +29,8 @@
     <properties>
         <java.version>25</java.version>
         <lombok.version>1.18.46</lombok.version>
-        <spring-modulith.version>2.0.0</spring-modulith.version>
+        <!-- Required by TelegramBots 9.x and the existing com.fasterxml-based clients. -->
+        <jackson-2-bom.version>2.20.1</jackson-2-bom.version>
     </properties>
     <dependencies>
         <dependency>
@@ -41,6 +42,10 @@
             <groupId>org.telegram</groupId>
             <artifactId>telegrambots-client</artifactId>
             <version>9.2.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <dependency>
@@ -88,18 +93,6 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.modulith</groupId>
-                <artifactId>spring-modulith-bom</artifactId>
-                <version>${spring-modulith.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <build>
         <plugins>

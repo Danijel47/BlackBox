@@ -970,6 +970,20 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void keepsMountAchievementRoutingOutsideTheEconomyHandler() throws Exception {
+        long chatId = 123L;
+        long userId = 456L;
+        when(accessPolicy.isAllowed(chatId, userId)).thenReturn(true);
+        when(mountService.getMountProgress("stormscale", "bucothered"))
+                .thenReturn(new BlizzardMountService.MountProgress("Bucothered", "stormscale", 590, 650));
+
+        bot().consume(update(chatId, userId, "/mount_achievement stormscale bucothered"));
+
+        assertThat(sentMessage().getText())
+                .isEqualTo("Insurmountable Collection: 590/600 (10 missing)");
+    }
+
+    @Test
     void showsTheLowestTokenPriceFromTheLastWeek() throws Exception {
         long chatId = 123L;
         long userId = 456L;

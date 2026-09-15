@@ -10,6 +10,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -794,8 +795,7 @@ public class RaiderIoClient {
     private void pauseBeforeRetry(RuntimeException failure) {
         long retryDelaySeconds = 1;
         if (failure instanceof HttpClientErrorException.TooManyRequests rateLimited) {
-            String retryAfter = rateLimited.getResponseHeaders().getFirst("Retry-After");
-            retryDelaySeconds = parseRetryAfter(retryAfter);
+            retryDelaySeconds = retryAfterSeconds(rateLimited);
         }
         retryDelaySeconds = Math.min(retryDelaySeconds, collectionRetryMaxDelaySeconds);
         if (retryDelaySeconds <= 0) {
@@ -808,6 +808,11 @@ public class RaiderIoClient {
             throw new RaiderIoCollectionException(Category.UNKNOWN,
                     "Raider.IO retry was interrupted", interrupted);
         }
+    }
+
+    static long retryAfterSeconds(HttpClientErrorException.TooManyRequests rateLimited) {
+        HttpHeaders headers = rateLimited.getResponseHeaders();
+        return parseRetryAfter(headers == null ? null : headers.getFirst(HttpHeaders.RETRY_AFTER));
     }
 
     private static long parseRetryAfter(String retryAfter) {

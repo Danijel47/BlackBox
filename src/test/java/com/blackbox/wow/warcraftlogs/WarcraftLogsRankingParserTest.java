@@ -31,8 +31,8 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        WarcraftLogsStatisticsService.RankingPercentiles result =
-                WarcraftLogsStatisticsService.findRankingPercentiles(
+        WarcraftLogsRankingParser.RankingPercentiles result =
+                WarcraftLogsRankingParser.findPercentiles(
                 rankings, 42, "Bucothered"
         );
 
@@ -50,8 +50,8 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        WarcraftLogsStatisticsService.RankingPercentiles result =
-                WarcraftLogsStatisticsService.findRankingPercentiles(
+        WarcraftLogsRankingParser.RankingPercentiles result =
+                WarcraftLogsRankingParser.findPercentiles(
                 rankings, 42, "Bucothered"
         );
 
@@ -74,8 +74,8 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        WarcraftLogsStatisticsService.RankingPercentiles result =
-                WarcraftLogsStatisticsService.findRankingPercentiles(
+        WarcraftLogsRankingParser.RankingPercentiles result =
+                WarcraftLogsRankingParser.findPercentiles(
                         rankings, 42, "Bucothered"
                 );
 
@@ -98,7 +98,7 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findRankingPercentiles(
+        assertThat(WarcraftLogsRankingParser.findPercentiles(
                 rankings, 42, "Bucothered"
         ).parsePercentage()).isNull();
     }
@@ -118,7 +118,7 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findDamagePerSecond(table, 42, "Linqq"))
+        assertThat(WarcraftLogsRankingParser.findDamagePerSecond(table, 42, "Linqq"))
                 .isEqualByComparingTo("124013.3");
     }
 
@@ -131,13 +131,13 @@ class WarcraftLogsRankingParserTest {
                 }
                 """);
 
-        assertThat(WarcraftLogsStatisticsService.findDamagePerSecond(table, 42, "Linqq"))
+        assertThat(WarcraftLogsRankingParser.findDamagePerSecond(table, 42, "Linqq"))
                 .isEqualByComparingTo("124013.3");
     }
 
     @Test
     void requestsDamageRankingsExplicitlyInsteadOfTheMythicPlusDefaultMetric() {
-        String query = WarcraftLogsStatisticsService.rankingsQuery(
+        String query = WarcraftLogsRankingParser.rankingsQuery(
                 new LinkedHashSet<>(java.util.List.of(7, 9))
         );
 
