@@ -220,7 +220,8 @@ final class EconomyCommandHandler {
             return title + "\nNo items configured.";
         }
 
-        StringBuilder message = new StringBuilder(title).append("\n");
+        StringBuilder message = new StringBuilder(title)
+                .append("\nTypical = quantity-weighted median of listed units.\n");
         for (String rawBase : names) {
             String baseName = rawBase == null ? "" : rawBase.trim();
             if (baseName.isBlank()) {
@@ -237,8 +238,8 @@ final class EconomyCommandHandler {
                     ItemRef silver = findMaterialRank(ranks, 2);
                     ItemRef gold = findMaterialRank(ranks, 3);
                     message.append("• ").append(baseName)
-                            .append(" | S: ").append(formatItemPriceOrState(silver, "n/a"))
-                            .append(" | G: ").append(formatItemPriceOrState(gold, "n/a"))
+                            .append("\n  Silver: ").append(formatItemPriceOrState(silver, "n/a"))
+                            .append("\n  Gold: ").append(formatItemPriceOrState(gold, "n/a"))
                             .append("\n");
                 }
             } catch (Exception _) {
@@ -278,10 +279,12 @@ final class EconomyCommandHandler {
         if (item == null) {
             return emptyLabel;
         }
-        PriceResult result = isWowToken(item.name())
-                ? auctionService.getWowTokenPrice()
-                : auctionService.getRegionBuyPrice(item.id());
-        return result.available() ? formatCopper(result.avgCopper()) : emptyLabel;
+        var prices = auctionService.getRegionMaterialPrices(item.id());
+        if (!prices.lowest().available() || !prices.typical().available()) {
+            return emptyLabel;
+        }
+        return "lowest " + formatCopper(prices.lowest().avgCopper())
+                + " · typical " + formatCopper(prices.typical().avgCopper());
     }
 
     private void send(long chatId, String text) {

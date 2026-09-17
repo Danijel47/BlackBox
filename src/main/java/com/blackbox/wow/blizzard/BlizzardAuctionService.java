@@ -4,11 +4,13 @@ import com.blackbox.wow.properties.BlizzardApiProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 
+import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 @Service
 public class BlizzardAuctionService {
@@ -58,6 +60,47 @@ public class BlizzardAuctionService {
 
     public PriceResult getRegionBuyPrice(long itemId) {
         return lowestUnitPrice(getRegionCommodities(), itemId);
+    }
+
+    public MaterialPrices getRegionMaterialPrices(long itemId) {
+        return materialPrices(getRegionCommodities(), itemId);
+    }
+
+    static MaterialPrices materialPrices(JsonNode data, long itemId) {
+        var quantitiesByPrice = new TreeMap<Long, BigInteger>();
+        BigInteger total = BigInteger.ZERO;
+        for (JsonNode auction : data.path("auctions")) {
+            if (auction.path("item").path("id").asLong() != itemId) continue;
+            long quantity = auction.path("quantity").asLong(0);
+            long unit = unitPrice(auction, quantity);
+            if (quantity <= 0 || unit <= 0) continue;
+            BigInteger weight = BigInteger.valueOf(quantity);
+            quantitiesByPrice.merge(unit, weight, BigInteger::add);
+            total = total.add(weight);
+        }
+        if (quantitiesByPrice.isEmpty()) {
+            return new MaterialPrices(PriceResult.notAvailable(), PriceResult.notAvailable());
+        }
+
+        // One-based positions of the middle units, including both for even totals.
+        BigInteger lowerPosition = total.add(BigInteger.ONE).divide(BigInteger.TWO);
+        BigInteger upperPosition = total.divide(BigInteger.TWO).add(BigInteger.ONE);
+        BigInteger cumulative = BigInteger.ZERO;
+        Long lower = null;
+        long median = 0;
+        for (var entry : quantitiesByPrice.entrySet()) {
+            cumulative = cumulative.add(entry.getValue());
+            if (lower == null && cumulative.compareTo(lowerPosition) >= 0) {
+                lower = entry.getKey();
+            }
+            if (cumulative.compareTo(upperPosition) >= 0) {
+                median = BigInteger.valueOf(lower).add(BigInteger.valueOf(entry.getKey()))
+                        .divide(BigInteger.TWO).longValueExact();
+                break;
+            }
+        }
+        return new MaterialPrices(PriceResult.fromCopper(quantitiesByPrice.firstKey()),
+                PriceResult.fromCopper(median));
     }
 
     private JsonNode getRegionCommodities() {
@@ -212,6 +255,9 @@ public class BlizzardAuctionService {
             long copper = avgCopper % 100;
             return new PriceResult(true, avgCopper, gold, silver, copper);
         }
+    }
+
+    public record MaterialPrices(PriceResult lowest, PriceResult typical) {
     }
 
     public record WowTokenPriceSnapshot(PriceResult price, Instant sourceUpdatedAt) {

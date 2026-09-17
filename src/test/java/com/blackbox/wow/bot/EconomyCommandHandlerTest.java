@@ -2,6 +2,7 @@ package com.blackbox.wow.bot;
 
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.blackbox.wow.blizzard.BlizzardAuctionService.PriceResult;
+import com.blackbox.wow.blizzard.BlizzardAuctionService.MaterialPrices;
 import com.blackbox.wow.blizzard.BlizzardItemService;
 import com.blackbox.wow.blizzard.BlizzardItemService.ItemRef;
 import com.blackbox.wow.properties.WowWatchlistProperties;
@@ -209,15 +210,32 @@ class EconomyCommandHandlerTest {
     @ValueSource(strings = {"/ores", "/ore"})
     void oreAliasesFormatConfiguredSilverAndGoldPrices(String command) {
         List<SentMessage> messages = new ArrayList<>();
-        when(auctionService.getRegionBuyPrice(237359L)).thenReturn(price(12_345L));
-        when(auctionService.getRegionBuyPrice(237361L)).thenReturn(price(67_890L));
+        when(auctionService.getRegionMaterialPrices(237359L)).thenReturn(new MaterialPrices(price(12_345L), price(300_000L)));
+        when(auctionService.getRegionMaterialPrices(237361L)).thenReturn(new MaterialPrices(price(67_890L), price(800_000L)));
 
         handler(messages).handle(CHAT_ID, command, command);
 
         assertThat(messages).containsExactly(new SentMessage(
                 CHAT_ID,
-                "Ores (EU)\n• Refulgent Copper Ore | S: 1g 23s | G: 6g 78s"
+                "Ores (EU)\nTypical = quantity-weighted median of listed units.\n"
+                        + "• Refulgent Copper Ore\n  Silver: lowest 1g 23s · typical 30g 0s"
+                        + "\n  Gold: lowest 6g 78s · typical 80g 0s"
         ));
+    }
+
+    @Test
+    void herbsShowBothMarketPricesAndUnavailableQualities() {
+        List<SentMessage> messages = new ArrayList<>();
+        when(auctionService.getRegionMaterialPrices(236761L))
+                .thenReturn(new MaterialPrices(price(150_000), price(300_000)));
+        when(auctionService.getRegionMaterialPrices(236767L))
+                .thenReturn(new MaterialPrices(new PriceResult(false, 0, 0, 0, 0),
+                        new PriceResult(false, 0, 0, 0, 0)));
+
+        handler(messages).handle(CHAT_ID, "/herbs", "/herbs");
+
+        assertThat(messages.getFirst().text()).contains("Herbs (EU)",
+                "Silver: lowest 15g 0s · typical 30g 0s", "Gold: n/a");
     }
 
     @Test
