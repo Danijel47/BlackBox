@@ -18,6 +18,40 @@ import static org.mockito.Mockito.when;
 class BlizzardAuctionServiceTest {
 
     @Test
+    void typicalMaterialPriceWeightsUnitsAndResistsSmallLowAndHighListings() throws Exception {
+        var data = JsonMapper.builder().build().readTree("""
+                {"auctions":[
+                  {"item":{"id":1},"quantity":1,"unit_price":150000},
+                  {"item":{"id":1},"quantity":100,"unit_price":300000},
+                  {"item":{"id":1},"quantity":2,"unit_price":9000000},
+                  {"item":{"id":2},"quantity":1000,"unit_price":10000},
+                  {"item":{"id":1},"quantity":0,"unit_price":1},
+                  {"item":{"id":1},"quantity":-10,"unit_price":1}
+                ]}
+                """);
+
+        var prices = BlizzardAuctionService.materialPrices(data, 1);
+
+        assertThat(prices.lowest().avgCopper()).isEqualTo(150_000);
+        assertThat(prices.typical().avgCopper()).isEqualTo(300_000);
+    }
+
+    @Test
+    void typicalMaterialPriceAveragesMiddleUnitsAtAnEvenSplit() throws Exception {
+        var data = JsonMapper.builder().build().readTree("""
+                {"auctions":[
+                  {"item":{"id":1},"quantity":2,"buyout":400000},
+                  {"item":{"id":1},"quantity":2,"unit_price":400000}
+                ]}
+                """);
+
+        assertThat(BlizzardAuctionService.materialPrices(data, 1).typical().avgCopper())
+                .isEqualTo(300_000);
+        assertThat(BlizzardAuctionService.materialPrices(data, 2).typical().available()).isFalse();
+        assertThat(BlizzardAuctionService.materialPrices(data, 2).lowest().available()).isFalse();
+    }
+
+    @Test
     void sharesOneTimestampedSnapshotBetweenExistingPricesAndProspecting() throws Exception {
         BlizzardApiClient api = mock(BlizzardApiClient.class);
         var cache = new BlizzardApiProperties.Cache(300, 300, 3600, 500_000, 1000, 250);
@@ -34,6 +68,7 @@ class BlizzardAuctionServiceTest {
 
         assertThat(service.getRegionBuyPrice(237359L).gold()).isEqualTo(10);
         assertThat(service.getRegionAverage(237359L).gold()).isEqualTo(10);
+        assertThat(service.getRegionMaterialPrices(237359L).typical().gold()).isEqualTo(10);
         assertThat(service.getCommodityMarket(Set.of(237359L)).sourceUpdatedAt()).isEqualTo(updated);
         verify(api, times(1)).getSnapshot(path, null, query);
     }

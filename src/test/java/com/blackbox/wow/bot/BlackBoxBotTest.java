@@ -1098,6 +1098,16 @@ class BlackBoxBotTest {
     }
 
     @Test
+    void removedPerformanceCommandReturnsHelpWithoutRunningAReport() throws Exception {
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+
+        bot().consume(update(123L, 456L, "/mplus_performance Buco"));
+
+        assertThat(sentMessage().getText()).contains("M+ commands:").doesNotContain("/mplus_performance");
+        verifyNoInteractions(mplusPerformanceService);
+    }
+
+    @Test
     void showsMPlusReportsAsInlineButtons() throws Exception {
         long chatId = 123L;
         long userId = 456L;
@@ -1113,10 +1123,10 @@ class BlackBoxBotTest {
                 .flatMap(List::stream)
                 .map(button -> button.getText()))
                 .contains(
-                        "Progress", "Dungeons", "Vault", "Performance", "Pair", "Awards",
+                        "Progress", "Dungeons", "Vault", "Pair", "Awards",
                         "Combat"
                 )
-                .doesNotContain("Combat +12")
+                .doesNotContain("Performance", "Combat +12")
                 .doesNotContain("Status");
     }
 

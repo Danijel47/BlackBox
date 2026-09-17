@@ -1,91 +1,93 @@
 # BlackBox
 
-`/adresa` returns the fixed Google Maps location with an **Otvori Google Maps**
-button. It also supports `/adresa@BlackBoxBot` in groups and follows the bot's
-existing Telegram access policy.
+BlackBox is a Telegram bot for World of Warcraft player and group reports. It tracks
+Mythic+ and raid activity, Great Vault progress, character gear, auction prices,
+and WoW Token trends. It also provides notifications and TomTom travel-time reports
+for Zadar ↔ Zagreb.
 
-The admin can change the minimum key level for M+ combat and awards while the bot
-is running: **`/wow_admin` → M+ Key Level → +12 through +18**, or
-`/mplus_keylevel 14`. Use `/mplus_keylevel` without a number to open the picker and
-see the current selection. The selected value means **timed +N and above**, for
-all profiles; it is not an exact-level filter and does not change the Vault target.
+## Getting started
 
-The setting takes effect on the next combat/awards report and is saved in the
-database across restarts. No restart or wait for the :00/:30 collection schedule
-is needed to change the filter. Existing Telegram messages are unchanged; request
-a new report. The configured `warcraft-logs.combat-minimum-keystone-level` is only
-the initial default until an admin saves a selection. A saved selection takes
-precedence over subsequent environment/default changes.
+Send `/start` or `/wow` to open the main menu. Use the buttons to choose a report;
+`/help` opens the same menu. Access follows the bot’s configured user and chat
+permissions. Ask the bot administrator to register your profile and characters.
 
-Warcraft Logs collection and metric backfills retain eligible runs from **+12
-upward**, including levels above +18, regardless of the selected report minimum.
-Switching down therefore reuses already collected runs. Previously uncollected
-runs still need a scheduled sync and must be available within the collector's
-normal report discovery limits. Existing history is not deleted. The database
-migration `V30` adds one global setting row on first save; applying this new
-feature still requires the normal one-time application deployment.
+## Player and group commands
 
-`/gearupg` opens **Character → Gear Upg → All Profiles / individual profile**.
-Both selections use each active profile's currently selected main. All Profiles
-sends a compact summary of the three highest-priority verified next upgrades per
-main, with a **Details** button. Selecting one profile shows the full ordered
-report, split into Telegram-sized pages.
+| Command | What it does |
+| --- | --- |
+| `/profile` | Show your registered characters. |
+| `/profile_main <realm> <character>` | Select a registered character as your main. |
+| `/mains` | List the group’s current mains. |
+| `/profiles` | Open the player profile menu. |
+| `/ilvl` | Open the item-level report menu. |
+| `/gearcheck` | Check all active mains for missing enchants and empty gem sockets. |
+| `/gearupg` | Open gear upgrade recommendations for one profile or all active mains. |
+| `/rio <region> <realm> <name>` | Look up a character on Raider.IO. |
 
-The report groups recommendations into **High**, **Medium**, and **Low**, with
-item names, current and next item levels/ranks, standard crest-cost estimates,
-and reasons. Its guide-based starting order is weapon → trinkets → head/chest/legs
-→ shoulders/gloves/belt/boots → cloak/bracers/jewelry. Fury and Frost off-hands
-receive weapon priority; other off-hands use medium priority. A medium/low-priority
-item at least 13 item levels below the median equipped item moves up one priority
-group. Within equivalent slots, larger next-step gains come first, then lower
-item level. This catch-up threshold is a bot heuristic, not a simulation result.
-Trinket effects, secondary stats, tank/healer needs, and planned replacements can
-change the best order; no DPS gains or best-in-slot claims are calculated.
+Gear reports use Blizzard’s last saved equipment, which may lag behind the game.
+Upgrade recommendations are guidance; crest balances and affordability are not checked.
 
-Seasonal rules currently support **Midnight Season 2** and are isolated in
-`GearUpgradeRules`. Track/rank identification requires a known seasonal item bonus
-ID **and** its matching item level. Overlapping item levels alone never determine
-the track. Maxed items, recognizable crafted items (`crafted_by`), and unknown or
-conflicting tracks receive separate statuses and no ordinary upgrade recommendation.
-Unknown items may include crafted items when Blizzard omits their crafter, special
-items, and gear from other seasons. Missing equipment and unavailable specialization
-data are identified explicitly.
+## Mythic+ and raids
 
-**Crest balances cannot currently be read by this integration.** It does not infer
-balances from activity, assume zero, or claim that an upgrade is affordable. Costs
-are the standard 20 matching Mistcrests per rank, before same-slot and Warband
-discounts, plus gold. Neither historical owned-item levels nor Warband discount
-eligibility is established by equipped gear, so the player must confirm the final
-cost at the vendor. Manual balances and addon imports are not implemented.
+| Command | What it does |
+| --- | --- |
+| `/mplus` | Open the Mythic+ report menu. |
+| `/mplus_progress [profile]` | Show Mythic+ progress. |
+| `/mplus_vault [profile]` | Show current-week Mythic+ Vault progress. |
+| `/mplus_combat` | Show combat statistics for the selected mains. |
+| `/mplus_awards` | Show Mythic+ awards. |
+| `/vault` | Show the group’s weekly Vault watch. |
+| `/vault <realm> <name>` | Check a character’s Mythic+ Vault progress (EU by default). |
+| `/raid_progress` | Show tracked players’ raid progress. |
+| `/raid_vault` | Show tracked players’ raid Vault progress. |
+| `/raid_combat` | Show raid combat statistics. |
+| `/guild` | Show the configured guild’s raid report. |
+| `/guildlist` | List available raid keys for `/guild <raidKey>`. |
+| `/rwf` | Show Race to World First standings. |
 
-Gear Upg shares the five-minute equipment cache with Enchants & Gems and caches
-successful character-specialization lookups for five minutes. It uses existing
-Telegram access checks and configured Blizzard credentials/region. Equipment
-timestamps reflect Blizzard's last saved data, which may lag behind the game.
-No credentials or upstream error bodies are included in reports.
+Use `/mplus` and the main menu for additional reports, including dungeon coverage,
+team reports, season recaps, and title tracking. `[profile]` is optional;
+replace values in `<angle brackets>` with your own input.
 
-Upgrade references (checked 2026-09-07):
+## Prices and travel
 
-- [Season 2 upgrade costs and discounts](https://www.wowhead.com/guide/midnight/item-level-gear-upgrades-dawncrests)
-- [Season 2 item-level tables](https://www.icy-veins.com/wow/world-of-warcraft-gear-upgrading-guide)
-- [Slot-order guidance and simulation limitations](https://www.icy-veins.com/wow/enhancement-shaman-pve-dps-gear-best-in-slot)
-- [Published Season 2 item bonus-ID mapping](https://github.com/consecrated-hammer/wow-site/blob/main/site/season-data.js)
+| Command | What it does |
+| --- | --- |
+| `/price <itemId or item name>` | Look up an item’s price. |
+| `/ores` / `/herbs` | Show lowest and typical material prices for each quality. |
+| `/token` | Show the current WoW Token price. |
+| `/token_lowest_week` / `/token_highest_week` | Show the week’s lowest or highest Token price. |
+| `/token_lowest_month` / `/token_highest_month` | Show the month’s lowest or highest Token price. |
+| `/token_best` | Show historical Token trading-hour analysis. |
+| `/road zadar zagreb` | Show current travel time; reverse the cities for the return route. |
+| `/roadbest zadar zagreb` | Show the best historical travel slots; also supports the reverse route. |
+| `/adresa` | Open the configured location in Google Maps. |
 
-`/gearcheck` checks the currently selected main of every active player profile.
-It is also available through **Character → Enchants & Gems** and uses the bot's
-existing Telegram access policy and Blizzard API credentials.
+Material reports use all available listings in the cached auction snapshot. The typical
+price is the quantity-weighted median, so a few unusually cheap or expensive units
+have less influence. These are asking prices, not confirmed sales.
 
-The report lists missing permanent enchants and empty existing gem sockets for
-each character, with enchant/gem counts and Blizzard's source timestamp when
-available. Midnight slots are head, shoulders, chest, legs (spellthread/armor kit),
-boots, both rings, and equipped weapons. Shields and held off-hands do not need a
-weapon enchant. Temporary effects and cosmetic illusions do not count.
+## Administrator commands
 
-This checks presence, not enchant/gem rank, best stats, or sockets that could still
-be added. It uses Blizzard's last saved equipment, which may lag behind the game,
-and caches successful checks for five minutes per character. Switching mains is
-reflected on the next command. Unavailable or incomplete equipment is reported
-per character; profiles outside the configured Blizzard API region are unavailable.
+These commands require the configured bot administrator.
 
-Rules reference: [Midnight enchants and gems](https://www.method.gg/guides/list-of-all-midnight-consumables-enchants-and-gems).
-Data source: Blizzard's Character Equipment Summary (`/profile/wow/character/{realm}/{name}/equipment`).
+| Command | What it does |
+| --- | --- |
+| `/wow_admin` | Open the administration menu. |
+| `/help_admin` | Show administration commands and usage. |
+| `/mplus_keylevel` | Choose the minimum timed key level for Mythic+ combat and awards. |
+| `/mplus_keylevel 14` | Include timed +14 runs and above; saved across restarts. |
+| `/prospect` | Open ore selection and recorded-batch prospecting analysis. |
+
+Profile registration, character management, and Telegram user access are managed
+through the administration commands. The Mythic+ key-level setting does not change
+the Vault target.
+
+## Development
+
+The application uses Java 25, Spring Boot, and PostgreSQL with Flyway migrations.
+Build and run verification with the Maven Wrapper:
+
+```sh
+./mvnw clean verify
+```

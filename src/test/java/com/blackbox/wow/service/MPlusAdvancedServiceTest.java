@@ -39,6 +39,21 @@ class MPlusAdvancedServiceTest {
         assertThat(message).contains("unavailable (N=1, need 2 deduplicated observed runs)");
     }
 
+    @Test
+    void summarizesTheUsualKeyRangeAndCloseFinishesInPlainLanguage() {
+        prepareResolvedPlayer(player(1, "Buco"), List.of(
+                run(1, "AD", 11, 20), run(2, "AD", 12, 0),
+                run(3, "NW", 13, 60), run(4, "NW", 14, 61), run(5, "AD", 14, -1)
+        ));
+
+        String message = service(false, 2).consistencyMessage("", 123L);
+
+        assertThat(message).contains("M+ Consistency — Buco", "Runs analyzed: 5",
+                "Usual key range: +12 to +14", "4 of 5 runs", "Most-played dungeon:",
+                "Dungeons played: 2", "Close finishes: 2", "1–60 seconds left")
+                .doesNotContain("population SD", "IQR", "Specialist concentration", "N=", "season-mn-2");
+    }
+
     private void prepareResolvedPlayer(TrackedPlayer player, List<ObservedRun> runs) {
         when(playerResolver.resolveSelfOrNamed("", 123L)).thenReturn(Resolution.found(player));
         when(progressRepository.latestScore(player.profileId())).thenReturn(Optional.of(score(player.profileId())));

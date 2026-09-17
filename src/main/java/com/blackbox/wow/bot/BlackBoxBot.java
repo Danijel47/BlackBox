@@ -660,9 +660,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case RAID_VAULT_CALLBACK -> mplusDungeonVaultService.currentVaultMessage(
                     arguments, senderUserId
             );
-            case "performance" -> mplusPerformanceService.performanceMessage(
-                    arguments, senderUserId
-            );
             case "highlights" -> mplusPerformanceService.highlightsMessage(
                     arguments, senderUserId
             );
@@ -701,7 +698,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 /mplus_progress [profile]
                 /mplus_dungeons [profile]
                 /mplus_vault [profile] — current week only
-                /mplus_performance [profile]
                 /mplus_highlights [profile]
                 /mplus_team [profile]
                 /mplus_pair <profile-a> <profile-b>
@@ -2191,7 +2187,6 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         PROGRESS(RAID_PROGRESS_CALLBACK, "Progress", true),
         DUNGEONS("dungeons", "Dungeons", true),
         VAULT(RAID_VAULT_CALLBACK, "Vault", true),
-        PERFORMANCE("performance", "Performance", true),
         HIGHLIGHTS("highlights", "Highlights", true),
         TEAM("team", "Team", true),
         PAIR(MPLUS_PAIR_CALLBACK, "Pair", false),

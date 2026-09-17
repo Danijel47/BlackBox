@@ -82,24 +82,25 @@ public class MPlusAdvancedService {
             int clutchRuns
     ) {
         var comfort = consistency.comfortRange();
-        String specialist = dungeon.concentrationPercent() >= properties.specialistMinimumPercent()
-                ? "Specialist concentration: " + dungeon.mostPlayedDungeon() + " — "
-                    + formatPercent(dungeon.concentrationPercent()) + "% (" + dungeon.mostPlayedRuns() + " runs)"
-                : "Specialist concentration: none above " + properties.specialistMinimumPercent() + "%";
-        return "Advanced observed M+ metrics — " + data.player().profileName() + " — " + data.season() + '\n'
-                + "Sample: N=" + data.runs().size() + " deduplicated observed runs\n"
-                + "Consistency (population SD of key levels): " + formatNumber(consistency.standardDeviation()) + '\n'
-                + "IQR (Q3 − Q1): " + formatNumber(consistency.interquartileRange())
-                + " (Q1=" + formatNumber(consistency.firstQuartile())
-                + ", Q3=" + formatNumber(consistency.thirdQuartile()) + ")\n"
-                + "Comfort range: +" + comfort.minimumLevel() + " to +" + comfort.maximumLevel()
-                + " (smallest interval containing " + comfort.includedRuns() + '/' + comfort.totalRuns()
-                + " runs; target " + properties.comfortCoveragePercent() + "%)\n"
-                + specialist + '\n'
-                + "Dungeon coverage: " + dungeon.uniqueDungeons() + " unique dungeons\n"
-                + "Clutch runs: " + clutchRuns + " timed with 1–" + properties.clutchWindowSeconds()
-                + " seconds remaining\n"
-                + "Observed data only; Raider.IO may not expose every completed run.";
+        String mostPlayed = dungeon.concentrationPercent() >= properties.specialistMinimumPercent()
+                ? dungeon.mostPlayedDungeon() + " — " + formatPercent(dungeon.concentrationPercent())
+                    + "% (" + dungeon.mostPlayedRuns() + " runs)"
+                : "No dominant dungeon (none reaches " + properties.specialistMinimumPercent() + "%)";
+        return "M+ Consistency — " + data.player().profileName() + "\n"
+                + "Runs analyzed: " + data.runs().size() + "\n\n"
+                + "Usual key range: +" + comfort.minimumLevel() + " to +" + comfort.maximumLevel()
+                + "\n" + comfort.includedRuns() + " of " + comfort.totalRuns()
+                + " runs fall in this range (target: " + properties.comfortCoveragePercent() + "%).\n\n"
+                + "Key-level spread: " + formatNumber(consistency.standardDeviation())
+                + " (lower means more similar key levels)\n"
+                + "Middle 50% of key levels: +" + formatNumber(consistency.firstQuartile())
+                + " to +" + formatNumber(consistency.thirdQuartile())
+                + " (spread: " + formatNumber(consistency.interquartileRange()) + ")\n\n"
+                + "Most-played dungeon: " + mostPlayed + '\n'
+                + "Dungeons played: " + dungeon.uniqueDungeons() + '\n'
+                + "Close finishes: " + clutchRuns + " timed runs with 1–"
+                + properties.clutchWindowSeconds() + " seconds left\n\n"
+                + "Based on observed runs this season; Raider.IO may not expose every completed run.";
     }
 
     private String insufficientRuns(String profileName, String season, int sampleSize) {
