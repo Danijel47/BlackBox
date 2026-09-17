@@ -64,11 +64,39 @@ class WowTuningNewsNotifierServiceTest {
     }
 
     @Test
+    void acceptsLiveRaidAndTrinketTuning() {
+        for (String title : List.of(
+                "Raid Encounter Tuning",
+                "Massive Nerfs to Coiled Altar and Ula'tek - Post Race to World First Raid Tuning",
+                "Final Round of Trinket Tuning for Midnight Season 2 for Next Weekly Reset",
+                "Trinkets Tuning"
+        )) {
+            assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(title, "Live")))
+                    .as(title).isTrue();
+        }
+    }
+
+    @Test
+    void acceptsLiveHotfixHeadlinesWithoutTuningSubjects() {
+        for (String title : List.of(
+                "Spark of Tides Fix - Patch 12.1 Hotfixes for September 15th",
+                "Curse Surges Hotfixed and Now Spawn Every 30 Minutes",
+                "Minimap Addon Tech Will Be Disabled in Hotfix",
+                "Trinket Tuning Hotfixes"
+        )) {
+            assertThat(WowTuningNewsNotifierService.isTuningUpdate(item(title, "Live")))
+                    .as(title).isTrue();
+        }
+    }
+
+    @Test
     void rejectsPtrAndUnrelatedTuningPosts() {
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("PTR Class Tuning", "PTR"))).isFalse();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Mythic+ Dungeon Tuning", "Beta"))).isFalse();
-        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Raid Encounter Tuning", "Live"))).isFalse();
-        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Trinket Tuning Hotfixes", "Live"))).isFalse();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Raid Tuning Hotfixes", "PTR"))).isFalse();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Trinket Tuning", "Beta"))).isFalse();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Patch Hotfixes", "Classic"))).isFalse();
+        assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Profession Tuning", "Live"))).isFalse();
         assertThat(WowTuningNewsNotifierService.isTuningUpdate(item("Weekly Maintenance", "Live"))).isFalse();
     }
 

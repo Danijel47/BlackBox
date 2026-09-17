@@ -28,9 +28,10 @@ import java.util.regex.Pattern;
 public class WowTuningNewsNotifierService {
 
     private static final Pattern TUNING_SUBJECT = Pattern.compile(
-            "\\b(class|classes|pve|pvp|tank|healer|dps|specialization|spec|dungeon|dungeons)\\b",
+            "\\b(class|classes|pve|pvp|tank|healer|dps|specialization|spec|dungeon|dungeons|raid|raids|trinket|trinkets)\\b",
             Pattern.CASE_INSENSITIVE
     );
+    private static final Pattern HOTFIX = Pattern.compile("\\bhotfix(?:es|ed)?\\b", Pattern.CASE_INSENSITIVE);
     private static final DateTimeFormatter MESSAGE_TIME = DateTimeFormatter.ofPattern(
             "d MMM uuuu, HH:mm z",
             Locale.ENGLISH
@@ -129,7 +130,8 @@ public class WowTuningNewsNotifierService {
             return false;
         }
         String title = item.title().toLowerCase(Locale.ROOT);
-        return title.contains("tuning") && TUNING_SUBJECT.matcher(title).find();
+        return HOTFIX.matcher(title).find()
+                || (title.contains("tuning") && TUNING_SUBJECT.matcher(title).find());
     }
 
     private String formatMessage(NewsItem item) {
