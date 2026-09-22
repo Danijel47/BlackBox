@@ -51,11 +51,13 @@ final class WarcraftLogsRankingParser {
     private static RankingPercentiles percentilesForPlayer(JsonNode node, int actorId, String name) {
         JsonNode parse = node.path("rankPercent");
         JsonNode keyParse = node.path("bracketPercent");
-        if (!belongsToPlayer(node, actorId, name) || !parse.isNumber() || !keyParse.isNumber()
-                || !validPercentile(parse.decimalValue()) || !validPercentile(keyParse.decimalValue())) {
+        if (!belongsToPlayer(node, actorId, name)) {
             return RankingPercentiles.unavailable();
         }
-        return new RankingPercentiles(parse.decimalValue(), keyParse.decimalValue());
+        return new RankingPercentiles(
+                parse.isNumber() && validPercentile(parse.decimalValue()) ? parse.decimalValue() : null,
+                keyParse.isNumber() && validPercentile(keyParse.decimalValue()) ? keyParse.decimalValue() : null
+        );
     }
 
     static BigDecimal findDamagePerSecond(JsonNode table, int actorId, String name) {
@@ -100,6 +102,6 @@ final class WarcraftLogsRankingParser {
 
     record RankingPercentiles(BigDecimal parsePercentage, BigDecimal keyParsePercentage) {
         private static RankingPercentiles unavailable() { return new RankingPercentiles(null, null); }
-        private boolean available() { return parsePercentage != null && keyParsePercentage != null; }
+        private boolean available() { return parsePercentage != null || keyParsePercentage != null; }
     }
 }

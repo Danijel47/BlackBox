@@ -764,7 +764,6 @@ public class WarcraftLogsCollectionService {
     private static boolean hasCompleteMetrics(WarcraftLogPlayerRunEntity run) {
         return hasCurrentMetricsVersion(run)
                 && isValidPercentile(run.getParsePercentage())
-                && isValidPercentile(run.getKeyParsePercentage())
                 && run.getDamagePerSecond() != null;
     }
 
