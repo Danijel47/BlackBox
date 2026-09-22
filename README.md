@@ -2,8 +2,7 @@
 
 BlackBox is a Telegram bot for World of Warcraft player and group reports. It tracks
 Mythic+ and raid activity, Great Vault progress, character gear, auction prices,
-and WoW Token trends. It also provides notifications and TomTom travel-time reports
-for Zadar ↔ Zagreb.
+and WoW Token trends. 
 
 ## Getting started
 
@@ -49,7 +48,7 @@ Use `/mplus` and the main menu for additional reports, including dungeon coverag
 team reports, season recaps, and title tracking. `[profile]` is optional;
 replace values in `<angle brackets>` with your own input.
 
-## Prices and travel
+## Prices
 
 | Command | What it does |
 | --- | --- |
@@ -59,29 +58,10 @@ replace values in `<angle brackets>` with your own input.
 | `/token_lowest_week` / `/token_highest_week` | Show the week’s lowest or highest Token price. |
 | `/token_lowest_month` / `/token_highest_month` | Show the month’s lowest or highest Token price. |
 | `/token_best` | Show historical Token trading-hour analysis. |
-| `/road zadar zagreb` | Show current travel time; reverse the cities for the return route. |
-| `/roadbest zadar zagreb` | Show the best historical travel slots; also supports the reverse route. |
-| `/adresa` | Open the configured location in Google Maps. |
 
 Material reports use all available listings in the cached auction snapshot. The typical
 price is the quantity-weighted median, so a few unusually cheap or expensive units
 have less influence. These are asking prices, not confirmed sales.
-
-## Administrator commands
-
-These commands require the configured bot administrator.
-
-| Command | What it does |
-| --- | --- |
-| `/wow_admin` | Open the administration menu. |
-| `/help_admin` | Show administration commands and usage. |
-| `/mplus_keylevel` | Choose the minimum timed key level for Mythic+ combat and awards. |
-| `/mplus_keylevel 14` | Include timed +14 runs and above; saved across restarts. |
-| `/prospect` | Open ore selection and recorded-batch prospecting analysis. |
-
-Profile registration, character management, and Telegram user access are managed
-through the administration commands. The Mythic+ key-level setting does not change
-the Vault target.
 
 ## Development
 

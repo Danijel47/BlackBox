@@ -31,7 +31,17 @@ class CombatStatisticsFormatterTest {
         var bravo = stats("Bravo", "BravoMain", 1, 0, 0, "4", "2", null, "200000");
         assertThat(CombatStatisticsFormatter.awardsMessage(List.of(alpha, bravo), 13, "season"))
                 .contains("🛑 CC Machine — Most interrupts per run", "• Alpha (AlphaMain)",
-                        "• Bravo (BravoMain)", "🔥 Top Pumper — Best average key parse\n• Unavailable");
+                        "• Bravo (BravoMain)")
+                .doesNotContain("Top Pumper", "Are You Pressing Buttons?");
+    }
+
+    @Test
+    void omitsKeyRankingWhenNoneIsAvailable() {
+        var alpha = stats("Alpha", "AlphaMain", 1, 0, 0, "4", "1", null, "100000");
+        String message = CombatStatisticsFormatter.combatMessage(List.of(alpha), "", 13, "season");
+
+        assertThat(message).contains("DPS: 100k", "Logged runs: 1")
+                .doesNotContain("Key parse:", "Key-parse runs:");
     }
 
     private static WarcraftLogsStatisticsService.PlayerStatistics stats(

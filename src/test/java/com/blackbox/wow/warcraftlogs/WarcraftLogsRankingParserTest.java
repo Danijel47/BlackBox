@@ -41,7 +41,7 @@ class WarcraftLogsRankingParserTest {
     }
 
     @Test
-    void rejectsAnIncompleteRankingInsteadOfMixingMetrics() throws Exception {
+    void keepsParseWhenKeyRankingIsUnavailable() throws Exception {
         JsonNode rankings = jsonMapper.readTree("""
                 {
                   "characters": [
@@ -55,7 +55,7 @@ class WarcraftLogsRankingParserTest {
                 rankings, 42, "Bucothered"
         );
 
-        assertThat(result.parsePercentage()).isNull();
+        assertThat(result.parsePercentage()).isEqualByComparingTo("97.31");
         assertThat(result.keyParsePercentage()).isNull();
     }
 

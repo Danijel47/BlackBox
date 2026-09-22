@@ -69,21 +69,24 @@ final class CombatStatisticsFormatter {
     }
 
     private static void appendStatistic(StringBuilder out, PlayerStatistics value) {
-        out.append("• ").append(value.profileName()).append(" (").append(value.characterName()).append(")\n")
-                .append("  Key parse: ").append(percent(value.averageKeyParsePercentage())).append('\n')
-                .append("  DPS: ").append(dps(value.averageDamagePerSecond())).append('\n')
+        out.append("• ").append(value.profileName()).append(" (").append(value.characterName()).append(")\n");
+        if (value.averageKeyParsePercentage() != null)
+            out.append("  Key parse: ").append(percent(value.averageKeyParsePercentage())).append('\n');
+        out.append("  DPS: ").append(dps(value.averageDamagePerSecond())).append('\n')
                 .append("  Interrupts per run: ").append(metric(value.averageInterrupts())).append('\n')
                 .append("  Deaths per run: ").append(metric(value.averageDeaths())).append('\n')
                 .append("  Logged runs: ").append(value.dungeonRuns()).append('\n');
         appendDuplicates(out, value);
-        if (value.keyParsedDungeonRuns() != value.dungeonRuns())
+        if (value.keyParsedDungeonRuns() > 0 && value.keyParsedDungeonRuns() != value.dungeonRuns())
             out.append("  Key-parse runs: ").append(value.keyParsedDungeonRuns()).append('\n');
         out.append('\n');
     }
 
     private static void appendAwards(StringBuilder out, List<PlayerStatistics> candidates, Direction direction) {
         out.append(direction.heading).append("\n\n");
-        AWARDS.forEach(award -> appendAward(out, candidates, award, direction));
+        AWARDS.stream().filter(award -> candidates.stream()
+                        .anyMatch(value -> award.value.apply(value) != null))
+                .forEach(award -> appendAward(out, candidates, award, direction));
     }
 
     private static void appendAward(StringBuilder out, List<PlayerStatistics> candidates,

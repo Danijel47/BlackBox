@@ -703,7 +703,7 @@ class WarcraftLogsStatisticsServiceTest {
     }
 
     @Test
-    void retriesPendingRankingsOnTheNextRefresh() throws Exception {
+    void retriesPendingRankingsAndAcceptsParseWithoutKeyRanking() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         WarcraftLogsClient client = mock(WarcraftLogsClient.class);
         WarcraftLogPlayerRunRepository runRepository = mock(WarcraftLogPlayerRunRepository.class);
@@ -729,9 +729,11 @@ class WarcraftLogsStatisticsServiceTest {
                 """);
         JsonNode pendingMetrics = emptyRankingResponse();
         JsonNode availableMetrics = rankingResponse(99, 93);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) availableMetrics.path("reportData")
+                .path("report").path("p7").path("characters").get(0)).remove("bracketPercent");
         when(client.rateLimit()).thenReturn(new WarcraftLogsClient.RateLimit(1000, 0, 3600));
         when(client.query(anyString(), anyMap()))
-                .thenReturn(reports, pendingMetrics, reports, availableMetrics);
+                .thenReturn(reports, pendingMetrics, reports, availableMetrics, reports);
         when(runRepository.findBySeasonKey("midnight-season-2")).thenReturn(List.of(pendingRun));
         when(runRepository.save(any(WarcraftLogPlayerRunEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -762,8 +764,11 @@ class WarcraftLogsStatisticsServiceTest {
         service.refresh();
 
         assertThat(pendingRun.getParsePercentage()).isEqualByComparingTo("99");
-        assertThat(pendingRun.getKeyParsePercentage()).isEqualByComparingTo("93");
+        assertThat(pendingRun.getKeyParsePercentage()).isNull();
+        service.refresh();
+
         verify(runRepository, times(2)).save(eq(pendingRun));
+        verify(client, times(5)).query(anyString(), anyMap());
     }
 
     @Test
