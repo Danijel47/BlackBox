@@ -91,8 +91,7 @@ public class ValorantService {
             messages.add("No active Valorant profiles. Add one with /val_profile_add <profile> <Name#Tag> [pc|console].");
             return messages;
         }
-        messages.add("Valorant HS% — latest 20 competitive matches\nHead hits / (head + body + leg hits). "
-                + "Showing saved results; refreshed automatically on schedule.");
+        messages.add("Valorant HS% — latest 20 competitive matches\n");
         for (var profile : profiles) {
             String prefix = profile.getProfileName() + " — ";
             var saved = profile.savedHeadshots();
