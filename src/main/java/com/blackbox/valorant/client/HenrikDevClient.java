@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -48,7 +49,7 @@ public class HenrikDevClient {
         JsonNode data = request(builder -> builder.path("/valorant/v2/account/{name}/{tag}")
                 .build(name, tag));
         List<String> platforms = new ArrayList<>();
-        data.path("platforms").forEach(platform -> platforms.add(platform.asText()));
+        data.path("platforms").forEach(platform -> platforms.add(platform.asText().toLowerCase(Locale.ROOT)));
         return new Account(text(data, "puuid"), text(data, "name"), text(data, "tag"),
                 text(data, "region"), List.copyOf(platforms));
     }
@@ -164,8 +165,11 @@ public class HenrikDevClient {
                 retryAfter = Instant.now().plusSeconds(Math.max(1, delay) + 1);
                 throw new UnavailableException("HenrikDev rate limit reached; try again later.");
             }
-            if (status == 401 || status == 403) {
-                throw new UnavailableException("HenrikDev access denied; check HENRIKDEV_API_KEY.");
+            if (status == 401) {
+                throw new UnavailableException("HenrikDev rejected the API key (HTTP 401). Check HENRIKDEV_API_KEY.");
+            }
+            if (status == 403) {
+                throw new UnavailableException("HenrikDev denied access (HTTP 403). Check your API key's permissions or approval.");
             }
             if (status == 404) {
                 throw new UnavailableException("Riot account or match history was not found.");

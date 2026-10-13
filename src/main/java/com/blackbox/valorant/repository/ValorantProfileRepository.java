@@ -23,7 +23,7 @@ public interface ValorantProfileRepository extends JpaRepository<ValorantProfile
             set profile.headshotMatchCount = :matches, profile.headHits = :head,
                 profile.bodyHits = :body, profile.legHits = :leg,
                 profile.headshotUpdatedAt = :at, profile.headshotAttemptedAt = :at,
-                profile.headshotRefreshFailed = false
+                profile.headshotRefreshFailed = false, profile.headshotRefreshWarning = null
             where profile.id = :id and profile.active = true
             """)
     int saveHeadshotResult(@Param("id") Long id, @Param("matches") int matches,
@@ -34,8 +34,9 @@ public interface ValorantProfileRepository extends JpaRepository<ValorantProfile
     @Modifying
     @Query("""
             update ValorantProfileEntity profile
-            set profile.headshotAttemptedAt = :at, profile.headshotRefreshFailed = true
+            set profile.headshotAttemptedAt = :at, profile.headshotRefreshFailed = true,
+                profile.headshotRefreshWarning = :warning
             where profile.id = :id and profile.active = true
             """)
-    int saveHeadshotFailure(@Param("id") Long id, @Param("at") Instant at);
+    int saveHeadshotFailure(@Param("id") Long id, @Param("at") Instant at, @Param("warning") String warning);
 }

@@ -44,6 +44,8 @@ public class ValorantProfileEntity {
     private Instant headshotAttemptedAt;
     @Column(name = "headshot_refresh_failed", nullable = false)
     private boolean headshotRefreshFailed;
+    @Column(name = "headshot_refresh_warning", length = 255)
+    private String headshotRefreshWarning;
 
     protected ValorantProfileEntity() { }
 
@@ -67,6 +69,7 @@ public class ValorantProfileEntity {
     public Instant getHeadshotUpdatedAt() { return headshotUpdatedAt; }
     public Instant getHeadshotAttemptedAt() { return headshotAttemptedAt; }
     public boolean isHeadshotRefreshFailed() { return headshotRefreshFailed; }
+    public String getHeadshotRefreshWarning() { return headshotRefreshWarning; }
 
     public Optional<Headshots> savedHeadshots() {
         if (headshotUpdatedAt == null || headshotMatchCount == null || headHits == null || bodyHits == null || legHits == null) {
@@ -83,10 +86,12 @@ public class ValorantProfileEntity {
         this.headshotUpdatedAt = updatedAt;
         this.headshotAttemptedAt = updatedAt;
         this.headshotRefreshFailed = false;
+        this.headshotRefreshWarning = null;
     }
 
-    public void recordHeadshotFailure(Instant attemptedAt) {
+    public void recordHeadshotFailure(Instant attemptedAt, String warning) {
         this.headshotAttemptedAt = attemptedAt;
         this.headshotRefreshFailed = true;
+        this.headshotRefreshWarning = warning;
     }
 }

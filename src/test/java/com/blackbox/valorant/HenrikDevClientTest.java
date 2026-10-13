@@ -152,6 +152,26 @@ class HenrikDevClientTest {
     }
 
     @Test
+    void forbiddenAccessExplainsPermissionsWithoutShowingProviderDiagnostics() {
+        server.expect(requestTo(pageUrl(0))).andRespond(withStatus(HttpStatus.FORBIDDEN)
+                .body("private provider diagnostic test-key"));
+
+        assertThatThrownBy(() -> client.headshots("eu", "pc", "player"))
+                .isInstanceOf(HenrikDevClient.UnavailableException.class)
+                .hasMessageContaining("403", "permissions")
+                .hasMessageNotContaining("test-key").hasMessageNotContaining("private provider");
+    }
+
+    @Test
+    void unauthorizedAccessExplainsThatTheKeyWasRejected() {
+        server.expect(requestTo(pageUrl(0))).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+        assertThatThrownBy(() -> client.headshots("eu", "pc", "player"))
+                .isInstanceOf(HenrikDevClient.UnavailableException.class)
+                .hasMessageContaining("401", "rejected", "HENRIKDEV_API_KEY");
+    }
+
+    @Test
     void missingApiKeyDoesNotMakeAnUnauthenticatedRequest() {
         RestClient.Builder builder = RestClient.builder().baseUrl("https://api.henrikdev.xyz");
         var unauthenticatedServer = MockRestServiceServer.bindTo(builder).build();

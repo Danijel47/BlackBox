@@ -15,6 +15,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -77,7 +78,30 @@ class ValorantRefreshServiceTest {
         assertThat(profile.getHeadshotUpdatedAt()).isEqualTo(NOW.minusSeconds(3600));
         assertThat(profile.isHeadshotRefreshFailed()).isTrue();
         verify(client).headshots("eu", "pc", "one");
-        verify(repository).saveHeadshotFailure(profile.getId(), NOW);
+        assertThat(profile.getHeadshotRefreshWarning()).doesNotContain("private diagnostics");
+        verify(repository).saveHeadshotFailure(profile.getId(), NOW, profile.getHeadshotRefreshWarning());
+    }
+
+    @Test
+    void accessDeniedWarningIsPersistedAndClearedAfterARecovery() {
+        var profile = profile("Alex", "one");
+        when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
+        String warning = "HenrikDev denied access (HTTP 403). Check your API key's permissions.";
+        when(client.headshots("eu", "pc", "one")).thenThrow(new HenrikDevClient.UnavailableException(warning));
+
+        service("key").refreshNextProfile();
+
+        assertThat(profile.getHeadshotRefreshWarning()).isEqualTo(warning);
+        verify(repository).saveHeadshotFailure(profile.getId(), NOW, warning);
+
+        var later = new ValorantRefreshService(repository, client,
+                new ValorantProperties("key", Duration.ofHours(1)), Clock.fixed(NOW.plusSeconds(3600), ZoneOffset.UTC));
+        doReturn(new HenrikDevClient.Headshots(20, 250, 750, 0)).when(client).headshots("eu", "pc", "one");
+        later.refreshNextProfile();
+
+        assertThat(profile.getHeadshotRefreshWarning()).isNull();
+        assertThat(profile.isHeadshotRefreshFailed()).isFalse();
+        assertThat(profile.savedHeadshots()).hasValue(new HenrikDevClient.Headshots(20, 250, 750, 0));
     }
 
     @Test
