@@ -1,6 +1,7 @@
 package com.blackbox.wow.bot;
 
 import com.blackbox.time_to_go.service.TimeToGoCommandService;
+import com.blackbox.valorant.service.ValorantService;
 import com.blackbox.wow.blizzard.BlizzardAuctionService;
 import com.blackbox.wow.blizzard.BlizzardItemService;
 import com.blackbox.wow.blizzard.BlizzardMountService;
@@ -131,8 +132,27 @@ class BlackBoxBotTest {
     @Mock private TelegramDailyPromptService telegramDailyPromptService;
     @Mock private HousingSalesReportService housingSalesReportService;
     @Mock private ProspectingReportService prospectingReportService;
+    @Mock private ValorantService valorantService;
 
     private BlackBoxBot bot;
+
+    @Test
+    void valorantHeadshotCommandSupportsSnakeCaseAndBotMentions() throws Exception {
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+        when(valorantService.headshotMessages()).thenReturn(List.of("Alex — 25.0% · 20/20 matches"));
+
+        bot().consume(update(123L, 456L, "/val_hs@BlackBoxBot"));
+
+        assertThat(sentMessage().getText()).contains("Alex", "25.0%", "20/20");
+    }
+
+    @Test
+    void valorantReportsRespectTheExistingTelegramAccessPolicy() {
+        bot().consume(update(123L, 456L, "/val_hs"));
+
+        verifyNoInteractions(valorantService);
+        verifyNoInteractions(telegramClient);
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {ADDRESS_COMMAND, ADDRESS_GROUP_COMMAND})
@@ -1821,7 +1841,8 @@ class BlackBoxBotTest {
                 telegramBotUserService,
                 telegramDailyPromptService,
                 housingSalesReportService,
-                prospectingReportService
+                prospectingReportService,
+                valorantService
         );
         return bot;
     }

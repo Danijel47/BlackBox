@@ -48,6 +48,15 @@ Use `/mplus` and the main menu for additional reports, including dungeon coverag
 team reports, season recaps, and title tracking. `[profile]` is optional;
 replace values in `<angle brackets>` with your own input.
 
+## Valorant
+
+| Command | What it does |
+| --- | --- |
+| `/val_profiles` | List registered Valorant profiles. |
+| `/val_profile_add <profile> <Name#Tag> [pc\|console]` | Admin: resolve and register a Riot account; defaults to PC. |
+| `/val_profile_disable <profile>` / `/val_profile_enable <profile>` | Admin: exclude or include a profile in reports. |
+| `/val_hs` | Show saved HS% for every active profile across its latest 20 available completed competitive matches. |
+
 ## Prices
 
 | Command | What it does |
