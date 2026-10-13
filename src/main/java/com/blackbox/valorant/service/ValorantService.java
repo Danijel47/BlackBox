@@ -3,6 +3,7 @@ package com.blackbox.valorant.service;
 import com.blackbox.valorant.client.HenrikDevClient;
 import com.blackbox.valorant.entity.ValorantProfileEntity;
 import com.blackbox.valorant.repository.ValorantProfileRepository;
+import com.blackbox.valorant.properties.ValorantProperties;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,10 +22,12 @@ public class ValorantService {
             .withZone(ZoneOffset.UTC);
     private final ValorantProfileRepository repository;
     private final HenrikDevClient client;
+    private final ValorantProperties properties;
 
-    public ValorantService(ValorantProfileRepository repository, HenrikDevClient client) {
+    public ValorantService(ValorantProfileRepository repository, HenrikDevClient client, ValorantProperties properties) {
         this.repository = repository;
         this.client = client;
+        this.properties = properties;
     }
 
     public ValorantProfileEntity addProfile(String profileName, String riotId, String platform) {
@@ -78,11 +81,16 @@ public class ValorantService {
     }
 
     public List<String> headshotMessages() {
+        List<String> messages = new ArrayList<>();
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            messages.add("⚠ HENRIKDEV_API_KEY is not configured. Automatic Valorant refresh is disabled; "
+                    + "set the key in .env and recreate the bot container.");
+        }
         var profiles = repository.findByActiveTrueOrderByIdAsc();
         if (profiles.isEmpty()) {
-            return List.of("No active Valorant profiles. Add one with /val_profile_add <profile> <Name#Tag> [pc|console].");
+            messages.add("No active Valorant profiles. Add one with /val_profile_add <profile> <Name#Tag> [pc|console].");
+            return messages;
         }
-        List<String> messages = new ArrayList<>();
         messages.add("Valorant HS% — latest 20 competitive matches\nHead hits / (head + body + leg hits). "
                 + "Showing saved results; refreshed automatically on schedule.");
         for (var profile : profiles) {
@@ -95,13 +103,19 @@ public class ValorantService {
                 messages.add(prefix + percentage + " · " + hits.matches() + "/20 matches"
                         + " · " + hits.headHits() + "/" + hits.totalHits() + " head hits"
                         + " · updated " + UPDATED_AT.format(profile.getHeadshotUpdatedAt())
-                        + (profile.isHeadshotRefreshFailed() ? " · last refresh failed; showing saved result" : ""));
+                        + (profile.isHeadshotRefreshFailed()
+                        ? " · ⚠ last refresh failed: " + refreshWarning(profile) + " Showing saved result." : ""));
             } else {
                 messages.add(prefix + (profile.isHeadshotRefreshFailed()
-                        ? "unavailable — first refresh failed; collection will retry automatically"
+                        ? "unavailable — ⚠ " + refreshWarning(profile) + " Collection will retry automatically."
                         : "awaiting first scheduled refresh"));
             }
         }
         return messages;
+    }
+
+    private static String refreshWarning(ValorantProfileEntity profile) {
+        return profile.getHeadshotRefreshWarning() == null || profile.getHeadshotRefreshWarning().isBlank()
+                ? "The last scheduled refresh failed." : profile.getHeadshotRefreshWarning();
     }
 }

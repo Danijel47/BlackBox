@@ -53,10 +53,11 @@ public class ValorantRefreshService {
                 repository.saveHeadshotResult(profile.getId(), hits.matches(), hits.headHits(),
                         hits.bodyHits(), hits.legHits(), profile.getHeadshotUpdatedAt());
             } catch (IllegalStateException failure) {
-                profile.recordHeadshotFailure(clock.instant());
-                repository.saveHeadshotFailure(profile.getId(), profile.getHeadshotAttemptedAt());
-                log.warn("Valorant headshot refresh failed for profile {} ({})",
-                        profile.getId(), failure.getClass().getSimpleName());
+                String warning = failure instanceof HenrikDevClient.UnavailableException
+                        ? failure.getMessage() : "Match statistics could not be verified; try again after the next refresh.";
+                profile.recordHeadshotFailure(clock.instant(), warning);
+                repository.saveHeadshotFailure(profile.getId(), profile.getHeadshotAttemptedAt(), warning);
+                log.warn("Valorant headshot refresh failed for profile {}: {}", profile.getId(), warning);
             }
         } finally {
             running.set(false);
