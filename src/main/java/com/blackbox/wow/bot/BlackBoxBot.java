@@ -1,6 +1,8 @@
 package com.blackbox.wow.bot;
 
 import com.blackbox.time_to_go.service.TimeToGoCommandService;
+import com.blackbox.valorant.bot.ValorantCommandHandler;
+import com.blackbox.valorant.service.ValorantService;
 import com.blackbox.wow.client.RaiderIoClient;
 import com.blackbox.wow.helper.AffixFormatter;
 import com.blackbox.wow.properties.RaiderIoDefaultGuildProperties;
@@ -178,6 +180,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final EconomyCommandHandler economyCommandHandler;
     private final TimeToGoCommandService timeToGoCommands;
     private final TravelCommandHandler travelCommandHandler;
+    private final ValorantCommandHandler valorantCommandHandler;
     private final TrackedPlayerService trackedPlayerService;
     private final GearCheckService gearCheckService;
     private final GearUpgradeService gearUpgradeService;
@@ -245,7 +248,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TelegramBotUserService telegramBotUserService,
             TelegramDailyPromptService telegramDailyPromptService,
             HousingSalesReportService housingSalesReportService,
-            ProspectingReportService prospectingReportService
+            ProspectingReportService prospectingReportService,
+            ValorantService valorantService
     ) {
         this.token = token;
         this.adminUserId = adminUserId;
@@ -276,6 +280,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         );
         this.timeToGoCommands = timeToGoCommands;
         this.travelCommandHandler = new TravelCommandHandler(timeToGoCommands, adminUserId, this::send);
+        this.valorantCommandHandler = new ValorantCommandHandler(valorantService, adminUserId, this::send);
         this.trackedPlayerService = trackedPlayerService;
         this.gearCheckService = gearCheckService;
         this.gearUpgradeService = gearUpgradeService;
@@ -297,6 +302,8 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
         this.housingSalesReportService = housingSalesReportService;
         this.prospectingReportService = prospectingReportService;
         this.commandHandlers = List.of(
+                context -> valorantCommandHandler.handle(context.chatId(), context.senderUserId(),
+                        context.text(), context.command()),
                 this::handleUserAdministrationCommand,
                 this::handlePlayerProfileCommand,
                 this::handleProfileAdministrationCommand,
