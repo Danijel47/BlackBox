@@ -37,7 +37,23 @@ class ValorantRefreshServiceTest {
         assertThat(first.savedHeadshots()).hasValue(new HenrikDevClient.Headshots(20, 250, 750, 0));
         assertThat(first.getHeadshotUpdatedAt()).isEqualTo(NOW);
         assertThat(second.getHeadshotAttemptedAt()).isNull();
-        verify(repository).saveHeadshotResult(first.getId(), 20, 250, 750, 0, NOW);
+        verify(repository).saveHeadshotResult(first.getId(), 20, 250, 750, 0, NOW,
+                null, null, null, null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void hourlyRefreshPersistsCombatAndHeadshotTotalsTogether() {
+        var profile = profile("Lazo", "one");
+        when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
+        var combat = new HenrikDevClient.CombatStats(400, 300, 100, 60000, 50000, 88000, 440, 12, 7, 1);
+        var snapshot = new HenrikDevClient.Headshots(20, 250, 750, 0, combat);
+        when(client.headshots("eu", "pc", "one")).thenReturn(snapshot);
+
+        service("key").refreshNextProfile();
+
+        assertThat(profile.savedHeadshots()).hasValue(snapshot);
+        verify(repository).saveHeadshotResult(profile.getId(), 20, 250, 750, 0, NOW,
+                400L, 300L, 100L, 60000L, 50000L, 88000L, 440L, 12, 7, 1);
     }
 
     @Test

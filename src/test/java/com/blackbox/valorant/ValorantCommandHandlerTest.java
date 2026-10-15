@@ -55,4 +55,13 @@ class ValorantCommandHandlerTest {
         assertThat(sent).hasSize(2).allSatisfy(message -> assertThat(message.length()).isLessThanOrEqualTo(3500));
         assertThat(String.join("\n", sent)).contains("Header", "A".repeat(2000), "B".repeat(2000));
     }
+
+    @Test
+    void statisticsCommandReturnsTheSavedCombatReport() {
+        when(service.statisticsMessages()).thenReturn(List.of("Lazo — K/D/A 400 / 300 / 100"));
+
+        assertThat(handler.handle(1L, 123L, "/valstats", "/valstats")).isTrue();
+
+        assertThat(sent).singleElement().asString().contains("Lazo", "400 / 300 / 100");
+    }
 }

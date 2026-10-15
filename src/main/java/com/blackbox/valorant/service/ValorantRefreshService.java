@@ -46,21 +46,34 @@ public class ValorantRefreshService {
             if (next.isEmpty()) {
                 return;
             }
-            var profile = next.get();
-            try {
-                var hits = client.headshots(profile.getRegion(), profile.getPlatform(), profile.getPuuid());
-                profile.recordHeadshots(hits, clock.instant());
-                repository.saveHeadshotResult(profile.getId(), hits.matches(), hits.headHits(),
-                        hits.bodyHits(), hits.legHits(), profile.getHeadshotUpdatedAt());
-            } catch (IllegalStateException failure) {
-                String warning = failure instanceof HenrikDevClient.UnavailableException
-                        ? failure.getMessage() : "Match statistics could not be verified; try again after the next refresh.";
-                profile.recordHeadshotFailure(clock.instant(), warning);
-                repository.saveHeadshotFailure(profile.getId(), profile.getHeadshotAttemptedAt(), warning);
-                log.warn("Valorant headshot refresh failed for profile {}: {}", profile.getId(), warning);
-            }
+            refreshProfile(next.get());
         } finally {
             running.set(false);
         }
+    }
+
+    private void refreshProfile(ValorantProfileEntity profile) {
+        try {
+            var hits = client.headshots(profile.getRegion(), profile.getPlatform(), profile.getPuuid());
+            profile.recordHeadshots(hits, clock.instant());
+            saveResult(profile, hits);
+        } catch (IllegalStateException failure) {
+            String warning = failure instanceof HenrikDevClient.UnavailableException
+                    ? failure.getMessage() : "Match statistics could not be verified; try again after the next refresh.";
+            profile.recordHeadshotFailure(clock.instant(), warning);
+            repository.saveHeadshotFailure(profile.getId(), profile.getHeadshotAttemptedAt(), warning);
+            log.warn("Valorant headshot refresh failed for profile {}: {}", profile.getId(), warning);
+        }
+    }
+
+    private void saveResult(ValorantProfileEntity profile, HenrikDevClient.Headshots hits) {
+        var combat = hits.combatStats();
+        repository.saveHeadshotResult(profile.getId(), hits.matches(), hits.headHits(),
+                hits.bodyHits(), hits.legHits(), profile.getHeadshotUpdatedAt(),
+                combat == null ? null : combat.kills(), combat == null ? null : combat.deaths(),
+                combat == null ? null : combat.assists(), combat == null ? null : combat.damageDealt(),
+                combat == null ? null : combat.damageReceived(), combat == null ? null : combat.score(),
+                combat == null ? null : combat.rounds(), combat == null ? null : combat.wins(),
+                combat == null ? null : combat.losses(), combat == null ? null : combat.draws());
     }
 }

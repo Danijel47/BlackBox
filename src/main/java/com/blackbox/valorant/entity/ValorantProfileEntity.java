@@ -1,6 +1,7 @@
 package com.blackbox.valorant.entity;
 
 import com.blackbox.valorant.client.HenrikDevClient.Headshots;
+import com.blackbox.valorant.client.HenrikDevClient.CombatStats;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -46,6 +47,16 @@ public class ValorantProfileEntity {
     private boolean headshotRefreshFailed;
     @Column(name = "headshot_refresh_warning", length = 255)
     private String headshotRefreshWarning;
+    @Column(name = "combat_kills") private Long combatKills;
+    @Column(name = "combat_deaths") private Long combatDeaths;
+    @Column(name = "combat_assists") private Long combatAssists;
+    @Column(name = "combat_damage_dealt") private Long combatDamageDealt;
+    @Column(name = "combat_damage_received") private Long combatDamageReceived;
+    @Column(name = "combat_score") private Long combatScore;
+    @Column(name = "combat_rounds") private Long combatRounds;
+    @Column(name = "combat_wins") private Integer combatWins;
+    @Column(name = "combat_losses") private Integer combatLosses;
+    @Column(name = "combat_draws") private Integer combatDraws;
 
     protected ValorantProfileEntity() { }
 
@@ -75,7 +86,12 @@ public class ValorantProfileEntity {
         if (headshotUpdatedAt == null || headshotMatchCount == null || headHits == null || bodyHits == null || legHits == null) {
             return Optional.empty();
         }
-        return Optional.of(new Headshots(headshotMatchCount, headHits, bodyHits, legHits));
+        CombatStats combat = combatKills == null || combatDeaths == null || combatAssists == null
+                || combatDamageDealt == null || combatDamageReceived == null || combatScore == null
+                || combatRounds == null || combatWins == null || combatLosses == null || combatDraws == null
+                ? null : new CombatStats(combatKills, combatDeaths, combatAssists, combatDamageDealt,
+                        combatDamageReceived, combatScore, combatRounds, combatWins, combatLosses, combatDraws);
+        return Optional.of(new Headshots(headshotMatchCount, headHits, bodyHits, legHits, combat));
     }
 
     public void recordHeadshots(Headshots hits, Instant updatedAt) {
@@ -87,6 +103,17 @@ public class ValorantProfileEntity {
         this.headshotAttemptedAt = updatedAt;
         this.headshotRefreshFailed = false;
         this.headshotRefreshWarning = null;
+        CombatStats combat = hits.combatStats();
+        this.combatKills = combat == null ? null : combat.kills();
+        this.combatDeaths = combat == null ? null : combat.deaths();
+        this.combatAssists = combat == null ? null : combat.assists();
+        this.combatDamageDealt = combat == null ? null : combat.damageDealt();
+        this.combatDamageReceived = combat == null ? null : combat.damageReceived();
+        this.combatScore = combat == null ? null : combat.score();
+        this.combatRounds = combat == null ? null : combat.rounds();
+        this.combatWins = combat == null ? null : combat.wins();
+        this.combatLosses = combat == null ? null : combat.losses();
+        this.combatDraws = combat == null ? null : combat.draws();
     }
 
     public void recordHeadshotFailure(Instant attemptedAt, String warning) {
