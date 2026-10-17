@@ -154,6 +154,16 @@ class BlackBoxBotTest {
         verifyNoInteractions(telegramClient);
     }
 
+    @Test
+    void valorantStatisticsCommandSupportsSnakeCaseAndBotMentions() throws Exception {
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+        when(valorantService.statisticsMessages()).thenReturn(List.of("Lazo — K/D/A 400 / 300 / 100 · ADR 136.4"));
+
+        bot().consume(update(123L, 456L, "/val_stats@BlackBoxBot"));
+
+        assertThat(sentMessage().getText()).contains("Lazo", "400 / 300 / 100", "ADR 136.4");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {ADDRESS_COMMAND, ADDRESS_GROUP_COMMAND})
     void addressCommandSendsFixedLocationWithMapsButton(String command) throws Exception {

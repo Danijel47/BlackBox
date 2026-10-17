@@ -14,6 +14,9 @@ import java.util.Locale;
 import java.util.Set;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Optional;
 
 @Service
 public class ValorantService {
@@ -53,7 +56,7 @@ public class ValorantService {
         try {
             return repository.saveAndFlush(new ValorantProfileEntity(label, account.puuid(), account.riotId(),
                     account.region(), selectedPlatform));
-        } catch (DataIntegrityViolationException e) {
+        } catch (DataIntegrityViolationException _) {
             throw new IllegalArgumentException("That profile name or Riot account is already registered.");
         }
     }
@@ -81,6 +84,14 @@ public class ValorantService {
     }
 
     public List<String> headshotMessages() {
+        return reportMessages(false);
+    }
+
+    public List<String> statisticsMessages() {
+        return reportMessages(true);
+    }
+
+    private List<String> reportMessages(boolean includeCombat) {
         List<String> messages = new ArrayList<>();
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             messages.add("⚠ HENRIKDEV_API_KEY is not configured. Automatic Valorant refresh is disabled; "
@@ -91,26 +102,58 @@ public class ValorantService {
             messages.add("No active Valorant profiles. Add one with /val_profile_add <profile> <Name#Tag> [pc|console].");
             return messages;
         }
-        messages.add("Valorant HS% — latest 20 competitive matches\n");
+        messages.add((includeCombat ? "Valorant statistics" : "Valorant HS%") + " — latest 20 competitive matches\n");
         for (var profile : profiles) {
-            String prefix = profile.getProfileName() + " — ";
-            var saved = profile.savedHeadshots();
-            if (saved.isPresent()) {
-                var hits = saved.get();
-                String percentage = hits.percentage().map(value -> value.toPlainString() + "%")
-                        .orElse(hits.matches() == 0 ? "no competitive matches available" : "unavailable (no recorded hits)");
-                messages.add(prefix + percentage + " · " + hits.matches() + "/20 matches"
-                        + " · " + hits.headHits() + "/" + hits.totalHits() + " head hits"
-                        + " · updated " + UPDATED_AT.format(profile.getHeadshotUpdatedAt())
-                        + (profile.isHeadshotRefreshFailed()
-                        ? " · ⚠ last refresh failed: " + refreshWarning(profile) + " Showing saved result." : ""));
-            } else {
-                messages.add(prefix + (profile.isHeadshotRefreshFailed()
-                        ? "unavailable — ⚠ " + refreshWarning(profile) + " Collection will retry automatically."
-                        : "awaiting first scheduled refresh"));
-            }
+            messages.add(profileReport(profile, includeCombat));
         }
         return messages;
+    }
+
+    private static String profileReport(ValorantProfileEntity profile, boolean includeCombat) {
+        String prefix = profile.getProfileName() + " — ";
+        var saved = profile.savedHeadshots();
+        if (saved.isEmpty()) {
+            return prefix + (profile.isHeadshotRefreshFailed()
+                    ? "unavailable — ⚠ " + refreshWarning(profile) + " Collection will retry automatically."
+                    : "awaiting first scheduled refresh");
+        }
+        var hits = saved.get();
+        String percentage = hits.percentage().map(value -> value.toPlainString() + "%")
+                .orElse(hits.matches() == 0 ? "no competitive matches available" : "unavailable (no recorded hits)");
+        String summary = prefix + percentage + (includeCombat ? " HS" : "") + " · " + hits.matches() + "/20 matches"
+                + " · " + hits.headHits() + "/" + hits.totalHits() + " head hits"
+                + " · updated " + UPDATED_AT.format(profile.getHeadshotUpdatedAt())
+                + (profile.isHeadshotRefreshFailed()
+                ? " · ⚠ last refresh failed: " + refreshWarning(profile) + " Showing saved result." : "");
+        if (includeCombat && hits.matches() > 0) {
+            summary += hits.combatStats() == null
+                    ? "\nCombat statistics unavailable; waiting for complete data from a scheduled refresh."
+                    : combatMessage(hits);
+        }
+        return summary;
+    }
+
+    private static String combatMessage(HenrikDevClient.Headshots hits) {
+        var stats = hits.combatStats();
+        return "\nK/D/A totals: " + stats.kills() + " / " + stats.deaths() + " / " + stats.assists()
+                + "\nAvg K/D/A per match: " + average(stats.kills(), hits.matches()) + " / "
+                + average(stats.deaths(), hits.matches()) + " / " + average(stats.assists(), hits.matches())
+                + " · K/D " + metric(stats.killDeathRatio())
+                + "\nDamage dealt / received: " + stats.damageDealt() + " / " + stats.damageReceived()
+                + "\nADR " + metric(stats.averageDamage()) + " · ACS " + metric(stats.averageCombatScore())
+                + " · damage delta/round " + metric(stats.damageDelta()) + " · kills/round " + metric(stats.killsPerRound())
+                + "\nResults: " + stats.wins() + "W / " + stats.losses() + "L / " + stats.draws() + "D"
+                + " · win rate " + average(stats.wins() * 100L, hits.matches()) + "%"
+                + " · " + stats.rounds() + " rounds";
+    }
+
+    private static String metric(Optional<BigDecimal> value) {
+        return value.map(BigDecimal::toPlainString).orElse("n/a");
+    }
+
+    private static String average(long total, int matches) {
+        return matches == 0 ? "n/a" : BigDecimal.valueOf(total)
+                .divide(BigDecimal.valueOf(matches), 1, RoundingMode.HALF_UP).toPlainString();
     }
 
     private static String refreshWarning(ValorantProfileEntity profile) {

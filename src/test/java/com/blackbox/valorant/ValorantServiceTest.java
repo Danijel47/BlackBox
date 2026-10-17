@@ -146,6 +146,46 @@ class ValorantServiceTest {
     }
 
     @Test
+    void statisticsReportUsesTheSavedTwentyMatchSnapshotWithoutApiCalls() {
+        var profile = profile("Lazo", "one");
+        var combat = new HenrikDevClient.CombatStats(400, 300, 100, 60000, 50000, 88000, 440, 12, 7, 1);
+        profile.recordHeadshots(new HenrikDevClient.Headshots(20, 250, 750, 0, combat),
+                java.time.Instant.parse("2026-10-13T12:00:00Z"));
+        when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
+
+        assertThat(service.statisticsMessages()).anySatisfy(message ->
+                assertThat(message).contains("Lazo", "400 / 300 / 100", "20.0 / 15.0 / 5.0", "60000", "50000",
+                        "136.4", "200.0", "1.33", "12W / 7L / 1D", "60.0%", "25.0%", "20/20"));
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void oldHeadshotOnlySnapshotsExplainThatCombatStatsNeedTheNextRefresh() {
+        var profile = profile("Lazo", "one");
+        profile.recordHeadshots(new HenrikDevClient.Headshots(20, 250, 750, 0),
+                java.time.Instant.parse("2026-10-13T12:00:00Z"));
+        when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
+
+        assertThat(service.statisticsMessages()).anySatisfy(message ->
+                assertThat(message).contains("Lazo", "25.0%", "Combat statistics unavailable", "scheduled refresh"));
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void aNewIncompleteSnapshotDoesNotDisplayCombatFromAnOlderMatchWindow() {
+        var profile = profile("Lazo", "one");
+        var combat = new HenrikDevClient.CombatStats(400, 300, 100, 60000, 50000, 88000, 440, 12, 7, 1);
+        profile.recordHeadshots(new HenrikDevClient.Headshots(20, 250, 750, 0, combat),
+                java.time.Instant.parse("2026-10-13T12:00:00Z"));
+        profile.recordHeadshots(new HenrikDevClient.Headshots(20, 400, 600, 0),
+                java.time.Instant.parse("2026-10-13T13:00:00Z"));
+        when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
+
+        assertThat(service.statisticsMessages()).anySatisfy(message ->
+                assertThat(message).contains("Lazo", "40.0%", "Combat statistics unavailable").doesNotContain("60000"));
+    }
+
+    @Test
     void emptyProfilesExplainHowToGetStarted() {
         assertThat(service.headshotMessages()).singleElement()
                 .asString().contains("No active Valorant profiles", "/val_profile_add");

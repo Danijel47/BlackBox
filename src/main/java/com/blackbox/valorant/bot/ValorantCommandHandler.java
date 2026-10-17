@@ -26,6 +26,7 @@ public final class ValorantCommandHandler {
                     Valorant — one Riot account per profile
                     /val_profiles — registered profiles
                     /val_hs — saved HS% for each active player, latest 20 competitive matches
+                    /val_stats — saved K/D/A, damage, ADR, ACS, win rate and HS%
 
                     Administrator:
                     /val_profile_add <profile> <Name#Tag> [pc|console]
@@ -34,36 +35,40 @@ public final class ValorantCommandHandler {
                     """.strip());
             case "/valprofiles" -> sendLines(chatId, service.profileMessages());
             case "/valhs" -> sendLines(chatId, service.headshotMessages());
-            case "/valprofileadd", "/valprofiledisable", "/valprofileenable" -> {
-                if (adminUserId <= 0 || userId == null || userId != adminUserId) {
-                    sender.accept(chatId, "Only the configured bot administrator can manage Valorant profiles.");
-                    return true;
-                }
-                try {
-                    if (command.equals("/valprofileadd")) {
-                        addProfile(chatId, text);
-                    } else {
-                        String[] parts = text.split("\\s+", 2);
-                        if (parts.length < 2 || parts[1].isBlank()) {
-                            sender.accept(chatId, "Usage: /val_profile_"
-                                    + (command.equals("/valprofileenable") ? "enable" : "disable") + " <profile>");
-                        } else {
-                            boolean active = command.equals("/valprofileenable");
-                            service.setActive(parts[1], active);
-                            sender.accept(chatId, "Valorant profile " + parts[1] + (active ? " enabled." : " disabled."));
-                        }
-                    }
-                } catch (IllegalArgumentException e) {
-                    sender.accept(chatId, e.getMessage());
-                } catch (HenrikDevClient.UnavailableException e) {
-                    sender.accept(chatId, e.getMessage());
-                } catch (IllegalStateException e) {
-                    sender.accept(chatId, "Valorant account data could not be verified; try again later.");
-                }
-            }
+            case "/valstats" -> sendLines(chatId, service.statisticsMessages());
+            case "/valprofileadd", "/valprofiledisable", "/valprofileenable" ->
+                    manageProfile(chatId, userId, text, command);
             default -> { return false; }
         }
         return true;
+    }
+
+    private void manageProfile(long chatId, Long userId, String text, String command) {
+        if (adminUserId <= 0 || userId == null || userId != adminUserId) {
+            sender.accept(chatId, "Only the configured bot administrator can manage Valorant profiles.");
+            return;
+        }
+        try {
+            if (command.equals("/valprofileadd")) {
+                addProfile(chatId, text);
+            } else {
+                setProfileActive(chatId, text, command.equals("/valprofileenable"));
+            }
+        } catch (IllegalArgumentException | HenrikDevClient.UnavailableException e) {
+            sender.accept(chatId, e.getMessage());
+        } catch (IllegalStateException _) {
+            sender.accept(chatId, "Valorant account data could not be verified; try again later.");
+        }
+    }
+
+    private void setProfileActive(long chatId, String text, boolean active) {
+        String[] parts = text.split("\\s+", 2);
+        if (parts.length < 2 || parts[1].isBlank()) {
+            sender.accept(chatId, "Usage: /val_profile_" + (active ? "enable" : "disable") + " <profile>");
+            return;
+        }
+        service.setActive(parts[1], active);
+        sender.accept(chatId, "Valorant profile " + parts[1] + (active ? " enabled." : " disabled."));
     }
 
     private void addProfile(long chatId, String text) {

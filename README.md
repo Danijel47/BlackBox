@@ -56,6 +56,7 @@ replace values in `<angle brackets>` with your own input.
 | `/val_profile_add <profile> <Name#Tag> [pc\|console]` | Admin: resolve and register a Riot account; defaults to PC. |
 | `/val_profile_disable <profile>` / `/val_profile_enable <profile>` | Admin: exclude or include a profile in reports. |
 | `/val_hs` | Show saved HS% for every active profile across its latest 20 available completed competitive matches. |
+| `/val_stats` | Show saved K/D/A totals and averages, K/D, damage dealt/received, ADR, ACS, damage delta, kills per round, win/loss/draw results, win rate and HS%. |
 
 ## Prices
 

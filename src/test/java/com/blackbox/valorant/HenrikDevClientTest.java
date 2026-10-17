@@ -79,6 +79,70 @@ class HenrikDevClientTest {
     }
 
     @Test
+    void aggregatesCombatStatsAndWeightsDamageAndScoreByRounds() {
+        String win = match("win", 0, "competitive", "player", 10, 30, 0)
+                .replace("\"score\":4000", "\"score\":2000")
+                .replace("\"dealt\":3000", "\"dealt\":1000");
+        String loss = match("loss", 1, "competitive", "player", 40, 60, 0)
+                .replace("\"deaths\":15", "\"deaths\":5")
+                .replace("\"score\":4000", "\"score\":8000")
+                .replace("\"dealt\":3000", "\"dealt\":6000");
+        expectPage(0, java.util.List.of(withTeams(win, 13, 7, true, false),
+                withTeams(loss, 11, 13, false, true)));
+
+        var result = client.headshots("eu", "pc", "player");
+        var stats = result.combatStats();
+
+        assertThat(result.matches()).isEqualTo(2);
+        assertThat(stats.kills()).isEqualTo(40);
+        assertThat(stats.deaths()).isEqualTo(20);
+        assertThat(stats.assists()).isEqualTo(10);
+        assertThat(stats.damageDealt()).isEqualTo(7000);
+        assertThat(stats.damageReceived()).isEqualTo(5000);
+        assertThat(stats.rounds()).isEqualTo(44);
+        assertThat(stats.wins()).isEqualTo(1);
+        assertThat(stats.losses()).isEqualTo(1);
+        assertThat(stats.draws()).isZero();
+        assertThat(stats.killDeathRatio()).hasValueSatisfying(value -> assertThat(value).isEqualByComparingTo("2.00"));
+        assertThat(stats.averageDamage()).hasValueSatisfying(value -> assertThat(value).isEqualByComparingTo("159.1"));
+        assertThat(stats.averageCombatScore()).hasValueSatisfying(value -> assertThat(value).isEqualByComparingTo("227.3"));
+        assertThat(stats.damageDelta()).hasValueSatisfying(value -> assertThat(value).isEqualByComparingTo("45.5"));
+        server.verify();
+    }
+
+    @Test
+    void countsDrawsSeparatelyAndKeepsUnknownCombatStatsUnavailable() {
+        expectPage(0, java.util.List.of(withTeams(match("draw", 0, "competitive", "player", 1, 3, 0),
+                12, 12, false, false)));
+
+        var stats = client.headshots("eu", "pc", "player").combatStats();
+
+        assertThat(stats.draws()).isEqualTo(1);
+        assertThat(stats.losses()).isZero();
+        assertThat(stats.wins()).isZero();
+    }
+
+    @Test
+    void missingCombatFieldsNeverBecomeZeroAndDoNotLoseValidHeadshotData() {
+        expectPage(0, java.util.List.of(withTeams(match("win", 0, "competitive", "player", 10, 30, 0),
+                13, 7, true, false).replace("\"kills\":20,", "")));
+
+        var result = client.headshots("eu", "pc", "player");
+
+        assertThat(result.combatStats()).isNull();
+        assertThat(result.percentage()).hasValueSatisfying(value -> assertThat(value).isEqualByComparingTo("25.0"));
+    }
+
+    @Test
+    void zeroDeathsOrRoundsHaveNoRatioInsteadOfInventingZero() {
+        var stats = new HenrikDevClient.CombatStats(10, 0, 3, 1000, 500, 2000, 0, 1, 0, 0);
+
+        assertThat(stats.killDeathRatio()).isEmpty();
+        assertThat(stats.averageDamage()).isEmpty();
+        assertThat(stats.averageCombatScore()).isEmpty();
+    }
+
+    @Test
     void selectsTheNewestTwentyByTimestampAndExcludesIncompleteMatches() {
         var matches = new ArrayList<String>();
         for (int index = 24; index >= 0; index--) {
@@ -204,6 +268,13 @@ class HenrikDevClientTest {
     private static String pageUrl(int start) {
         return "https://api.henrikdev.xyz/valorant/v4/by-puuid/matches/eu/pc/player"
                 + "?mode=competitive&size=10&start=" + start;
+    }
+
+    private static String withTeams(String match, int won, int lost, boolean winner, boolean opponentWinner) {
+        return match.strip().replaceFirst("\\}$", "") + """
+                ,"teams":[{"team_id":"Blue","rounds":{"won":%d,"lost":%d},"won":%s},
+                {"team_id":"Red","rounds":{"won":%d,"lost":%d},"won":%s}]}
+                """.formatted(won, lost, winner, lost, won, opponentWinner);
     }
 
     private static String match(String id, int daysAgo, String queue, String puuid, int head, int body, int leg) {
