@@ -102,7 +102,8 @@ public class ValorantService {
             messages.add("No active Valorant profiles. Add one with /val_profile_add <profile> <Name#Tag> [pc|console].");
             return messages;
         }
-        messages.add((includeCombat ? "Valorant statistics" : "Valorant HS%") + " — latest 20 competitive matches\n");
+        messages.add((includeCombat ? "Valorant statistics" : "Valorant HS%") + " — latest 20 competitive matches"
+                + (includeCombat ? "" : "\n"));
         for (var profile : profiles) {
             messages.add(profileReport(profile, includeCombat));
         }
@@ -120,30 +121,43 @@ public class ValorantService {
         var hits = saved.get();
         String percentage = hits.percentage().map(value -> value.toPlainString() + "%")
                 .orElse(hits.matches() == 0 ? "no competitive matches available" : "unavailable (no recorded hits)");
-        String summary = prefix + percentage + (includeCombat ? " HS" : "") + " · " + hits.matches() + "/20 matches"
+        if (includeCombat) {
+            return statisticsReport(profile, hits, percentage);
+        }
+        return prefix + percentage + " · " + hits.matches() + "/20 matches"
                 + " · " + hits.headHits() + "/" + hits.totalHits() + " head hits"
                 + " · updated " + UPDATED_AT.format(profile.getHeadshotUpdatedAt())
                 + (profile.isHeadshotRefreshFailed()
                 ? " · ⚠ last refresh failed: " + refreshWarning(profile) + " Showing saved result." : "");
-        if (includeCombat && hits.matches() > 0) {
+    }
+
+    private static String statisticsReport(ValorantProfileEntity profile, HenrikDevClient.Headshots hits,
+                                           String percentage) {
+        String summary = profile.getProfileName() + " — " + hits.matches() + "/20 matches\nHS " + percentage;
+        if (hits.matches() > 0) {
             summary += hits.combatStats() == null
                     ? "\nCombat statistics unavailable; waiting for complete data from a scheduled refresh."
                     : combatMessage(hits);
+        }
+        summary += "\nUpdated " + UPDATED_AT.format(profile.getHeadshotUpdatedAt());
+        if (profile.isHeadshotRefreshFailed()) {
+            summary += "\n⚠ Last refresh failed: " + refreshWarning(profile) + " Showing saved result.";
         }
         return summary;
     }
 
     private static String combatMessage(HenrikDevClient.Headshots hits) {
         var stats = hits.combatStats();
-        return "\nK/D/A totals: " + stats.kills() + " / " + stats.deaths() + " / " + stats.assists()
-                + "\nAvg K/D/A per match: " + average(stats.kills(), hits.matches()) + " / "
+        return " · K/D " + metric(stats.killDeathRatio())
+                + "\nK/D/A avg: " + average(stats.kills(), hits.matches()) + " / "
                 + average(stats.deaths(), hits.matches()) + " / " + average(stats.assists(), hits.matches())
-                + " · K/D " + metric(stats.killDeathRatio())
-                + "\nDamage dealt / received: " + stats.damageDealt() + " / " + stats.damageReceived()
-                + "\nADR " + metric(stats.averageDamage()) + " · ACS " + metric(stats.averageCombatScore())
-                + " · damage delta/round " + metric(stats.damageDelta()) + " · kills/round " + metric(stats.killsPerRound())
-                + "\nResults: " + stats.wins() + "W / " + stats.losses() + "L / " + stats.draws() + "D"
-                + " · win rate " + average(stats.wins() * 100L, hits.matches()) + "%"
+                + "\nK/D/A total: " + stats.kills() + " / " + stats.deaths() + " / " + stats.assists()
+                + "\nDMG/game " + average(stats.damageDealt(), hits.matches())
+                + " · ADR " + metric(stats.averageDamage())
+                + "\nACS " + metric(stats.averageCombatScore()) + " · Kills/round " + metric(stats.killsPerRound())
+                + "\nDMG delta/round " + metric(stats.damageDelta())
+                + "\n" + stats.wins() + "W / " + stats.losses() + "L / " + stats.draws() + "D"
+                + " · Win " + average(stats.wins() * 100L, hits.matches()) + "%"
                 + " · " + stats.rounds() + " rounds";
     }
 
