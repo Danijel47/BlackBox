@@ -154,8 +154,9 @@ class ValorantServiceTest {
         when(repository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(profile));
 
         assertThat(service.statisticsMessages()).anySatisfy(message ->
-                assertThat(message).contains("Lazo", "400 / 300 / 100", "20.0 / 15.0 / 5.0", "60000", "50000",
-                        "136.4", "200.0", "1.33", "12W / 7L / 1D", "60.0%", "25.0%", "20/20"));
+                assertThat(message).contains("Lazo — 20/20 matches\n", "400 / 300 / 100", "20.0 / 15.0 / 5.0",
+                        "DMG/game 3000.0", "136.4", "200.0", "1.33", "12W / 7L / 1D", "60.0%", "25.0%")
+                        .doesNotContain("60000", "50000", "head hits", "Damage dealt / received"));
         verifyNoInteractions(client);
     }
 

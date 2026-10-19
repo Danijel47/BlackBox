@@ -35,7 +35,7 @@ public final class ValorantCommandHandler {
                     """.strip());
             case "/valprofiles" -> sendLines(chatId, service.profileMessages());
             case "/valhs" -> sendLines(chatId, service.headshotMessages());
-            case "/valstats" -> sendLines(chatId, service.statisticsMessages());
+            case "/valstats" -> sendLines(chatId, service.statisticsMessages(), "\n\n");
             case "/valprofileadd", "/valprofiledisable", "/valprofileenable" ->
                     manageProfile(chatId, userId, text, command);
             default -> { return false; }
@@ -84,14 +84,18 @@ public final class ValorantCommandHandler {
     }
 
     private void sendLines(long chatId, List<String> lines) {
+        sendLines(chatId, lines, "\n");
+    }
+
+    private void sendLines(long chatId, List<String> lines, String separator) {
         StringBuilder message = new StringBuilder();
         for (String line : lines) {
-            if (!message.isEmpty() && message.length() + line.length() + 1 > 3500) {
+            if (!message.isEmpty() && message.length() + line.length() + separator.length() > 3500) {
                 sender.accept(chatId, message.toString());
                 message.setLength(0);
             }
             if (!message.isEmpty()) {
-                message.append('\n');
+                message.append(separator);
             }
             message.append(line);
         }

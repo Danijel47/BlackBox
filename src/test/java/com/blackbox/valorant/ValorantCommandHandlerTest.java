@@ -64,4 +64,13 @@ class ValorantCommandHandlerTest {
 
         assertThat(sent).singleElement().asString().contains("Lazo", "400 / 300 / 100");
     }
+
+    @Test
+    void statisticsProfilesAreSeparatedByBlankLines() {
+        when(service.statisticsMessages()).thenReturn(List.of("Statistics", "Lazo\nHS 25.0%", "David\nHS 17.7%"));
+
+        handler.handle(1L, 123L, "/valstats", "/valstats");
+
+        assertThat(sent).containsExactly("Statistics\n\nLazo\nHS 25.0%\n\nDavid\nHS 17.7%");
+    }
 }
