@@ -24,8 +24,14 @@ git pull --ff-only
 echo "Validating the production Compose configuration..."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
 
-echo "Building and updating the containers..."
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
+echo "Building the bot with freshly pulled Java base images..."
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull bot
+
+echo "Updating the containers..."
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build --remove-orphans --wait --wait-timeout 300
+
+echo "Checking the container Java version..."
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T bot java -version
 
 echo "Container status:"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps

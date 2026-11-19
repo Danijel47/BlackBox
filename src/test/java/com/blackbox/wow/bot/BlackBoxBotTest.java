@@ -20,6 +20,7 @@ import com.blackbox.wow.service.MPlusTitleWatchService;
 import com.blackbox.wow.service.HousingSalesReportService;
 import com.blackbox.wow.service.ProspectingReportService;
 import com.blackbox.wow.service.ProspectingOre;
+import com.blackbox.wow.service.MaterialAlertService;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.MPlusAdvancedService;
 import com.blackbox.wow.service.MPlusRunCorrelationService;
@@ -133,6 +134,7 @@ class BlackBoxBotTest {
     @Mock private HousingSalesReportService housingSalesReportService;
     @Mock private ProspectingReportService prospectingReportService;
     @Mock private ValorantService valorantService;
+    @Mock private MaterialAlertService materialAlertService;
 
     private BlackBoxBot bot;
 
@@ -1816,10 +1818,67 @@ class BlackBoxBotTest {
         assertThat(sentMessage().getText()).isEqualTo("Consistency result");
     }
 
-    private BlackBoxBot bot() {
+    @Test
+    void materialAlertCommandsAreAdminOnlyIncludingReadOperations() throws Exception {
+        when(accessPolicy.isAllowed(123L, 456L)).thenReturn(true);
+        var target = bot();
+        for (String command : List.of("groups", "status", "ores 15", "reset ores", "off ores")) {
+            target.consume(update(123L, 456L, "/matalert " + command));
+        }
+        verifyNoInteractions(materialAlertService, auctionService, itemService);
+        var sent = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(5)).execute(sent.capture());
+        assertThat(sent.getAllValues()).allSatisfy(m -> assertThat(m.getText()).contains("administrator"));
+    }
+
+    @Test
+    void adminMaterialCommandsFromGroupUseStoredDataAndSupportBotMentions() throws Exception {
+        when(accessPolicy.isAllowed(-123L, ADMIN_ID)).thenReturn(true);
+        when(materialAlertService.configure("ores", new BigDecimal("15"))).thenReturn("ores armed");
+        bot().consume(update(-123L, ADMIN_ID, "/matalert@BlackBoxBot ores 15"));
+        verify(materialAlertService).configure("ores", new BigDecimal("15"));
+        verifyNoInteractions(auctionService, itemService);
+        assertThat(sentMessage().getText()).isEqualTo("ores armed");
+    }
+
+    @Test
+    void adminMaterialStatusResetGroupsAndOffUseStoredDataOnly() throws Exception {
+        when(accessPolicy.isAllowed(123L, ADMIN_ID)).thenReturn(true);
+        when(materialAlertService.status()).thenReturn("status");
+        when(materialAlertService.groups()).thenReturn("groups");
+        when(materialAlertService.reset("ores")).thenReturn("reset");
+        when(materialAlertService.disable("ores")).thenReturn("off");
+        var target = bot();
+        for (String command : List.of("status", "groups", "reset ores", "off ores")) {
+            target.consume(update(123L, ADMIN_ID, "/matalert " + command));
+        }
+        verify(materialAlertService).status(); verify(materialAlertService).groups();
+        verify(materialAlertService).reset("ores"); verify(materialAlertService).disable("ores");
+        verifyNoInteractions(auctionService, itemService);
+    }
+
+    @Test
+    void malformedMaterialAlertPercentageDoesNotCallAnyServices() throws Exception {
+        when(accessPolicy.isAllowed(123L, ADMIN_ID)).thenReturn(true);
+        bot().consume(update(123L, ADMIN_ID, "/matalert ores NaN"));
+        verifyNoInteractions(materialAlertService, auctionService, itemService);
+        assertThat(sentMessage().getText()).contains("percentage");
+    }
+
+    @Test
+    void materialAlertsAreRejectedWhenAdminIsNotConfigured() throws Exception {
+        when(accessPolicy.isAllowed(123L, ADMIN_ID)).thenReturn(true);
+        bot(0L).consume(update(123L, ADMIN_ID, "/matalert status"));
+        verifyNoInteractions(materialAlertService, auctionService, itemService);
+        assertThat(sentMessage().getText()).contains("not configured");
+    }
+
+    private BlackBoxBot bot() { return bot(ADMIN_ID); }
+
+    private BlackBoxBot bot(long configuredAdminId) {
         bot = new BlackBoxBot(
                 "token",
-                999L,
+                configuredAdminId,
                 telegramClient,
                 raiderIoClient,
                 defaultGuildProperties,
@@ -1852,7 +1911,8 @@ class BlackBoxBotTest {
                 telegramDailyPromptService,
                 housingSalesReportService,
                 prospectingReportService,
-                valorantService
+                valorantService,
+                materialAlertService
         );
         return bot;
     }

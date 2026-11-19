@@ -18,6 +18,30 @@ import static org.mockito.Mockito.when;
 class BlizzardAuctionServiceTest {
 
     @Test
+    void batchesMaterialPricesFromOneSnapshotWithoutPerItemCalls() throws Exception {
+        var api = mock(BlizzardApiClient.class);
+        var properties = new BlizzardApiProperties(null, null, null, null, "dynamic-eu", "en_GB",
+                new BlizzardApiProperties.Cache(300, 300, 3600, 500_000, 1000, 250));
+        var service = new BlizzardAuctionService(api, properties);
+        var data = JsonMapper.builder().build().readTree("""
+                {"auctions":[{"item":{"id":1},"quantity":2,"unit_price":100},
+                {"item":{"id":1},"quantity":2,"unit_price":200},
+                {"item":{"id":2},"quantity":5,"unit_price":300}]}
+                """);
+        var now = Instant.now();
+        when(api.defaultQuery()).thenReturn(Map.of());
+        when(api.getSnapshot("/data/wow/auctions/commodities", null, Map.of()))
+                .thenReturn(new ApiSnapshot(data, now, now));
+
+        var result = service.getRegionMaterialPrices(Set.of(1L, 2L, 3L));
+
+        assertThat(result.prices()).containsEntry(1L, 150L).containsEntry(2L, 300L).doesNotContainKey(3L);
+        assertThat(result.sourceUpdatedAt()).isEqualTo(now);
+        assertThat(result.fetchedAt()).isEqualTo(now);
+        verify(api, times(1)).getSnapshot("/data/wow/auctions/commodities", null, Map.of());
+    }
+
+    @Test
     void typicalMaterialPriceWeightsUnitsAndResistsSmallLowAndHighListings() throws Exception {
         var data = JsonMapper.builder().build().readTree("""
                 {"auctions":[
