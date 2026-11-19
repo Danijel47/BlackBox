@@ -1,4 +1,5 @@
 FROM maven:3.9-eclipse-temurin-25 AS build
+ENV JAVA_TOOL_OPTIONS="-XX:-UseBASE64Intrinsics"
 WORKDIR /app
 
 COPY pom.xml ./
@@ -18,4 +19,4 @@ COPY --from=build /app/target/*.jar /app/app.jar
 
 EXPOSE 8100
 
-ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar /app/app.jar"]
+ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -XX:-UseBASE64Intrinsics -jar /app/app.jar"]

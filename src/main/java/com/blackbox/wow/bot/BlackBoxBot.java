@@ -22,6 +22,7 @@ import com.blackbox.wow.service.HousingSalesReportService;
 import com.blackbox.wow.service.ProspectingReportService;
 import com.blackbox.wow.service.ProspectingBatch;
 import com.blackbox.wow.service.ProspectingOre;
+import com.blackbox.wow.service.MaterialAlertService;
 import com.blackbox.wow.service.HousingSalesReportService.HousingRanking;
 import com.blackbox.wow.service.HousingMarketUnavailableException;
 import com.blackbox.wow.service.TrackedPlayerService;
@@ -201,6 +202,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
     private final TelegramDailyPromptService telegramDailyPromptService;
     private final HousingSalesReportService housingSalesReportService;
     private final ProspectingReportService prospectingReportService;
+    private final MaterialAlertService materialAlertService;
     private final List<CommandHandler> commandHandlers;
     private final Map<PendingAltKey, PendingAltAddition> pendingAltAdditions = new ConcurrentHashMap<>();
     private final Cache<PendingProspectingKey, PendingProspectingSelection> pendingProspecting = Caffeine.newBuilder()
@@ -249,8 +251,10 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             TelegramDailyPromptService telegramDailyPromptService,
             HousingSalesReportService housingSalesReportService,
             ProspectingReportService prospectingReportService,
-            ValorantService valorantService
+            ValorantService valorantService,
+            MaterialAlertService materialAlertService
     ) {
+        this.materialAlertService = materialAlertService;
         this.token = token;
         this.adminUserId = adminUserId;
         this.client = client;
@@ -397,6 +401,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "/useradd" -> () -> addTelegramUser(context);
             case "/userdisable", "/userenable" -> () -> changeTelegramUserStatus(context);
             case "/housingtop" -> () -> sendHousingTop(context.chatId());
+            case "/matalert" -> () -> handleMaterialAlert(context);
             case ProspectingReportService.COMMAND -> () -> handleProspectingCommand(context);
             case CombatKeyLevelService.COMMAND -> () -> handleCombatKeyLevelCommand(context);
             default -> null;
@@ -410,6 +415,47 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
 
     private void sendHousingTop(long chatId) {
         sendHousingReport(chatId, HousingRanking.SALES);
+    }
+
+    private void handleMaterialAlert(CommandContext context) {
+        String[] parts = context.text().strip().split("\\s+");
+        String result;
+        try {
+            if (parts.length == 2 && parts[1].equalsIgnoreCase("groups")) {
+                result = materialAlertService.groups();
+            } else if (parts.length == 2 && parts[1].equalsIgnoreCase("status")) {
+                result = materialAlertService.status();
+            } else if (parts.length == 3 && parts[1].equalsIgnoreCase("reset")) {
+                result = materialAlertService.reset(parts[2]);
+            } else if (parts.length == 3 && parts[1].equalsIgnoreCase("off")) {
+                result = materialAlertService.disable(parts[2]);
+            } else if (parts.length == 3) {
+                result = materialAlertService.configure(parts[1], new java.math.BigDecimal(parts[2]));
+            } else {
+                result = materialAlertHelp();
+            }
+        } catch (NumberFormatException failure) {
+            result = "Enter a valid positive percentage, for example /matalert ores 15.";
+        } catch (IllegalArgumentException failure) {
+            result = failure.getMessage();
+        }
+        for (String page : MaterialAlertService.pages(result)) send(context.chatId(), page);
+    }
+
+    private static String materialAlertHelp() {
+        return """
+                Material alerts (admin only, EU Midnight)
+                /matalert groups — list fixed material groups
+                /matalert ores 15 — enable at +15% or change threshold
+                /matalert reset ores — new baseline and rearm
+                /matalert status — saved prices and alert state
+                /matalert off ores — disable
+
+                Prices refresh every 3 hours; commands never fetch prices.
+                Enable/reset uses saved fresh prices, otherwise waits for the next refresh.
+                Alerts go to your private chat. Open the bot privately first.
+                One alert per reset; threshold changes preserve the baseline and sent state.
+                """.strip();
     }
 
     private void handleProspectingCommand(CommandContext context) {
@@ -1192,6 +1238,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
                 adminCommandButton("Import Status", "import_status"),
                 adminCommandButton(HOUSING_TOP_LABEL, HOUSING_TOP_ACTION),
                 adminCommandButton(PROSPECT_LABEL, PROSPECT_ACTION),
+                adminCommandButton("Material Alerts", "material_alerts"),
                 adminCommandButton("Group ID", "group_id"),
                 inlineButton("Public WoW Menu", WOW_ADMIN_CALLBACK_PREFIX + ADMIN_PUBLIC_CALLBACK)
         )));
@@ -1370,6 +1417,7 @@ public class BlackBoxBot implements SpringLongPollingBot, LongPollingSingleThrea
             case "import_status" -> send(chatId, timeToGoCommands.refreshHistoricalImport(), adminBackKeyboard());
             case HOUSING_TOP_ACTION -> sendHousingTop(chatId);
             case PROSPECT_ACTION -> sendProspectingMenu(chatId, senderUserId);
+            case "material_alerts" -> send(chatId, materialAlertHelp(), adminBackKeyboard());
             case "group_id" -> send(chatId, "Chat ID: " + chatId, adminBackKeyboard());
             default -> send(chatId, "That admin action is unavailable. Use /wow_admin to refresh the menu.");
         }

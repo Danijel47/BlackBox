@@ -78,6 +78,10 @@ public class BlizzardAuctionService {
             quantitiesByPrice.merge(unit, weight, BigInteger::add);
             total = total.add(weight);
         }
+        return materialPrices(quantitiesByPrice, total);
+    }
+
+    private static MaterialPrices materialPrices(TreeMap<Long, BigInteger> quantitiesByPrice, BigInteger total) {
         if (quantitiesByPrice.isEmpty()) {
             return new MaterialPrices(PriceResult.notAvailable(), PriceResult.notAvailable());
         }
@@ -102,6 +106,33 @@ public class BlizzardAuctionService {
         return new MaterialPrices(PriceResult.fromCopper(quantitiesByPrice.firstKey()),
                 PriceResult.fromCopper(median));
     }
+
+    public MaterialPriceSnapshot getRegionMaterialPrices(Set<Long> itemIds) {
+        if (itemIds == null || itemIds.isEmpty() || itemIds.stream().anyMatch(id -> id == null || id <= 0)) {
+            throw new IllegalArgumentException("Provide positive material item IDs.");
+        }
+        var snapshot = getRegionCommoditySnapshot();
+        if (!snapshot.data().path("auctions").isArray()) {
+            throw new IllegalStateException("Blizzard commodity data has no auction array.");
+        }
+        Map<Long, TreeMap<Long, BigInteger>> listings = new HashMap<>();
+        for (JsonNode row : snapshot.data().path("auctions")) {
+            long id = row.path("item").path("id").asLong();
+            if (!itemIds.contains(id)) continue;
+            long quantity = row.path("quantity").asLong();
+            long unit = unitPrice(row, quantity);
+            if (quantity > 0 && unit > 0) {
+                listings.computeIfAbsent(id, _ -> new TreeMap<>())
+                        .merge(unit, BigInteger.valueOf(quantity), BigInteger::add);
+            }
+        }
+        Map<Long, Long> prices = new HashMap<>();
+        listings.forEach((id, levels) -> prices.put(id, materialPrices(levels,
+                levels.values().stream().reduce(BigInteger.ZERO, BigInteger::add)).typical().avgCopper()));
+        return new MaterialPriceSnapshot(Map.copyOf(prices), snapshot.sourceUpdatedAt(), snapshot.fetchedAt());
+    }
+
+    public record MaterialPriceSnapshot(Map<Long, Long> prices, Instant sourceUpdatedAt, Instant fetchedAt) {}
 
     private JsonNode getRegionCommodities() {
         return getRegionCommoditySnapshot().data();
