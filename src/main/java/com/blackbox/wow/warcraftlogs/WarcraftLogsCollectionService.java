@@ -45,7 +45,8 @@ import static com.blackbox.wow.warcraftlogs.WarcraftLogsEventParser.sumAvoidable
 @Slf4j
 public class WarcraftLogsCollectionService {
 
-    private static final int MAX_REPORT_PAGES = 100;
+    // Character.recentReports only accepts pages 1 through 5.
+    private static final int MAX_REPORT_PAGES = 5;
     private static final Duration DEFAULT_RATE_LIMIT_BACKOFF = Duration.ofHours(1);
     private static final BigDecimal MAX_PERCENTILE = BigDecimal.valueOf(100);
     private static final String NAME_FIELD = "name";
@@ -465,7 +466,6 @@ public class WarcraftLogsCollectionService {
                 return;
             }
         }
-        throw new IllegalStateException("Warcraft Logs report pagination exceeded the safety limit");
     }
 
     private JsonNode loadCharacterReportsPage(TrackedPlayer player, int page) {
